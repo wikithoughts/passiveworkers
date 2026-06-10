@@ -25,7 +25,7 @@ global.document = {
 const store = {};
 global.localStorage = { getItem:k=>k in store?store[k]:null, setItem:(k,v)=>{store[k]=String(v)}, removeItem:k=>{delete store[k]} };
 global.navigator = {};                 // no geolocation
-global.location = { origin:'http://127.0.0.1:8791' };
+global.location = { origin:'http://127.0.0.1:8791', hash:'' };
 global.setInterval = ()=>0; global.clearInterval = ()=>{};
 global.console = console;
 // ---- Leaflet stub: universal chainable proxy ----
@@ -37,6 +37,8 @@ function resp(data){ return { status:200, ok:true, content:'x', json:async()=>da
 global.fetch = async (url, opts={}) => {
   const method = (opts.method||'GET').toUpperCase();
   fetchCalls.push(method+' '+url);
+  if(method==='POST'&&url==='/jobs') global.__jobsBody = opts.body;
+  if(url==='/jobs/mine') return resp([{job_id:'JOB1',question:'Where should a 2-person startup launch first?',status:'done',created:0}]);
   if(url==='/status') return resp({machines:2,minds:2,online_nodes:[
      {node_key:'k1',machine_key:'mFI',name:'hel',country:'FI',owner:'o',answer_model:'llama3.2',lens:'x',can_judge:0,load:0.1,age_s:1,reputation:0,jobs_helped:0},
      {node_key:'k2',machine_key:'mAE',name:'macA',country:'AE',owner:'o',answer_model:'gemma3:4b',lens:'opp',can_judge:0,load:0.2,age_s:1,reputation:0,jobs_helped:0}
@@ -101,6 +103,13 @@ const assert = (c,m)=>{ if(!c){ console.error('✗ FAIL:', m); process.exit(1);}
   await wait(20);
   assert(fetchCalls.some(c=>c.includes('feedback')), 'vote POSTed feedback');
   assert(fetchCalls.includes('GET /metrics'), 'win-rate metric fetched after vote');
+
+  // 5) new features: responder dial, history, deep link
+  assert(JSON.parse(global.__jobsBody).minds===3, 'Ask sent the responder dial (minds=3)');
+  assert(fetchCalls.includes('GET /jobs/mine'), 'history fetched after sign-in');
+  assert(els['hist'].innerHTML.includes('startup launch') && els['hist'].innerHTML.includes('openJob'),
+         'history list rendered with clickable items');
+  assert(String(global.location.hash).includes('job=JOB1'), 'deep-link hash set on ask');
 
   console.log('\n🎉 ALL FRONT-END FLOW CHECKS PASSED — sign-in → ask → render → vote works at runtime.');
 })();

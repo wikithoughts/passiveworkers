@@ -105,6 +105,7 @@ class UserBody(BaseModel):
 
 class JobBody(BaseModel):
     question: str = Field(..., max_length=4000)
+    minds: int | None = Field(default=None, ge=1, le=16)   # responder dial (clamped to online)
 
 
 class FeedbackBody(BaseModel):
@@ -197,12 +198,18 @@ def _baseline_async(job_id: str, question: str) -> None:
 @app.post("/jobs")
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
-    out = store.create_job(handle, body.question)
+    out = store.create_job(handle, body.question, minds=body.minds)
     out["balance"] = store.user_balance(handle)
     if out.get("status") == "pending_answers":
         threading.Thread(target=_baseline_async, args=(out["job_id"], body.question),
                          daemon=True, name="pw-baseline").start()
     return out
+
+
+@app.get("/jobs/mine")
+def my_jobs(x_user_secret: str | None = Header(default=None)):
+    handle = _user_auth(x_user_secret)
+    return store.jobs_for_asker(handle)
 
 
 @app.get("/jobs/{job_id}")

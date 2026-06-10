@@ -139,8 +139,9 @@ class Judge:
             "  • Include the strongest points and any correct insight only one perspective found.\n"
             "  • If they disagree, state the resolution in ONE line.\n"
             "  • Cut filler, repetition, hedging, and preamble. Lead with the answer.\n"
-            f"  • Hard limit: about {longest} words. End with one line 'Diverse angles: …' (≤15 words) "
-            "naming the distinct contributions.\n\n"
+            f"  • Length target: {max(60, int(longest * 0.8))}–{longest} words — as substantive as the "
+            "best perspective, never padded, never a stub. End with one line 'Diverse angles: …' "
+            "(≤15 words) naming the distinct contributions.\n\n"
             f"QUESTION:\n{question}\n\n"
             f"PERSPECTIVES:\n{joined}\n\n"
             "Write the tight merged answer now."
@@ -171,7 +172,8 @@ class Judge:
             '"consensus":["points all/most answers agree on"],'
             '"disagreements":[{"point":"what they differ on","sides":"who says what"}],'
             '"unique":[{"answer":N,"point":"a valuable point only answer N made"}],'
-            f'"merge":"a TIGHT synthesis, no longer than ~{longest} words, integrated not appended, '
+            f'"merge":"a TIGHT synthesis of {max(60, int(longest * 0.8))}-{longest} words — as substantive '
+            'as the best candidate, never padded, never a stub; integrated not appended, '
             'leading with the answer"}\n'
             "Judge on merit only; you do not know who wrote them.\n\n"
             f"QUESTION:\n{question}\n\nCANDIDATES:\n{joined}\n\nJSON:"

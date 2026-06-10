@@ -22,9 +22,13 @@ at the platform boundary, never as a tradeable instrument between users.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
-STARTER_ALLOWANCE = 100.0  # credits granted on account creation (the bootstrap grant)
+# Credits granted on account creation (the bootstrap grant). Operator-tunable:
+# 100 ≈ 2–3 council asks before you must contribute — right for production give/take,
+# too tight for trials/demos (the first 10-question trial died at question 3 on this).
+STARTER_ALLOWANCE = float(os.environ.get("PW_STARTER_CREDITS", "100"))
 
 
 class InsufficientCredit(Exception):

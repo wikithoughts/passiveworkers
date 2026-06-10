@@ -81,10 +81,12 @@ class Store:
             CREATE TABLE IF NOT EXISTS ledger(id INTEGER PRIMARY KEY, data TEXT);
             """
         )
-        # migration: independent single-model baseline per job (see council/net/baseline.py)
+        # migrations (ALTER TABLE on boot — re-installs must never wipe the DB)
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
-        if "baseline" not in cols:
+        if "baseline" not in cols:   # independent single-model baseline (council/net/baseline.py)
             self.conn.execute("ALTER TABLE jobs ADD COLUMN baseline TEXT")
+        if "pool" not in cols:       # per-job worker pool (responder dial: cost scales with minds)
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN pool REAL")
         self.conn.commit()
 
     # ------------------------------------------------------------------ ledger persistence
@@ -210,7 +212,7 @@ class Store:
                     "council_win_rate": round(council / decisive, 3) if decisive else None}
 
     # ------------------------------------------------------------------ jobs / tasks
-    def create_job(self, asker: str, question: str) -> dict:
+    def create_job(self, asker: str, question: str, minds: int | None = None) -> dict:
         with self.lock:
             asker = _clip(asker)
             # Answer-workers = online nodes that declare a model; prefer higher reputation.
@@ -221,7 +223,11 @@ class Store:
                 return acct.avg_quality if acct else 0.0
 
             candidates.sort(key=lambda n: (_rep(n), n["last_seen"]), reverse=True)
-            workers = candidates[: CONFIG.fleet_size]
+            # Responder dial: the asker picks how many minds; cost scales with the count
+            # (per-mind price = worker_pool / fleet_size, so the default stays unchanged).
+            n_minds = max(1, min(int(minds), len(candidates))) if minds else CONFIG.fleet_size
+            workers = candidates[:n_minds]
+            pool = round(CONFIG.worker_pool / CONFIG.fleet_size * len(workers), 4)
             job_id = str(uuid.uuid4())
 
             if not workers:
@@ -234,7 +240,7 @@ class Store:
                 return {"job_id": job_id, "status": "failed", "error": "no worker nodes online"}
 
             self.ledger.open_account(asker)
-            cost = self.ledger.quote(CONFIG.worker_pool, CONFIG.judge_fee)
+            cost = self.ledger.quote(pool, CONFIG.judge_fee)
             if not self.ledger.can_afford(asker, cost):
                 self.conn.execute(
                     "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
@@ -247,9 +253,9 @@ class Store:
                         "error": "insufficient credit — help on a job first"}
 
             self.conn.execute(
-                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
-                " VALUES(?,?,?,?,?,?,?,?,?)",
-                (job_id, asker, question, "pending_answers", _now(), None, None, None, None))
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "pending_answers", _now(), None, None, None, None, pool))
             for n in workers:
                 self.conn.execute(
                     "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -265,6 +271,13 @@ class Store:
         with self.lock:
             row = self.conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             return row["status"] if row else None
+
+    def jobs_for_asker(self, asker: str, limit: int = 25) -> list:
+        """The asker's own question history (newest first) — powers the app's history list."""
+        with self.lock:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT job_id, question, status, created FROM jobs WHERE asker=?"
+                " ORDER BY created DESC LIMIT ?", (asker, limit))]
 
     def set_baseline(self, job_id: str, data: dict) -> None:
         """Attach the independent single-model baseline (generated off-thread)."""
@@ -379,7 +392,8 @@ class Store:
         try:
             receipt = self.ledger.settle_job(
                 job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
-                worker_pool=CONFIG.worker_pool, judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
+                worker_pool=job["pool"] if job["pool"] else CONFIG.worker_pool,
+                judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
         except InsufficientCredit as exc:
             self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
                               (f"settlement failed: {exc}", job_id))

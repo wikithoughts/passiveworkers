@@ -52,6 +52,7 @@ PW_NODE_TTL=120
 PW_BASELINE_LOCAL_MODEL=${PW_BASELINE_LOCAL_MODEL:-qwen3:14b}
 ${PW_BASELINE_API_KEY:+PW_BASELINE_API_KEY=$PW_BASELINE_API_KEY}
 ${PW_BASELINE_MODEL:+PW_BASELINE_MODEL=$PW_BASELINE_MODEL}
+${PW_STARTER_CREDITS:+PW_STARTER_CREDITS=$PW_STARTER_CREDITS}
 ENV
 sed -i '/^\$/d' "$REMOTE_DIR/.env"   # drop blank lines from unset optionals
 ./.venv/bin/python -c "import fastapi, uvicorn, requests; print('→ deps OK on', __import__('socket').gethostname())"

@@ -74,12 +74,23 @@ APP_HTML = r"""<!doctype html>
       <textarea id="q" placeholder="Ask the council anything…"></textarea>
       <div class="row between" style="margin-top:8px">
         <span class="muted" id="hint">3 diverse minds will answer · costs 35 credits</span>
-        <button id="ask">Ask the council →</button>
+        <span class="row" style="gap:8px">
+          <select id="minds" title="how many minds answer (cost scales)"
+            style="background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:inherit">
+            <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option>
+          </select>
+          <button id="ask">Ask the council →</button>
+        </span>
       </div>
     </div>
 
     <div id="live" style="display:none"></div>
     <div id="answer" style="display:none"></div>
+
+    <details class="card" id="histcard" style="display:none;margin-top:14px">
+      <summary class="muted">🕘 My questions</summary>
+      <div id="hist"></div>
+    </details>
 
     <details class="card" style="margin-top:18px"><summary class="muted">⏻ Contribute your computer (earn credits)</summary>
       <div class="muted" style="font-size:12.5px;margin-top:8px">Run a worker so your machine joins the council and earns credits for your handle:</div>
@@ -120,6 +131,22 @@ async function refreshMe(){
       'PW_COORDINATOR='+location.origin+' PW_TOKEN=<operator-token> \\\n  PW_OWNER='+m.handle+
       ' PW_NAME=my-pc PW_COUNTRY=<XX> PW_ANSWER_MODEL=gemma3:4b PW_LENS=practical \\\n  python -m council.net.agent';
   }catch(e){}
+  refreshHistory();
+}
+// ---- question history (persistent, deep-linkable artifacts) ----
+async function refreshHistory(){
+  if(!secret)return;
+  try{
+    const r=await fetch('/jobs/mine',{headers:uHeaders()});if(!r.ok)return;
+    const l=await r.json(),hc=document.getElementById('histcard'),el=document.getElementById('hist');
+    if(!l.length){hc.style.display='none';return}
+    hc.style.display='';
+    el.innerHTML=l.map(j=>{
+      const ic=j.status==='done'?'✓':j.status==='failed'?'✗':'…';
+      return '<div style="cursor:pointer;padding:6px 2px;border-top:1px dashed #1b2750" '+
+        'onclick="openJob(\''+esc(j.job_id)+'\')">'+ic+' '+esc((j.question||'').slice(0,90))+'</div>';
+    }).join('');
+  }catch(e){}
 }
 document.getElementById('signin').onclick=async()=>{
   const h=document.getElementById('handle').value.trim();if(!h)return;
@@ -149,18 +176,31 @@ async function ambientTick(){
 
 // ---- ask + live render ----
 let polling=null,bwait=0,lastAns='';
+function openJob(id){            // watch any job live (new ask, history click, or #job= link)
+  if(polling)clearInterval(polling);
+  bwait=0;lastAns='';
+  document.getElementById('answer').style.display='none';
+  location.hash='job='+id;
+  poll(id);polling=setInterval(()=>poll(id),1500);
+}
+// responder dial: cost preview scales with minds (per-mind 10 cr + judge 5, server defaults)
+function updateHint(){
+  const n=+(document.getElementById('minds').value||3);
+  document.getElementById('hint').textContent=
+    n+' diverse mind'+(n===1?'':'s')+' will answer · costs '+(n*10+5)+' credits';
+}
+document.getElementById('minds').onchange=updateHint;
 document.getElementById('ask').onclick=async()=>{
   if(!secret){document.getElementById('auth').style.display='block';return}
   const q=document.getElementById('q').value.trim();if(!q)return;
   document.getElementById('answer').style.display='none';
-  const r=await fetch('/jobs',{method:'POST',headers:uHeaders(),body:JSON.stringify({question:q})});
+  const minds=+(document.getElementById('minds').value||3);
+  const r=await fetch('/jobs',{method:'POST',headers:uHeaders(),body:JSON.stringify({question:q,minds:minds})});
   const j=await r.json();
   if(j.status==='failed'){document.getElementById('live').style.display='block';
     document.getElementById('live').innerHTML='<div class="card" style="color:var(--bad)">✗ '+esc(j.error||'failed')+'</div>';return}
   if(j.balance)document.getElementById('me').innerHTML='@'+esc(j.balance.handle)+' · <b>'+j.balance.balance+'</b> cr';
-  if(polling)clearInterval(polling);
-  bwait=0;lastAns='';
-  poll(j.job_id);polling=setInterval(()=>poll(j.job_id),1500);
+  openJob(j.job_id);
 };
 
 function drawMap(v){
@@ -269,7 +309,9 @@ async function poll(id){
 }
 
 if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{you=[p.coords.latitude,p.coords.longitude]},()=>{},{timeout:4000});
-refreshMe();ambientTick();setInterval(ambientTick,5000);
+refreshMe();ambientTick();setInterval(ambientTick,5000);updateHint();
+// deep link: /#job=<id> reopens that question (shareable result)
+if(secret&&location.hash.indexOf('#job=')===0)openJob(location.hash.slice(5));
 </script>
 </body>
 </html>
