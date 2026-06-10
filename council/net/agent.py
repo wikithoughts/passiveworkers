@@ -79,6 +79,11 @@ class Agent:
         if psutil:
             prof["ram_gb"] = round(psutil.virtual_memory().total / 1e9, 1)
             prof["cores"] = psutil.cpu_count(logical=False) or psutil.cpu_count()
+        try:  # capability matching (D15 v1): which models this node can actually run
+            r = requests.get("http://localhost:11434/api/tags", timeout=5)
+            prof["models"] = sorted(m["name"] for m in r.json().get("models", []))[:40]
+        except Exception:
+            prof["models"] = []
         return prof
 
     def register(self) -> None:
@@ -109,6 +114,13 @@ class Agent:
     # ------------------------------------------------------------------ task handlers
     def _do_answer(self, task: dict) -> dict:
         payload = task.get("payload") or {}
+        if payload.get("job_type") == "shard_map":
+            # D13: batch shard — apply the instruction to THIS node's slice of the items.
+            from council.batch import BatchWorker
+            bw = BatchWorker(self.node_id, self.answer_model,
+                             country=task.get("country", self.country))
+            return bw.process(payload["question"], payload.get("shard") or [],
+                              fetch=bool(payload.get("fetch")))
         if payload.get("job_type") == "research_report" \
                 and os.environ.get("PW_WEB_BACKEND", "off") != "off":
             # D13: async deep-research job — this node's own multi-round, egress-localized
@@ -139,6 +151,10 @@ class Agent:
             for x in payload["answers"]
         ]
         judge = Judge(model=self.judge_model or self.answer_model)
+        if payload.get("job_type") == "shard_map":
+            # Batch QA: spot-check sampled outputs per node; the store assembles the merged
+            # deliverable from the shards itself.
+            return judge.spot_check(payload["question"], payload["answers"])
         out = judge.deliberate(payload["question"], answers)   # scores + merge + council read
         if payload.get("job_type") == "research_report":
             # Editor pass: merged becomes the full cited multi-country report.

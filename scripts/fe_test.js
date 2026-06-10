@@ -39,6 +39,11 @@ global.fetch = async (url, opts={}) => {
   fetchCalls.push(method+' '+url);
   if(method==='POST'&&url==='/jobs') global.__jobsBody = opts.body;
   if(url==='/jobs/mine') return resp([{job_id:'JOB1',question:'Where should a 2-person startup launch first?',status:'done',created:0,type:'chat'}]);
+  if(url==='/jobs/BJOB') return resp({job_id:'BJOB',status:'done',type:'shard_map',question:'classify',
+     merged:JSON.stringify([{i:0,item:'great product',output:'POS'},{i:1,item:'terrible',output:'NEG'}]),
+     council:{consensus:[],disagreements:[],unique:[]},judge_country:'AE',judge_status:'done',judge_machine_key:'mAE',
+     answers:[{worker_id:'b1',owner:'o',model:'gemma3:4b',lens:'x',country:'AE',node_key:'k1',machine_key:'mAE',status:'done',status_label:'answered',score:9,text:'Processed 2/2',tokens:50,elapsed_s:9,is_baseline:false}],
+     baseline:null,receipt:{total_cost:45,payouts:{o:40},judge_fee:5}});
   if(url==='/jobs/RJOB') return resp({job_id:'RJOB',status:'done',type:'research_report',question:'rbrief',
      merged:'# Research report\n**Brief:** rbrief\n## Executive summary\nKey finding [S1].\n## Findings by country\n### FI\nFinding text [S1]\nSOURCES (FI):\n[S1] Helen — https://www.helen.fi/prices',
      council:{consensus:[],disagreements:[],unique:[]},judge_country:'AE',judge_status:'done',judge_machine_key:'mAE',
@@ -127,6 +132,14 @@ const assert = (c,m)=>{ if(!c){ console.error('✗ FAIL:', m); process.exit(1);}
          'citations rendered as clickable links');
   assert(els['answer'].innerHTML.includes('more useful than the instant'),
          'research vote prompt adapted');
+
+  // 7) shard_map deliverable: results table, no vote/compare card
+  eval('openJob("BJOB")');
+  await wait(60);
+  assert(els['answer'].innerHTML.includes('Batch results · 2 items') && els['answer'].innerHTML.includes('POS'),
+         'batch results table rendered in input order');
+  assert(!els['answer'].innerHTML.includes('vs a single model') && !els['answer'].innerHTML.includes('▲ Council'),
+         'no compare/vote card for batch jobs');
 
   console.log('\n🎉 ALL FRONT-END FLOW CHECKS PASSED — sign-in → ask → render → vote works at runtime.');
 })();

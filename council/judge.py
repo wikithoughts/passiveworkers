@@ -273,6 +273,44 @@ class Judge:
             parts.append((c.get("text") or "_(no findings)_"))
         return "\n\n".join(p for p in parts if p)
 
+    # ------------------------------------------------------------------ 2c. SPOT-CHECK (shard_map QA)
+    def spot_check(self, instruction: str, answers: list[dict]) -> dict:
+        """
+        QA sampler for batch jobs: each node's payload entry carries a small `sample` of
+        its (item, output) pairs. One blind call scores instruction-compliance per node
+        0–10 (anonymized as Worker N). Returns {"scores": {worker_id: float}}.
+        """
+        order = list(range(len(answers)))
+        order = order[len(answers) % max(1, len(answers)):] + order[:len(answers) % max(1, len(answers))]
+        blocks = []
+        for disp, real in enumerate(order, start=1):
+            sample = answers[real].get("sample") or []
+            pairs = "\n".join(
+                f"  ITEM: {str(s.get('item', ''))[:300]}\n  OUTPUT: {str(s.get('output', ''))[:400]}"
+                for s in sample) or "  (no sample — node returned nothing)"
+            blocks.append(f"--- Worker {disp} sample ---\n{pairs}")
+        raw = self._generate(
+            "You are a QA inspector for batch work. Each worker applied the INSTRUCTION to "
+            "its items; you see a random sample per worker. Score each worker 0-10 on "
+            "instruction-compliance and output quality (0 = empty/garbage, 10 = flawless). "
+            'Reply STRICT JSON only: {"scores":[{"worker":1,"score":0-10}]}\n\n'
+            f"INSTRUCTION:\n{instruction}\n\n" + "\n\n".join(blocks) + "\n\nJSON:",
+            num_predict=200)
+        parsed = _extract_json(raw)
+        if not isinstance(parsed, dict):
+            parsed = {}
+        scores: dict[str, float] = {}
+        for obj in parsed.get("scores", []) if isinstance(parsed.get("scores"), list) else []:
+            try:
+                real = order[int(obj.get("worker")) - 1]
+                scores[answers[real]["worker_id"]] = max(0.0, min(10.0, float(obj.get("score", 5.0))))
+            except (ValueError, IndexError, TypeError, KeyError):
+                continue
+        for a in answers:
+            scores.setdefault(a["worker_id"], 5.0)
+        return {"scores": scores, "merged": "",
+                "council": {"consensus": [], "disagreements": [], "unique": []}}
+
     # ------------------------------------------------------------------ 3. COMPARE (verification)
     def compare(self, question: str, text_a: str, text_b: str) -> dict:
         """Blind A/B. Returns {'winner': 'A'|'B'|'tie', 'reason': str}."""

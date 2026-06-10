@@ -214,14 +214,40 @@ class Store:
                     "council_win_rate": round(council / decisive, 3) if decisive else None}
 
     # ------------------------------------------------------------------ jobs / tasks
+    @staticmethod
+    def _meets(n: Any, requires: Optional[dict]) -> bool:
+        """Capability match (D15 v1): required model installed, minimum RAM. Nodes report
+        their profile at register; jobs may declare `requires` — not all tasks are open
+        to all nodes."""
+        if not requires:
+            return True
+        try:
+            prof = json.loads(n["profile"]) if isinstance(n["profile"], str) else (n["profile"] or {})
+        except Exception:
+            prof = {}
+        want = requires.get("model")
+        if want and want != n["answer_model"] and want not in (prof.get("models") or []):
+            return False
+        min_ram = requires.get("min_ram_gb")
+        if min_ram:
+            try:
+                if float(prof.get("ram_gb") or 0) < float(min_ram):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+
     def create_job(self, asker: str, question: str, minds: int | None = None,
-                   job_type: str = "chat") -> dict:
+                   job_type: str = "chat", items: Optional[list] = None,
+                   requires: Optional[dict] = None, fetch: bool = False) -> dict:
         with self.lock:
             asker = _clip(asker)
             if job_type not in JOB_TYPES:
                 job_type = "chat"
-            # Answer-workers = online nodes that declare a model; prefer higher reputation.
-            candidates = [n for n in self.online_nodes() if n["answer_model"]]
+            # Answer-workers = online nodes that declare a model AND meet the job's
+            # capability requirements; prefer higher reputation.
+            candidates = [n for n in self.online_nodes()
+                          if n["answer_model"] and self._meets(n, requires)]
 
             def _rep(n):
                 acct = self.ledger.accounts.get(n["owner"])
@@ -237,13 +263,32 @@ class Store:
             job_id = str(uuid.uuid4())
 
             if not workers:
+                why = ("no online node meets the job's requirements"
+                       if requires else "no worker nodes online")
                 self.conn.execute(
                     "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
                     " VALUES(?,?,?,?,?,?,?,?,?)",
-                    (job_id, asker, question, "failed", _now(), None, None,
-                     "no worker nodes online", None))
+                    (job_id, asker, question, "failed", _now(), None, None, why, None))
                 self.conn.commit()
-                return {"job_id": job_id, "status": "failed", "error": "no worker nodes online"}
+                return {"job_id": job_id, "status": "failed", "error": why}
+
+            # shard_map: split the items across the selected workers (round-robin, keeping
+            # each item's global index so the merged output preserves input order).
+            shards: dict = {}
+            if job_type == "shard_map":
+                clean = [str(x).strip()[:2000] for x in (items or []) if str(x).strip()][:200]
+                if not clean:
+                    self.conn.execute(
+                        "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                        " VALUES(?,?,?,?,?,?,?,?,?)",
+                        (job_id, asker, question, "failed", _now(), None, None,
+                         "batch job needs a non-empty items list", None))
+                    self.conn.commit()
+                    return {"job_id": job_id, "status": "failed",
+                            "error": "batch job needs a non-empty items list"}
+                shards = {w["node_id"]: [] for w in workers}
+                for idx, it in enumerate(clean):
+                    shards[workers[idx % len(workers)]["node_id"]].append({"i": idx, "item": it})
 
             self.ledger.open_account(asker)
             cost = self.ledger.quote(pool, CONFIG.judge_fee)
@@ -263,10 +308,14 @@ class Store:
                 " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, asker, question, "pending_answers", _now(), None, None, None, None, pool, job_type))
             for n in workers:
+                payload = {"question": question, "job_type": job_type}
+                if job_type == "shard_map":
+                    payload["shard"] = shards.get(n["node_id"], [])
+                    payload["fetch"] = bool(fetch)
                 self.conn.execute(
                     "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), job_id, "answer", n["node_id"], "queued",
-                     json.dumps({"question": question, "job_type": job_type}), None,
+                     json.dumps(payload), None,
                      n["node_id"], n["owner"],
                      n["lens"], n["country"], n["answer_model"], _now(), None, None))
             self._save_ledger()   # persist the new asker account before acknowledging
@@ -346,11 +395,18 @@ class Store:
         payload_answers = []
         for a in answers:
             res = json.loads(a["result"]) if a["result"] else {}
-            payload_answers.append(
-                {"worker_id": a["worker_id"], "text": res.get("text", ""),
-                 "model": a["model"], "lens": a["lens"], "country": a["country"],
-                 # structured research contribution (findings + sources) for the editor pass
-                 "research": res.get("research")})
+            entry = {"worker_id": a["worker_id"], "text": res.get("text", ""),
+                     "model": a["model"], "lens": a["lens"], "country": a["country"],
+                     # structured research contribution (findings + sources) for the editor pass
+                     "research": res.get("research")}
+            if (job["type"] or "") == "shard_map":
+                # deterministic per-node sample for the judge's QA spot-check
+                rows = res.get("results") or []
+                seed = int(hashlib.sha256(f"{job_id}:{a['worker_id']}".encode()).hexdigest(), 16)
+                idx = sorted({seed % max(1, len(rows)), (seed // 7) % max(1, len(rows)),
+                              (seed // 131) % max(1, len(rows))})
+                entry["sample"] = [rows[i] for i in idx][:3] if rows else []
+            payload_answers.append(entry)
         self.conn.execute(
             "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(uuid.uuid4()), job_id, "judge", judge["node_id"], "queued",
@@ -412,6 +468,17 @@ class Store:
             self._save_ledger()
             self.conn.commit()
             return
+
+        # shard_map: the deliverable is the ASSEMBLED shards in input order (the judge only
+        # spot-checks quality); overwrite merged with the full results array (JSON).
+        if (job["type"] or "") == "shard_map":
+            allr = []
+            for a in answers:
+                res = json.loads(a["result"]) if a["result"] else {}
+                allr.extend(res.get("results") or [])
+            allr.sort(key=lambda r: r.get("i", 0))
+            result = dict(result)
+            result["merged"] = json.dumps(allr, ensure_ascii=False)
 
         for task_id, owner, s, rep in per_answer:
             self.conn.execute("UPDATE tasks SET score=? WHERE task_id=?", (s, task_id))

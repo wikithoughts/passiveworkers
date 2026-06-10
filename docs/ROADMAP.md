@@ -96,6 +96,9 @@ iterative per-country researcher (`council/researcher.py`, multi-round, cited, S
 editor pass (`judge.compile_report` → one report: exec summary, agree/differ, findings by country
 with [S#] citations); app: 🔬 Deep research mode, report rendering, "safe to close" expectation,
 `GET /job-types` marketplace catalog. Verified live cross-country.
+- **R4 ✅ SHIPPED (D15):** `shard_map` batch jobs — items split across capability-matched
+  computers, judge spot-checks quality, assembled deliverable + JSONL copy; capability
+  profiles (models/RAM) + `requires` gating; guarded public-URL fetch variant.
 - **R2 (next):** founder runs 3 real briefs → per-type win-rate = D14; citation freshness stamps;
   per-type reputation; report quality tuning on real use.
 - **R3:** machine-submitter API docs (a computer with credits can already POST work — that IS

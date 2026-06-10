@@ -133,3 +133,25 @@ and D4 keeps ours legal (owned findings, never proxied traffic).
 two-country report verified (FI+AE sources, cited, conserved ledger). Next: founder runs 3 real
 briefs (→ D14 demand signal per type), per-type reputation, then more job types (batch eval,
 data-gen — the research-commons north star) and Phase H with the category story.
+
+## D15 — Sharded batch work; what may (and may NOT) be distributed
+**Decision:** Second marketplace job type: **`shard_map`** — one big job's items split round-robin
+across capability-matched computers (≈N× wall-clock speedup; the honest "divide to save time").
+The judge becomes a QA sampler (blind spot-check of each node's outputs → score-weighted payout);
+the deliverable is the assembled shards in input order. Nodes declare capabilities at register
+(models via Ollama tags + RAM/cores/OS) and jobs may declare `requires` — **not all tasks are open
+to all nodes.** A `fetch:true` variant lets items be PUBLIC URLs each node fetches itself
+(SSRF-guarded, size-capped, one polite request) and returns the model's EXTRACTION.
+**The bright line (extends D4):** distribution is for THROUGHPUT and PERSPECTIVE, never for
+network-identity arbitrage. A node may only fetch what it could lawfully fetch alone, politely;
+only value-added AI output leaves the node — never raw relayed bytes; and distributing requests
+to EVADE per-IP rate limits, geo-blocks, logins, or paywalls is forbidden (that is the
+residential-proxy pattern — 911 S5 — that D4 exists to keep us away from). Running third-party
+licensed software (Blender/ffmpeg/etc.) as a service stays in the PARKED gated track: v1
+capabilities are models + hardware only — no arbitrary code execution on contributor machines.
+**Why:** Founder direction (divide long tasks; distribute network-heavy work; per-node skills),
+which lands exactly on the validated capability envelope — embarrassingly-parallel batch is the
+ONLY pattern that ever paid on consumer hardware. The legal framing keeps the good idea and
+fences the trap.
+**Status:** Settled & implemented (config JOB_TYPES, store sharding + `_meets`, council/batch.py,
+judge.spot_check, app ⚙️ Batch mode). Verified live cross-country same day.

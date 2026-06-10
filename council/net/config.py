@@ -64,4 +64,10 @@ JOB_TYPES: dict = {
         "pool_mult": 3.0,
         "deadline_s": float(os.environ.get("PW_RESEARCH_MAX_RUN", "3600")),
     },
+    "shard_map": {
+        "label": "Batch work — one big job split across computers",
+        "eta": "scales with items ÷ computers",
+        "pool_mult": 2.0,
+        "deadline_s": float(os.environ.get("PW_BATCH_MAX_RUN", "3600")),
+    },
 }

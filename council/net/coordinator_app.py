@@ -107,6 +107,9 @@ class JobBody(BaseModel):
     question: str = Field(..., max_length=4000)
     minds: int | None = Field(default=None, ge=1, le=16)   # responder dial (clamped to online)
     type: str | None = Field(default=None, max_length=32)  # job type (see GET /job-types)
+    items: list[str] | None = Field(default=None, max_length=200)  # shard_map: the work items
+    requires: dict | None = None    # capability gate, e.g. {"model": "qwen3:14b", "min_ram_gb": 16}
+    fetch: bool = False             # shard_map: items are PUBLIC URLs to fetch+process (D15 rules)
 
 
 class FeedbackBody(BaseModel):
@@ -211,9 +214,12 @@ def job_types():
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
     out = store.create_job(handle, body.question, minds=body.minds,
-                           job_type=body.type or "chat")
+                           job_type=body.type or "chat", items=body.items,
+                           requires=body.requires, fetch=body.fetch)
     out["balance"] = store.user_balance(handle)
-    if out.get("status") == "pending_answers":
+    if out.get("status") == "pending_answers" and (body.type or "chat") != "shard_map":
+        # the honest single-model compare only makes sense for answer/report jobs —
+        # a one-shot model can't process a sharded item batch
         threading.Thread(target=_baseline_async, args=(out["job_id"], body.question),
                          daemon=True, name="pw-baseline").start()
     return out
