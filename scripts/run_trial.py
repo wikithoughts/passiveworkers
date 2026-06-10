@@ -54,8 +54,15 @@ def _req(base: str, path: str, data: dict | None = None, secret: str | None = No
     if secret:
         headers["X-User-Secret"] = secret
     body = json.dumps(data).encode() if data is not None else None
-    r = urllib.request.Request(base + path, data=body, headers=headers)
-    return json.load(urllib.request.urlopen(r, timeout=30))
+    last: Exception | None = None
+    for attempt in range(4):                 # ride out tunnel blips / coordinator restarts
+        try:
+            r = urllib.request.Request(base + path, data=body, headers=headers)
+            return json.load(urllib.request.urlopen(r, timeout=30))
+        except Exception as e:               # GETs and job-submit are safe to retry here
+            last = e
+            time.sleep(5 * (attempt + 1))
+    raise last  # type: ignore[misc]
 
 
 def wait_idle(base: str) -> None:
