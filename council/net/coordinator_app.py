@@ -29,12 +29,14 @@ Run:  PW_TOKEN=… python -m council.net.coordinator_app
 from __future__ import annotations
 
 import ipaddress
+import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from council.net.app import APP_HTML
+from council.net.baseline import generate_baseline
 from council.net.config import CONFIG
 from council.net.dashboard import DASHBOARD_HTML
 from council.net.store import Store
@@ -165,11 +167,41 @@ def me(x_user_secret: str | None = Header(default=None)):
     return store.user_balance(_user_auth(x_user_secret))
 
 
+def _baseline_async(job_id: str, question: str) -> None:
+    """Generate the independent single-model baseline.
+
+    API baseline → immediately (no local resources used). Local Ollama baseline → AFTER
+    the council job settles: on a CPU-only host the council's own inference and a 14B
+    baseline would fight for the same cores and both time out (measured: 99s idle vs
+    >300s contended). The app keeps polling a few minutes past 'done' to pick it up.
+    """
+    if not CONFIG.baseline_api_key:
+        import time
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            st = store.job_status(job_id)
+            if st not in ("pending_answers", "judging"):
+                break
+            time.sleep(5)
+    data = generate_baseline(question)
+    if not data:
+        print(f"[baseline] none stored for job {job_id[:8]} (generation returned nothing)", flush=True)
+        return
+    try:
+        store.set_baseline(job_id, data)
+        print(f"[baseline] stored for job {job_id[:8]}: {data['model']} in {data['elapsed_s']}s", flush=True)
+    except Exception as e:  # baseline is best-effort; never disturb the job — but say so
+        print(f"[baseline] store failed for job {job_id[:8]}: {type(e).__name__}: {e}", flush=True)
+
+
 @app.post("/jobs")
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
     out = store.create_job(handle, body.question)
     out["balance"] = store.user_balance(handle)
+    if out.get("status") == "pending_answers":
+        threading.Thread(target=_baseline_async, args=(out["job_id"], body.question),
+                         daemon=True, name="pw-baseline").start()
     return out
 
 

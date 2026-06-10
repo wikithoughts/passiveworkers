@@ -20,6 +20,7 @@ next step (and the reason we need a second machine abroad).
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -93,7 +94,10 @@ class PerspectiveWorker:
                 "stream": False,
                 "options": {"temperature": self.temperature, "num_predict": self.num_predict},
             },
-            timeout=300,
+            # On a shared CPU host a concurrent heavy generation (e.g. another job's
+            # baseline) can starve this one; a hard 300s turned brief contention into
+            # empty answers (score 0, perspective lost). Configurable per node.
+            timeout=float(os.environ.get("PW_OLLAMA_TIMEOUT", "300")),
         )
         resp.raise_for_status()
         data = resp.json()

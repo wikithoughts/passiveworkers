@@ -30,6 +30,19 @@ class Config:
     fleet_size: int = int(os.environ.get("PW_FLEET_SIZE", "3"))   # max answer-nodes per job
     node_ttl_s: float = float(os.environ.get("PW_NODE_TTL", "60"))  # node considered offline after this
     max_run_s: float = float(os.environ.get("PW_MAX_RUN", "300"))   # a job older than this is reaped → failed
+    # Honest compare baseline — the answer the council is judged AGAINST in the demand metric.
+    # A frontier API model if a key is set (the asker's real-world alternative), else a strong
+    # local model. Without either, the compare falls back to the best single council answer
+    # (labelled as such — that only measures merge-vs-ingredient, not real demand).
+    baseline_api_key: str = os.environ.get("PW_BASELINE_API_KEY", "")
+    baseline_api_url: str = os.environ.get("PW_BASELINE_API_URL",
+                                           "https://openrouter.ai/api/v1/chat/completions")
+    baseline_model: str = os.environ.get("PW_BASELINE_MODEL", "openai/gpt-4o-mini")
+    baseline_local_model: str = os.environ.get("PW_BASELINE_LOCAL_MODEL", "qwen3:14b")
+    # CPU inference on a busy box is slow; the local baseline is generated AFTER the council
+    # finishes (no core contention) and may take a few minutes. API baselines run immediately.
+    baseline_timeout_s: float = float(os.environ.get("PW_BASELINE_TIMEOUT", "600"))
+    ollama_base: str = os.environ.get("PW_OLLAMA_BASE", "http://127.0.0.1:11434")
 
 
 CONFIG = Config()

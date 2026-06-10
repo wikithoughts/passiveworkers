@@ -12,8 +12,8 @@ URL="http://127.0.0.1:${PW_PORT}"
 
 # Stop the old tmux hub (we're switching to systemd).
 tmux kill-session -t pw 2>/dev/null || true
-# Schema changed across Phase E (users/feedback/council) → fresh DB.
-rm -f "$DIR/coordinator.db"
+# NOTE: never wipe the DB here — the store migrates its own schema (ALTER TABLE on boot),
+# and the ledger/accounts/feedback must survive re-installs.
 
 cat >/etc/systemd/system/pw-coordinator.service <<UNIT
 [Unit]
@@ -23,6 +23,7 @@ Wants=network-online.target
 [Service]
 WorkingDirectory=$DIR
 EnvironmentFile=$DIR/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=$PY -m council.net.coordinator_app
 Restart=always
 RestartSec=3
@@ -45,6 +46,9 @@ Environment=PW_COUNTRY=FI
 Environment=PW_ANSWER_MODEL=llama3.2:latest
 Environment=PW_LENS=first_principles
 Environment=PW_POLL=2
+Environment=PW_WEB_BACKEND=ddgs
+Environment=PYTHONUNBUFFERED=1
+Environment=PW_OLLAMA_TIMEOUT=480
 ExecStart=$PY -m council.net.agent
 Restart=always
 RestartSec=3
@@ -53,10 +57,11 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now pw-coordinator.service
+systemctl enable pw-coordinator.service pw-worker.service
+systemctl restart pw-coordinator.service   # restart (not --now): pick up new code/units when already running
 sleep 3
 for i in $(seq 1 30); do curl -sf "$URL/healthz" >/dev/null 2>&1 && break; sleep 0.5; done
-systemctl enable --now pw-worker.service
+systemctl restart pw-worker.service
 sleep 4
 
 echo "=== systemd status ==="

@@ -40,7 +40,7 @@ set -e
 cd "$REMOTE_DIR"
 [ -d .venv ] || python3 -m venv .venv
 ./.venv/bin/pip -q install --upgrade pip >/dev/null 2>&1 || true
-./.venv/bin/pip -q install "fastapi>=0.115" "uvicorn[standard]>=0.30" requests psutil >/dev/null
+./.venv/bin/pip -q install "fastapi>=0.115" "uvicorn[standard]>=0.30" requests psutil "ddgs>=9.0" >/dev/null
 umask 077
 cat > "$REMOTE_DIR/.env" <<ENV
 PW_TOKEN=$PW_TOKEN
@@ -49,7 +49,11 @@ PW_PORT=$PORT
 PW_DB=$REMOTE_DIR/coordinator.db
 PW_FLEET_SIZE=3
 PW_NODE_TTL=120
+PW_BASELINE_LOCAL_MODEL=${PW_BASELINE_LOCAL_MODEL:-qwen3:14b}
+${PW_BASELINE_API_KEY:+PW_BASELINE_API_KEY=$PW_BASELINE_API_KEY}
+${PW_BASELINE_MODEL:+PW_BASELINE_MODEL=$PW_BASELINE_MODEL}
 ENV
+sed -i '/^\$/d' "$REMOTE_DIR/.env"   # drop blank lines from unset optionals
 ./.venv/bin/python -c "import fastapi, uvicorn, requests; print('→ deps OK on', __import__('socket').gethostname())"
 REMOTE
 echo "✓ deploy complete"

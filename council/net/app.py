@@ -148,7 +148,7 @@ async function ambientTick(){
 }
 
 // ---- ask + live render ----
-let polling=null;
+let polling=null,bwait=0,lastAns='';
 document.getElementById('ask').onclick=async()=>{
   if(!secret){document.getElementById('auth').style.display='block';return}
   const q=document.getElementById('q').value.trim();if(!q)return;
@@ -159,6 +159,7 @@ document.getElementById('ask').onclick=async()=>{
     document.getElementById('live').innerHTML='<div class="card" style="color:var(--bad)">✗ '+esc(j.error||'failed')+'</div>';return}
   if(j.balance)document.getElementById('me').innerHTML='@'+esc(j.balance.handle)+' · <b>'+j.balance.balance+'</b> cr';
   if(polling)clearInterval(polling);
+  bwait=0;lastAns='';
   poll(j.job_id);polling=setInterval(()=>poll(j.job_id),1500);
 };
 
@@ -201,7 +202,9 @@ function renderLive(v){
 
 function renderAnswer(v){
   const A=document.getElementById('answer');A.style.display='block';
-  const co=v.council||{};const base=(v.answers||[]).find(a=>a.is_baseline);
+  const co=v.council||{};
+  const ext=(v.baseline&&v.baseline.text)?v.baseline:null;     // independent single model
+  const base=ext||(v.answers||[]).find(a=>a.is_baseline);      // fallback: best council mind
   let h='<div class="card"><h3>The council’s answer</h3><div class="tl">'+esc(v.merged||'')+'</div>';
   if((co.consensus||[]).length){h+='<h3>Where they agree</h3><ul class="agree">'+co.consensus.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'}
   if((co.disagreements||[]).length){h+='<h3>Where they differ</h3><ul class="differ">'+
@@ -215,12 +218,15 @@ function renderAnswer(v){
   for(const a of v.answers||[]){
     h+='<div style="margin-top:10px;border-top:1px dashed #1b2750;padding-top:8px"><div class="row between">'+
        '<b>'+flag(a.country)+' '+esc(cc(a.country))+' <span class="muted">'+esc(a.model)+' · '+esc(a.lens)+'</span></b>'+
-       '<span class="pill">'+(a.score!=null?a.score+'/10':'…')+(a.is_baseline?' · baseline':'')+'</span></div>'+
+       '<span class="pill">'+(a.score!=null?a.score+'/10':'…')+(a.is_baseline?' · best single':'')+'</span></div>'+
        '<div class="tl muted" style="margin-top:5px">'+esc(a.text||'(no answer)')+'</div></div>';
   }
   h+='</details>';
-  if(base){h+='<div class="card"><div class="row between"><h3 style="margin:0">vs a single model'+
-    ' <span class="muted">('+flag(base.country)+' '+esc(base.model)+')</span></h3>'+
+  if(base){
+    const tag=ext?((ext.source==='api'?'🌐 ':'🖥 ')+esc(ext.model)+' · independent')
+                 :(flag(base.country)+' '+esc(base.model)+' · best council mind');
+    h+='<div class="card"><div class="row between"><h3 style="margin:0">vs a single model'+
+    ' <span class="muted">('+tag+')</span></h3>'+
     '<button class="ghost" id="cmp">compare</button></div>'+
     '<div id="single" class="tl muted" style="display:none;margin-top:8px">'+esc(base.text||'')+'</div></div>';}
   // A3 — what just happened / credits
@@ -253,7 +259,11 @@ function renderAnswer(v){
 async function poll(id){
   let v;try{v=await (await fetch('/jobs/'+id)).json()}catch(e){return}
   drawMap(v);renderLive(v);
-  if(v.status==='done'){renderAnswer(v);refreshMe();if(polling){clearInterval(polling);polling=null}}
+  if(v.status==='done'){
+    // re-render only when content changes (the independent baseline may land a bit later)
+    const sig=((v.baseline&&v.baseline.text)?'ext':'fb')+'·'+(v.answers||[]).length;
+    if(sig!==lastAns){lastAns=sig;renderAnswer(v);refreshMe();}
+    if(polling&&((v.baseline&&v.baseline.text)||++bwait>480)){clearInterval(polling);polling=null}}
   if(v.status==='failed'){if(polling){clearInterval(polling);polling=null}
     document.getElementById('live').innerHTML='<div class="card" style="color:var(--bad)">✗ '+esc(v.error||'failed')+'</div>';}
 }

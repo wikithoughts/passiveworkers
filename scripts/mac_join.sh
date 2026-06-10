@@ -9,6 +9,7 @@ source .venv/bin/activate
 source .vps.env
 URL="http://127.0.0.1:${PW_PORT}"
 export PW_TOKEN PW_COORDINATOR="$URL" PW_POLL=2
+export PW_WEB_BACKEND="${PW_WEB_BACKEND:-ddgs}"   # geo-diverse web research ON for the trial
 SSHK="${PW_SSH_KEY:-$HOME/.ssh/hetzner_ssh}"
 mkdir -p /tmp/pw
 pids=(); tunnel=""

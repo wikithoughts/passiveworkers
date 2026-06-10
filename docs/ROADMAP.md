@@ -75,9 +75,16 @@ The splendid, map-forward product **and** the first real demand test, served at 
   (the signal this project never had). Verified live cross-country (Mac AE + Helsinki FI).
 - ✅ **Always-on**: systemd units (`scripts/install_systemd.sh`) for coordinator + worker; restart-resilient.
 - **Open it:** `bash scripts/mac_join.sh` (or any tunnel) → browse `http://127.0.0.1:8791/`.
+- ✅ **Honest compare baseline** (`council/net/baseline.py`): the demand metric's "single model" is now
+  an INDEPENDENT answer — a frontier API model (`PW_BASELINE_API_KEY`, OpenRouter) or a strong local
+  model (`PW_BASELINE_LOCAL_MODEL`, default qwen3:14b) — generated in parallel with the council and
+  stored on the job. The old best-council-answer compare only measured merge-vs-ingredient; it remains
+  as a clearly-labelled fallback. Pulled forward from Phase F: a win-rate against a weak baseline would
+  have misled the first trial. Web research is ON for trial workers (`PW_WEB_BACKEND=ddgs` in
+  `mac_join.sh` + the worker unit). Trial runbook: `docs/TRIAL_PROTOCOL.md`.
 
 ## Phase F–H (ahead)
-- **F:** compare vs a hosted frontier model (sterner bar); token-streaming; embeddings agreement view; mobile polish.
+- **F:** ~~compare vs a hosted frontier model~~ (done early — see Phase E); token-streaming; embeddings agreement view; mobile polish.
 - **G:** one-command "contribute your PC" installer; GeoIP + deliberation-arc polish; operator leaderboard; 3rd country.
 - **H:** publish to GitHub once the demand metric shows signal.
 

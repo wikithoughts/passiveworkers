@@ -81,6 +81,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS ledger(id INTEGER PRIMARY KEY, data TEXT);
             """
         )
+        # migration: independent single-model baseline per job (see council/net/baseline.py)
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
+        if "baseline" not in cols:
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN baseline TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------ ledger persistence
@@ -221,25 +225,31 @@ class Store:
             job_id = str(uuid.uuid4())
 
             if not workers:
-                self.conn.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?)",
-                                  (job_id, asker, question, "failed", _now(), None, None,
-                                   "no worker nodes online", None))
+                self.conn.execute(
+                    "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                    (job_id, asker, question, "failed", _now(), None, None,
+                     "no worker nodes online", None))
                 self.conn.commit()
                 return {"job_id": job_id, "status": "failed", "error": "no worker nodes online"}
 
             self.ledger.open_account(asker)
             cost = self.ledger.quote(CONFIG.worker_pool, CONFIG.judge_fee)
             if not self.ledger.can_afford(asker, cost):
-                self.conn.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?)",
-                                  (job_id, asker, question, "failed", _now(), None, None,
-                                   "insufficient credit — help on a job first", None))
+                self.conn.execute(
+                    "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                    (job_id, asker, question, "failed", _now(), None, None,
+                     "insufficient credit — help on a job first", None))
                 self._save_ledger()
                 self.conn.commit()
                 return {"job_id": job_id, "status": "failed",
                         "error": "insufficient credit — help on a job first"}
 
-            self.conn.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?)",
-                              (job_id, asker, question, "pending_answers", _now(), None, None, None, None))
+            self.conn.execute(
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                " VALUES(?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "pending_answers", _now(), None, None, None, None))
             for n in workers:
                 self.conn.execute(
                     "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -250,6 +260,18 @@ class Store:
             self.conn.commit()
             return {"job_id": job_id, "status": "pending_answers",
                     "assigned": [n["node_id"] for n in workers]}
+
+    def job_status(self, job_id: str) -> Optional[str]:
+        with self.lock:
+            row = self.conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            return row["status"] if row else None
+
+    def set_baseline(self, job_id: str, data: dict) -> None:
+        """Attach the independent single-model baseline (generated off-thread)."""
+        with self.lock:
+            self.conn.execute("UPDATE jobs SET baseline=? WHERE job_id=?",
+                              (json.dumps(data), job_id))
+            self.conn.commit()
 
     def next_task(self, node_id: str) -> Optional[dict]:
         with self.lock:
@@ -437,8 +459,9 @@ class Store:
                             "score": a["score"], "text": res.get("text", ""),
                             "tokens": res.get("tokens"), "elapsed_s": res.get("elapsed_s"),
                             "is_baseline": False})
+            baseline = json.loads(job["baseline"]) if job["baseline"] else None
             done = [x for x in ans if x["status"] == "done" and x["score"] is not None]
-            if done:                                   # baseline = the BEST single answer
+            if done and not baseline:   # fallback only: best single COUNCIL answer as baseline
                 max(done, key=lambda x: x["score"])["is_baseline"] = True
             jt = self.conn.execute(
                 "SELECT node_id, country, status FROM tasks WHERE job_id=? AND type='judge' LIMIT 1",
@@ -451,6 +474,7 @@ class Store:
                 "judge_status": jt["status"] if jt else None,
                 "judge_machine_key": mkey(jt["node_id"]) if jt else None,
                 "receipt": json.loads(job["receipt"]) if job["receipt"] else None,
+                "baseline": baseline,
                 "answers": ans,
             }
 
