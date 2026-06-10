@@ -32,7 +32,7 @@ import uuid
 from typing import Any, Optional
 
 from council.ledger import Account, InsufficientCredit, Ledger
-from council.net.config import CONFIG
+from council.net.config import CONFIG, JOB_TYPES
 
 _now = time.time  # server runtime (not a workflow script)
 _FIELD_MAX = 80   # cap node/owner string lengths (defense-in-depth vs. abuse)
@@ -87,6 +87,8 @@ class Store:
             self.conn.execute("ALTER TABLE jobs ADD COLUMN baseline TEXT")
         if "pool" not in cols:       # per-job worker pool (responder dial: cost scales with minds)
             self.conn.execute("ALTER TABLE jobs ADD COLUMN pool REAL")
+        if "type" not in cols:       # job type — async work marketplace (D13); null/legacy = chat
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN type TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------ ledger persistence
@@ -212,9 +214,12 @@ class Store:
                     "council_win_rate": round(council / decisive, 3) if decisive else None}
 
     # ------------------------------------------------------------------ jobs / tasks
-    def create_job(self, asker: str, question: str, minds: int | None = None) -> dict:
+    def create_job(self, asker: str, question: str, minds: int | None = None,
+                   job_type: str = "chat") -> dict:
         with self.lock:
             asker = _clip(asker)
+            if job_type not in JOB_TYPES:
+                job_type = "chat"
             # Answer-workers = online nodes that declare a model; prefer higher reputation.
             candidates = [n for n in self.online_nodes() if n["answer_model"]]
 
@@ -227,7 +232,8 @@ class Store:
             # (per-mind price = worker_pool / fleet_size, so the default stays unchanged).
             n_minds = max(1, min(int(minds), len(candidates))) if minds else CONFIG.fleet_size
             workers = candidates[:n_minds]
-            pool = round(CONFIG.worker_pool / CONFIG.fleet_size * len(workers), 4)
+            pool = round(CONFIG.worker_pool / CONFIG.fleet_size * len(workers)
+                         * JOB_TYPES[job_type]["pool_mult"], 4)
             job_id = str(uuid.uuid4())
 
             if not workers:
@@ -253,14 +259,15 @@ class Store:
                         "error": "insufficient credit — help on a job first"}
 
             self.conn.execute(
-                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (job_id, asker, question, "pending_answers", _now(), None, None, None, None, pool))
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "pending_answers", _now(), None, None, None, None, pool, job_type))
             for n in workers:
                 self.conn.execute(
                     "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), job_id, "answer", n["node_id"], "queued",
-                     json.dumps({"question": question}), None, n["node_id"], n["owner"],
+                     json.dumps({"question": question, "job_type": job_type}), None,
+                     n["node_id"], n["owner"],
                      n["lens"], n["country"], n["answer_model"], _now(), None, None))
             self._save_ledger()   # persist the new asker account before acknowledging
             self.conn.commit()
@@ -276,7 +283,7 @@ class Store:
         """The asker's own question history (newest first) — powers the app's history list."""
         with self.lock:
             return [dict(r) for r in self.conn.execute(
-                "SELECT job_id, question, status, created FROM jobs WHERE asker=?"
+                "SELECT job_id, question, status, created, type FROM jobs WHERE asker=?"
                 " ORDER BY created DESC LIMIT ?", (asker, limit))]
 
     def set_baseline(self, job_id: str, data: dict) -> None:
@@ -336,14 +343,19 @@ class Store:
         answer_owners = {a["owner"] for a in answers}
         external = [j for j in judges if j["owner"] not in answer_owners]
         judge = external[0] if external else judges[0]
-        payload_answers = [
-            {"worker_id": a["worker_id"], "text": json.loads(a["result"]).get("text", "") if a["result"] else "",
-             "model": a["model"], "lens": a["lens"], "country": a["country"]}
-            for a in answers]
+        payload_answers = []
+        for a in answers:
+            res = json.loads(a["result"]) if a["result"] else {}
+            payload_answers.append(
+                {"worker_id": a["worker_id"], "text": res.get("text", ""),
+                 "model": a["model"], "lens": a["lens"], "country": a["country"],
+                 # structured research contribution (findings + sources) for the editor pass
+                 "research": res.get("research")})
         self.conn.execute(
             "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(uuid.uuid4()), job_id, "judge", judge["node_id"], "queued",
-             json.dumps({"question": job["question"], "answers": payload_answers}), None,
+             json.dumps({"question": job["question"], "answers": payload_answers,
+                         "job_type": job["type"] or "chat"}), None,
              judge["node_id"], judge["owner"], "", judge["country"], judge["judge_model"],
              _now(), None, None))
         self.conn.execute("UPDATE jobs SET status='judging' WHERE job_id=?", (job_id,))
@@ -432,8 +444,9 @@ class Store:
                 "SELECT * FROM jobs WHERE status IN ('pending_answers','judging')"))
             for job in stuck:
                 fail = None
-                if now - job["created"] > CONFIG.max_run_s:
-                    fail = f"deadline exceeded ({int(CONFIG.max_run_s)}s)"
+                deadline = JOB_TYPES.get(job["type"] or "chat", JOB_TYPES["chat"])["deadline_s"]
+                if now - job["created"] > deadline:
+                    fail = f"deadline exceeded ({int(deadline)}s)"
                 else:
                     # If any not-done task's assigned node has gone stale, the job can't progress.
                     tasks = self.conn.execute(
@@ -482,6 +495,7 @@ class Store:
                 (job_id,)).fetchone()
             return {
                 "job_id": job["job_id"], "asker": job["asker"], "question": job["question"],
+                "type": job["type"] or "chat",
                 "status": job["status"], "error": job["error"], "merged": job["merged"],
                 "council": json.loads(job["council"]) if job["council"] else None,
                 "judge_country": jt["country"] if jt else None,

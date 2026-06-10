@@ -38,7 +38,13 @@ global.fetch = async (url, opts={}) => {
   const method = (opts.method||'GET').toUpperCase();
   fetchCalls.push(method+' '+url);
   if(method==='POST'&&url==='/jobs') global.__jobsBody = opts.body;
-  if(url==='/jobs/mine') return resp([{job_id:'JOB1',question:'Where should a 2-person startup launch first?',status:'done',created:0}]);
+  if(url==='/jobs/mine') return resp([{job_id:'JOB1',question:'Where should a 2-person startup launch first?',status:'done',created:0,type:'chat'}]);
+  if(url==='/jobs/RJOB') return resp({job_id:'RJOB',status:'done',type:'research_report',question:'rbrief',
+     merged:'# Research report\n**Brief:** rbrief\n## Executive summary\nKey finding [S1].\n## Findings by country\n### FI\nFinding text [S1]\nSOURCES (FI):\n[S1] Helen — https://www.helen.fi/prices',
+     council:{consensus:[],disagreements:[],unique:[]},judge_country:'AE',judge_status:'done',judge_machine_key:'mAE',
+     answers:[{worker_id:'r1',owner:'o',model:'llama3.2',lens:'x',country:'FI',node_key:'k1',machine_key:'mFI',status:'done',status_label:'answered',score:8,text:'FI findings',tokens:400,elapsed_s:60,is_baseline:false}],
+     baseline:{text:'instant answer',model:'openai/gpt-5-chat',source:'api',elapsed_s:2},
+     receipt:{total_cost:95,payouts:{o:90},judge_fee:5}});
   if(url==='/status') return resp({machines:2,minds:2,online_nodes:[
      {node_key:'k1',machine_key:'mFI',name:'hel',country:'FI',owner:'o',answer_model:'llama3.2',lens:'x',can_judge:0,load:0.1,age_s:1,reputation:0,jobs_helped:0},
      {node_key:'k2',machine_key:'mAE',name:'macA',country:'AE',owner:'o',answer_model:'gemma3:4b',lens:'opp',can_judge:0,load:0.2,age_s:1,reputation:0,jobs_helped:0}
@@ -106,10 +112,21 @@ const assert = (c,m)=>{ if(!c){ console.error('✗ FAIL:', m); process.exit(1);}
 
   // 5) new features: responder dial, history, deep link
   assert(JSON.parse(global.__jobsBody).minds===3, 'Ask sent the responder dial (minds=3)');
+  assert(JSON.parse(global.__jobsBody).type==='chat', 'Ask sent the job type');
   assert(fetchCalls.includes('GET /jobs/mine'), 'history fetched after sign-in');
   assert(els['hist'].innerHTML.includes('startup launch') && els['hist'].innerHTML.includes('openJob'),
          'history list rendered with clickable items');
   assert(String(global.location.hash).includes('job=JOB1'), 'deep-link hash set on ask');
+
+  // 6) research_report deliverable (D13): open a research job, expect the rendered report
+  eval('openJob("RJOB")');   // declared by the page script in this scope
+  await wait(60);
+  assert(els['answer'].innerHTML.includes('Research report') && els['answer'].innerHTML.includes('Executive summary'),
+         'research report rendered with sections');
+  assert(els['answer'].innerHTML.includes('href="https://www.helen.fi/prices"'),
+         'citations rendered as clickable links');
+  assert(els['answer'].innerHTML.includes('more useful than the instant'),
+         'research vote prompt adapted');
 
   console.log('\n🎉 ALL FRONT-END FLOW CHECKS PASSED — sign-in → ask → render → vote works at runtime.');
 })();

@@ -111,3 +111,25 @@ to most judges but not to a real asker.
 prompts now forbid referring to candidates), merge length targeted to best-single. Next per this
 decision: strong-mind fleet anchor, research depth + citations in the UI, founder repeats the
 protocol in the app for the human signal.
+
+## D13 — The pivot: async work marketplace ("Upwork for computers"), flagship = Distributed Deep Research
+**Decision:** Passive Workers stops being a chat product. It is a marketplace where computers do
+JOBS for other computers in a different latency class: a brief goes in, machines work for minutes,
+a judged deliverable comes back. Job types are typed, priced, and deadlined (`JOB_TYPES` in
+`council/net/config.py`; `jobs.type`). The flagship type is **`research_report` — Distributed Deep
+Research**: every node runs multi-round, egress-localized, SSRF-guarded web research from its own
+country (`council/researcher.py`), cites sources `[S#]`, and a blind editor compiles one report with
+per-country findings and an agreement/difference read (`judge.compile_report`). Chat remains as a
+demo + honesty bar (the frontier compare and vote carry over to reports).
+**Why:** Three signals converged. (1) D12: chat lost 0/10 to gpt-5-chat, but the council won BOTH
+questions where live-web currency mattered — the edge exists only in deferred work. (2) The original
+research: the only pattern that ever paid on consumer hardware is latency-tolerant batch (Salad,
+Vast.ai); chat on distributed consumer machines has never worked. (3) The founder's own use: distant
+nodes feel slow in chat and irrelevant in a 30-minute job; Deep Research products trained users to
+wait for reports. Category claim: the only deep research done by many real computers in many real
+countries — one-egress centralized DR cannot copy in-country sources without a residential fleet,
+and D4 keeps ours legal (owned findings, never proxied traffic).
+**Status:** Settled (founder pivot, 2026-06-10) & implemented end-to-end same day. First live
+two-country report verified (FI+AE sources, cited, conserved ledger). Next: founder runs 3 real
+briefs (→ D14 demand signal per type), per-type reputation, then more job types (batch eval,
+data-gen — the research-commons north star) and Phase H with the category story.

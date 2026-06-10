@@ -1,14 +1,21 @@
 # Passive Workers
 
-An open-source, peer **mutual-aid AI-collaboration network**. People contribute idle
-compute; a task is run across a **diverse council** of nodes — different models, different
-lenses, and (the real moat) different countries' web access — then **judges score and merge**
-the answers into something better than any single one. Contributors earn a **non-transferable
-credit** they spend on their own tasks.
+**An open marketplace where computers do work for other computers** — "Upwork for computers."
+You submit a brief; machines around the world work on it for minutes (not seconds); a judged,
+cited deliverable comes back. Contributors earn a **non-transferable credit** their own
+machines spend on jobs. Open-source, self-hostable, mutual-aid economics.
 
-The value is **varied intelligence, not cheap intelligence.** We don't undercut a hosted
-model's price (small-model inference is already near-free and far faster centrally) — we offer
-what a single centralized model structurally cannot: a **global council of perspectives**.
+**The flagship job type — Distributed Deep Research:** the only deep research performed by
+many real computers in many real countries. Every node researches the live web *from its own
+country's vantage* (its own egress, its own local sources — never proxied traffic), cites its
+sources, and a blind editor compiles one report: executive summary, where the countries agree
+and differ, findings by country. Centralized deep research is one mind behind one datacenter
+egress; this is N independent minds with genuinely different windows on the web.
+
+We do not compete on instant answers or cheap inference (measured: a frontier model wins that
+0/10 — see `docs/TRIAL_RESULTS.md`). We compete in a different latency class, on what a
+centralized model structurally cannot have: **in-country sources, live currency, plural
+perspectives, privacy, and a commons.**
 
 > Start small (two computers) → grow the network → commercialize to companies later.
 > Mission-first **commons**; money only ever at the platform edges; **no token, no secondary market.**

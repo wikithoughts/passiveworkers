@@ -219,6 +219,60 @@ class Judge:
         return {"scores": scores, "merged": merged,
                 "council": {"consensus": consensus, "disagreements": disagreements, "unique": unique}}
 
+    # ------------------------------------------------------------------ 2b. COMPILE REPORT (D13)
+    def compile_report(self, question: str, contributions: list[dict], read: dict) -> str:
+        """
+        Editor pass for `research_report` jobs: one cited markdown report from the
+        per-country contributions. The model writes ONLY the executive summary and the
+        agreement/difference synthesis; the per-country findings (with their [S#]
+        citations and source lists) are assembled verbatim by code — small models
+        garble citation markers if asked to rewrite them.
+        contributions: payload answers [{country, model, lens, text, research}].
+        read: the deliberate() result (used as fallback + disagreement bullets).
+        """
+        drafts = "\n\n".join(
+            f"--- Contribution from {c.get('country', '?')} ---\n{(c.get('text') or '')[:2500]}"
+            for c in contributions)
+        raw = self._generate(
+            "You are the editor of a multi-country research report. Read the brief and the "
+            "contributions, then reply STRICT JSON only, no prose:\n"
+            '{"summary":"a 120-180 word executive summary leading with the most '
+            'decision-relevant findings (concrete numbers/dates; mention which country a '
+            'finding came from)",'
+            '"agreements":"2-3 sentences: what the countries\' findings agree on",'
+            '"differences":"2-3 sentences: where they genuinely differ and why it matters"}\n\n'
+            f"BRIEF:\n{question}\n\nCONTRIBUTIONS:\n{drafts}\n\nJSON:",
+            num_predict=700)
+        parsed = _extract_json(raw)
+        if not isinstance(parsed, dict):   # model may emit a list/garbage — never crash the report
+            parsed = {}
+        summary = str(parsed.get("summary", "")).strip() or str(read.get("merged", "")).strip()
+        agreements = str(parsed.get("agreements", "")).strip()
+        differences = str(parsed.get("differences", "")).strip()
+
+        countries = sorted({c.get("country", "?") for c in contributions})
+        parts = [f"# Research report\n**Brief:** {question}",
+                 f"_Researched independently by {len(contributions)} computer(s) in "
+                 f"{len(countries)} countr{'y' if len(countries) == 1 else 'ies'} "
+                 f"({', '.join(countries)}), live web, compiled by a blind editor._",
+                 "## Executive summary", summary]
+        if agreements or differences:
+            parts.append("## Where the countries agree — and differ")
+            if agreements:
+                parts.append(f"**Agree:** {agreements}")
+            if differences:
+                parts.append(f"**Differ:** {differences}")
+        dis = (read.get("council") or {}).get("disagreements") or []
+        if dis:
+            parts.append("\n".join(f"- {d.get('point', '')}"
+                                   + (f" — _{d['sides']}_" if d.get("sides") else "")
+                                   for d in dis if d.get("point")))
+        parts.append("## Findings by country")
+        for c in contributions:
+            parts.append(f"### {c.get('country', '?')} — {c.get('model', '')}")
+            parts.append((c.get("text") or "_(no findings)_"))
+        return "\n\n".join(p for p in parts if p)
+
     # ------------------------------------------------------------------ 3. COMPARE (verification)
     def compare(self, question: str, text_a: str, text_b: str) -> dict:
         """Blind A/B. Returns {'winner': 'A'|'B'|'tie', 'reason': str}."""

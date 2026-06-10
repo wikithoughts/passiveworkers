@@ -46,3 +46,22 @@ class Config:
 
 
 CONFIG = Config()
+
+# ---- Job-type catalog ("Upwork for computers" — see docs/DECISIONS.md D13) ----
+# Each type is a different latency class with its own price and deadline. `pool_mult`
+# scales the per-mind worker pool (real work costs real credits); `deadline_s` replaces
+# the single global reaper wall for that job's lifetime.
+JOB_TYPES: dict = {
+    "chat": {
+        "label": "Ask the council",
+        "eta": "3–8 min",
+        "pool_mult": 1.0,
+        "deadline_s": float(os.environ.get("PW_MAX_RUN", "600")),
+    },
+    "research_report": {
+        "label": "Deep research — many computers, many countries",
+        "eta": "20–40 min",
+        "pool_mult": 3.0,
+        "deadline_s": float(os.environ.get("PW_RESEARCH_MAX_RUN", "3600")),
+    },
+}

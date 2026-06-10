@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from council.net.app import APP_HTML
 from council.net.baseline import generate_baseline
-from council.net.config import CONFIG
+from council.net.config import CONFIG, JOB_TYPES
 from council.net.dashboard import DASHBOARD_HTML
 from council.net.store import Store
 
@@ -106,6 +106,7 @@ class UserBody(BaseModel):
 class JobBody(BaseModel):
     question: str = Field(..., max_length=4000)
     minds: int | None = Field(default=None, ge=1, le=16)   # responder dial (clamped to online)
+    type: str | None = Field(default=None, max_length=32)  # job type (see GET /job-types)
 
 
 class FeedbackBody(BaseModel):
@@ -195,10 +196,22 @@ def _baseline_async(job_id: str, question: str) -> None:
         print(f"[baseline] store failed for job {job_id[:8]}: {type(e).__name__}: {e}", flush=True)
 
 
+@app.get("/job-types")
+def job_types():
+    """The marketplace catalog — what kinds of work computers can request here."""
+    per_mind = CONFIG.worker_pool / CONFIG.fleet_size
+    return {k: {"label": v["label"], "eta": v["eta"],
+                "price_per_mind": round(per_mind * v["pool_mult"], 1),
+                "judge_fee": CONFIG.judge_fee,
+                "deadline_s": v["deadline_s"]}
+            for k, v in JOB_TYPES.items()}
+
+
 @app.post("/jobs")
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
-    out = store.create_job(handle, body.question, minds=body.minds)
+    out = store.create_job(handle, body.question, minds=body.minds,
+                           job_type=body.type or "chat")
     out["balance"] = store.user_balance(handle)
     if out.get("status") == "pending_answers":
         threading.Thread(target=_baseline_async, args=(out["job_id"], body.question),

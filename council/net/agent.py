@@ -108,6 +108,16 @@ class Agent:
 
     # ------------------------------------------------------------------ task handlers
     def _do_answer(self, task: dict) -> dict:
+        payload = task.get("payload") or {}
+        if payload.get("job_type") == "research_report" \
+                and os.environ.get("PW_WEB_BACKEND", "off") != "off":
+            # D13: async deep-research job — this node's own multi-round, egress-localized
+            # research with citations (council/researcher.py).
+            from council.researcher import ResearchWorker
+            rw = ResearchWorker(self.node_id, self.answer_model,
+                                lens=task.get("lens", self.lens),
+                                country=task.get("country", self.country))
+            return rw.research(payload["question"])
         web = None
         if os.environ.get("PW_WEB_BACKEND", "off") != "off":
             try:
@@ -129,7 +139,11 @@ class Agent:
             for x in payload["answers"]
         ]
         judge = Judge(model=self.judge_model or self.answer_model)
-        return judge.deliberate(payload["question"], answers)   # scores + merge + council read
+        out = judge.deliberate(payload["question"], answers)   # scores + merge + council read
+        if payload.get("job_type") == "research_report":
+            # Editor pass: merged becomes the full cited multi-country report.
+            out["merged"] = judge.compile_report(payload["question"], payload["answers"], out)
+        return out
 
     # ------------------------------------------------------------------ loop
     def _heartbeat_loop(self) -> None:
@@ -139,7 +153,14 @@ class Agent:
             time.sleep(self.poll_s)
 
     def run(self) -> None:
-        self.register()
+        # Never die because the coordinator/tunnel is briefly down at boot — keep trying.
+        while self._running:
+            try:
+                self.register()
+                break
+            except requests.RequestException as exc:
+                print(f"[agent] register failed ({exc}); retrying in 10s…")
+                time.sleep(10)
         threading.Thread(target=self._heartbeat_loop, daemon=True, name="pw-hb").start()
         while self._running:
             try:

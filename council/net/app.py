@@ -75,6 +75,11 @@ APP_HTML = r"""<!doctype html>
       <div class="row between" style="margin-top:8px">
         <span class="muted" id="hint">3 diverse minds will answer · costs 35 credits</span>
         <span class="row" style="gap:8px">
+          <select id="jtype" title="what kind of work"
+            style="background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:inherit">
+            <option value="chat" selected>💬 Ask</option>
+            <option value="research_report">🔬 Deep research</option>
+          </select>
           <select id="minds" title="how many minds answer (cost scales)"
             style="background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:inherit">
             <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option>
@@ -142,7 +147,7 @@ async function refreshHistory(){
     if(!l.length){hc.style.display='none';return}
     hc.style.display='';
     el.innerHTML=l.map(j=>{
-      const ic=j.status==='done'?'✓':j.status==='failed'?'✗':'…';
+      const ic=(j.status==='done'?'✓':j.status==='failed'?'✗':'…')+(j.type==='research_report'?' 🔬':'');
       return '<div style="cursor:pointer;padding:6px 2px;border-top:1px dashed #1b2750" '+
         'onclick="openJob(\''+esc(j.job_id)+'\')">'+ic+' '+esc((j.question||'').slice(0,90))+'</div>';
     }).join('');
@@ -183,19 +188,24 @@ function openJob(id){            // watch any job live (new ask, history click, 
   location.hash='job='+id;
   poll(id);polling=setInterval(()=>poll(id),1500);
 }
-// responder dial: cost preview scales with minds (per-mind 10 cr + judge 5, server defaults)
+// responder dial + job type: cost preview (per-mind 10 cr, research ×3, judge 5 — server defaults)
+function jt(){return (document.getElementById('jtype')||{}).value||'chat'}
 function updateHint(){
   const n=+(document.getElementById('minds').value||3);
-  document.getElementById('hint').textContent=
-    n+' diverse mind'+(n===1?'':'s')+' will answer · costs '+(n*10+5)+' credits';
+  const research=jt()==='research_report';
+  const cost=n*(research?30:10)+5;
+  document.getElementById('hint').textContent=research
+    ? n+' computer'+(n===1?'':'s')+' will research the live web from their own countries · '+cost+' credits · ~20–40 min'
+    : n+' diverse mind'+(n===1?'':'s')+' will answer · costs '+cost+' credits';
 }
 document.getElementById('minds').onchange=updateHint;
+document.getElementById('jtype').onchange=updateHint;
 document.getElementById('ask').onclick=async()=>{
   if(!secret){document.getElementById('auth').style.display='block';return}
   const q=document.getElementById('q').value.trim();if(!q)return;
   document.getElementById('answer').style.display='none';
   const minds=+(document.getElementById('minds').value||3);
-  const r=await fetch('/jobs',{method:'POST',headers:uHeaders(),body:JSON.stringify({question:q,minds:minds})});
+  const r=await fetch('/jobs',{method:'POST',headers:uHeaders(),body:JSON.stringify({question:q,minds:minds,type:jt()})});
   const j=await r.json();
   if(j.status==='failed'){document.getElementById('live').style.display='block';
     document.getElementById('live').innerHTML='<div class="card" style="color:var(--bad)">✗ '+esc(j.error||'failed')+'</div>';return}
@@ -225,12 +235,26 @@ function drawMap(v){
     .addTo(jobLayer).bindPopup('⚖️ judge · '+esc(cc(v.judge_country)));
 }
 
+// minimal markdown for the report deliverable (escape FIRST, then transform)
+function md(t){
+  let h=esc(t||'');
+  h=h.replace(/^### (.*)$/gm,'<h4>$1</h4>').replace(/^## (.*)$/gm,'<h3>$1</h3>').replace(/^# (.*)$/gm,'<h3>$1</h3>');
+  h=h.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+  h=h.replace(/(https?:\/\/[^\s<)\]]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#6ea8ff;word-break:break-all">$1</a>');
+  h=h.replace(/^[-•] (.*)$/gm,'<li>$1</li>');
+  h=h.replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>');
+  return '<div class="tl"><p>'+h+'</p></div>';
+}
 function renderLive(v){
   const el=document.getElementById('live');el.style.display='block';
   const machines=new Set((v.answers||[]).map(a=>a.machine_key)).size;
-  let h='<div class="card"><div class="row between"><b>The council is '+
-    (v.status==='judging'?'deliberating ⚖️':v.status==='done'?'decided ✓':'thinking…')+'</b>'+
+  const research=v.type==='research_report';
+  let h='<div class="card"><div class="row between"><b>'+
+    (research
+      ? (v.status==='judging'?'Compiling your report 📝':v.status==='done'?'Report ready 📄':'Researching the live web from '+machines+' countr'+(machines===1?'y':'ies')+' 🔍')
+      : ('The council is '+(v.status==='judging'?'deliberating ⚖️':v.status==='done'?'decided ✓':'thinking…')))+'</b>'+
     '<span class="muted">'+machines+' machine'+(machines===1?'':'s')+' · '+(v.answers||[]).filter(a=>a.status_label==='answered').length+'/'+(v.answers||[]).length+' minds</span></div>';
+  if(research&&v.status!=='done')h+='<div class="muted" style="font-size:12.5px;margin:6px 0 2px">Real research takes time (~20–40 min). You can close this page — the report will be under 🕘 My questions.</div>';
   for(const a of v.answers||[]){
     h+='<div class="persp"><span class="dot" style="background:'+statusColor(a.status_label)+'"></span>'+
        '<span class="flag">'+flag(a.country)+'</span><span><b>'+esc(cc(a.country))+'</b> '+
@@ -245,7 +269,12 @@ function renderAnswer(v){
   const co=v.council||{};
   const ext=(v.baseline&&v.baseline.text)?v.baseline:null;     // independent single model
   const base=ext||(v.answers||[]).find(a=>a.is_baseline);      // fallback: best council mind
-  let h='<div class="card"><h3>The council’s answer</h3><div class="tl">'+esc(v.merged||'')+'</div>';
+  let h;
+  if(v.type==='research_report'){
+    // the deliverable: a cited multi-country report (markdown from the editor pass)
+    h='<div class="card">'+md(v.merged||'')+'</div>';
+  }else{
+  h='<div class="card"><h3>The council’s answer</h3><div class="tl">'+esc(v.merged||'')+'</div>';
   if((co.consensus||[]).length){h+='<h3>Where they agree</h3><ul class="agree">'+co.consensus.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'}
   if((co.disagreements||[]).length){h+='<h3>Where they differ</h3><ul class="differ">'+
     co.disagreements.map(d=>'<li>'+esc(d.point)+(d.sides?(' — <span class="muted">'+esc(d.sides)+'</span>'):'')+'</li>').join('')+'</ul>'}
@@ -253,6 +282,7 @@ function renderAnswer(v){
      const who=(v.answers||[]).find(a=>a.worker_id===u.worker_id);
      return '<li>'+(who?flag(who.country)+' ':'')+esc(u.point)+'</li>'}).join('')+'</ul>'}
   h+='</div>';
+  }
   // A2 — every node's individual answer (read each one)
   h+='<details class="card"><summary class="muted">▸ The '+(v.answers||[]).length+' individual answers (read each mind)</summary>';
   for(const a of v.answers||[]){
@@ -281,7 +311,9 @@ function renderAnswer(v){
     h+='<li>'+flag(a.country)+' '+esc(a.model)+' — '+sp+earned+'</li>';
   }
   h+='</ul></details>';
-  h+='<div class="card vote"><div class="row between"><b>Was the council more useful than one model?</b></div>'+
+  h+='<div class="card vote"><div class="row between"><b>'+(v.type==='research_report'
+      ?'Was this report more useful than the instant single-model answer?'
+      :'Was the council more useful than one model?')+'</b></div>'+
      '<div class="row" style="margin-top:8px;gap:8px"><button id="vc">▲ Council</button>'+
      '<button class="ghost" id="vt">tie</button><button class="ghost" id="vs">▼ One model</button>'+
      '<span class="thanks" id="thx" style="margin-left:auto"></span></div></div>';

@@ -49,6 +49,7 @@ Environment=PW_POLL=2
 Environment=PW_WEB_BACKEND=ddgs
 Environment=PYTHONUNBUFFERED=1
 Environment=PW_OLLAMA_TIMEOUT=480
+Environment=PW_RESEARCH_GEN_TIMEOUT=900
 ExecStart=$PY -m council.net.agent
 Restart=always
 RestartSec=3

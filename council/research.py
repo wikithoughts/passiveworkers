@@ -132,3 +132,31 @@ def search(question: str) -> str:
         return _cached(q, bucket)
     except Exception:
         return ""
+
+
+def search_structured(query: str, max_results: int = 5) -> list[dict]:
+    """Structured variant for the researcher: [{title, url, host, snippet}], SSRF-guarded,
+    deduped by host. Best-effort; [] on any failure. Same egress-localization as search()."""
+    if _BACKEND == "off":
+        return []
+    q = (query or "").strip()[:300]
+    if not q:
+        return []
+    try:
+        rows = _searxng(q) if _BACKEND == "searxng" else _ddgs(q)
+    except Exception:
+        return []
+    out, seen = [], set()
+    for r in rows:
+        url = (r.get("href") or r.get("url") or "").strip()
+        host = (urlparse(url).hostname or "").lower()
+        if not host or host in seen or not _host_is_public(host):
+            continue
+        seen.add(host)
+        out.append({"title": (r.get("title") or "").strip()[:160],
+                    "url": url,
+                    "host": host,
+                    "snippet": (r.get("body") or r.get("content") or "").strip()[:500]})
+        if len(out) >= max_results:
+            break
+    return out
