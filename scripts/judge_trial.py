@@ -35,7 +35,7 @@ RUBRIC = (
     "You are judging two anonymous answers to the same question. Pick the one that is "
     "more USEFUL to the asker: accurate, specific, actionable, and honest about uncertainty. "
     "Ignore length and style; substance only.\n"
-    'Reply STRICT JSON only: {"winner":"A"|"B"|"tie","reason":"one short sentence"}\n\n'
+    'Reply STRICT JSON only: {{"winner":"A"|"B"|"tie","reason":"one short sentence"}}\n\n'
     "QUESTION:\n{q}\n\n--- Answer A ---\n{a}\n\n--- Answer B ---\n{b}\n\nJSON:"
 )
 

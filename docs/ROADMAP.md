@@ -83,6 +83,13 @@ The splendid, map-forward product **and** the first real demand test, served at 
   have misled the first trial. Web research is ON for trial workers (`PW_WEB_BACKEND=ddgs` in
   `mac_join.sh` + the worker unit). Trial runbook: `docs/TRIAL_PROTOCOL.md`.
 
+## First demand trial — DONE (2026-06-10, → D12)
+Council 0 / single 7 / tie 3 vs **gpt-5-chat** (two blind position-swapped judges; full table and
+excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY council edge was
+**live web currency** (both research-currency questions went to the council per the frontier-class
+judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
+research + show citations; the founder should repeat the protocol in the app for the human signal.
+
 ## Phase F–H (ahead)
 - **F:** ~~compare vs a hosted frontier model~~ (done early — see Phase E); token-streaming; embeddings agreement view; mobile polish.
 - **G:** one-command "contribute your PC" installer; GeoIP + deliberation-arc polish; operator leaderboard; 3rd country.

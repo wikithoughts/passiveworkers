@@ -92,3 +92,22 @@ a smaller model's answer is genuinely fine, so "downgrade" isn't even a cheat th
 This overturns Spike-1's clean 0.82 (an artifact of testing on one machine). If model-identity ever truly
 matters, use TOPLOC/TEE for those jobs — not a global threshold.
 **Status:** Settled by measurement; folds into M3 (quality eval) and the existing score-weighted ledger.
+
+## D12 — First demand trial: council 0/10 vs frontier; the edge is currency, not quality
+**Decision:** Stop competing on general answer quality against frontier models. The product leads with
+what a centralized frontier model cannot do: live geo-localized cited web research (the one measured
+edge), privacy, and the mutual-aid commons. Raise the council's substance floor with at least one
+strong local mind (≥14B) per fleet, deepen per-country research, and keep the honest in-app
+frontier compare as the standing quality bar.
+**Why:** The first 10-question trial (2026-06-10, docs/TRIAL_RESULTS.md) ran the live cross-country
+council against gpt-5-chat with two blind position-swapped judges: council 0 wins, single 7, tie 3.
+The council's merges lost on substance (generic where the frontier was specific; factual errors on
+SMRs) — 3–9B workers cannot out-substance a frontier model, merged or not, exactly as D3 predicted.
+The only council wins (per the frontier-class judge) were the two questions where 2026-currency
+mattered: its web research returned current, cited answers while gpt-5-chat answered from stale
+training data. A knowledge-frozen local judge could not even see that edge — currency is invisible
+to most judges but not to a real asker.
+**Status:** Settled by measurement. Done since: merge-leak fixed (a merge cited "Answer 1 and 3…" —
+prompts now forbid referring to candidates), merge length targeted to best-single. Next per this
+decision: strong-mind fleet anchor, research depth + citations in the UI, founder repeats the
+protocol in the app for the human signal.

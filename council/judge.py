@@ -139,6 +139,8 @@ class Judge:
             "  • Include the strongest points and any correct insight only one perspective found.\n"
             "  • If they disagree, state the resolution in ONE line.\n"
             "  • Cut filler, repetition, hedging, and preamble. Lead with the answer.\n"
+            "  • Write ONE direct answer to the asker — never mention 'Perspective N' or that "
+            "multiple answers exist.\n"
             f"  • Length target: {max(60, int(longest * 0.8))}–{longest} words — as substantive as the "
             "best perspective, never padded, never a stub. End with one line 'Diverse angles: …' "
             "(≤15 words) naming the distinct contributions.\n\n"
@@ -174,7 +176,8 @@ class Judge:
             '"unique":[{"answer":N,"point":"a valuable point only answer N made"}],'
             f'"merge":"a TIGHT synthesis of {max(60, int(longest * 0.8))}-{longest} words — as substantive '
             'as the best candidate, never padded, never a stub; integrated not appended, '
-            'leading with the answer"}\n'
+            'leading with the answer. Write it as ONE direct answer to the asker — never mention '
+            'Answer 1/2/3, candidates, or that multiple answers exist"}\n'
             "Judge on merit only; you do not know who wrote them.\n\n"
             f"QUESTION:\n{question}\n\nCANDIDATES:\n{joined}\n\nJSON:"
         )
