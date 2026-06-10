@@ -1,0 +1,8 @@
+# Passive Workers — Python deps for the spikes and the Council MVP.
+# Inference is served by a local Ollama (https://ollama.com) — not a pip package.
+requests>=2.32
+numpy>=2.0
+psutil>=7.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+ddgs>=9.0          # M4 per-country web research (optional; PW_WEB_BACKEND=ddgs)

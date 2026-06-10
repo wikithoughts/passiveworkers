@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""
+council/net/coordinator_app.py — the networked coordinator (FastAPI, hardened)
+==============================================================================
+The open-source, self-hostable hub. Holds the ledger, job queue, node registry, and
+telemetry; routes tasks and settles credit. Provider-agnostic (all config via env).
+
+AuthN/Z:
+  • X-PW-Token  — shared operator token, required on every write endpoint.
+  • X-Node-Secret — per-node secret (minted at register, shown once). Required on
+    heartbeat/next/result; the node is identified FROM the secret, and a node may only
+    complete its OWN tasks (no task hijacking, no score/ledger forgery).
+
+Endpoints:
+  POST /nodes/register     {name,country,owner,answer_model,lens,can_judge,judge_model,profile}
+                                                       → {node_id, node_secret}   (secret shown once)
+  POST /nodes/heartbeat    {load}                      [X-Node-Secret]
+  GET  /tasks/next                                     [X-Node-Secret]  → task or 204
+  POST /tasks/{task_id}/result   {…result…}            [X-Node-Secret]
+  POST /jobs               {asker, question}           → {job_id, status}
+  GET  /jobs/{job_id}                                  → full job view
+  GET  /status                                         → telemetry (no node_id/IP leak)
+  GET  /dashboard                                      → live operator map
+  GET  /healthz
+
+Run:  PW_TOKEN=… python -m council.net.coordinator_app
+"""
+
+from __future__ import annotations
+
+import ipaddress
+
+from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+
+from council.net.app import APP_HTML
+from council.net.config import CONFIG
+from council.net.dashboard import DASHBOARD_HTML
+from council.net.store import Store
+
+
+def _is_loopback(host: str) -> bool:
+    if host in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _startup_guard() -> None:
+    """Refuse to expose the coordinator publicly with a default/empty token."""
+    if not _is_loopback(CONFIG.host) and CONFIG.token in ("", "dev-token"):
+        raise RuntimeError(
+            f"refusing to bind {CONFIG.host} with a weak PW_TOKEN. Set a strong PW_TOKEN, "
+            "or bind 127.0.0.1 and front it with a tunnel/reverse proxy.")
+
+
+_startup_guard()
+app = FastAPI(title="Passive Workers — Council Coordinator")
+store = Store()
+
+
+def _auth(token: str | None) -> None:
+    if token != CONFIG.token:
+        raise HTTPException(status_code=401, detail="bad or missing X-PW-Token")
+
+
+def _node_auth(secret: str | None) -> str:
+    node_id = store.node_for_secret(secret or "")
+    if not node_id:
+        raise HTTPException(status_code=401, detail="bad or missing X-Node-Secret")
+    return node_id
+
+
+def _user_auth(secret: str | None) -> str:
+    handle = store.user_for_secret(secret or "")
+    if not handle:
+        raise HTTPException(status_code=401, detail="sign in first (bad or missing X-User-Secret)")
+    return handle
+
+
+class RegisterBody(BaseModel):
+    name: str = Field("node", max_length=80)
+    country: str = Field("?", max_length=80)
+    owner: str = Field(..., max_length=80)
+    answer_model: str = Field("", max_length=80)
+    lens: str = Field("neutral", max_length=80)
+    can_judge: bool = False
+    judge_model: str = Field("", max_length=80)
+    machine_id: str = Field("?", max_length=120)
+    profile: dict = {}
+
+
+class HeartbeatBody(BaseModel):
+    load: float = 0.0
+
+
+class UserBody(BaseModel):
+    handle: str = Field(..., max_length=40)
+
+
+class JobBody(BaseModel):
+    question: str = Field(..., max_length=4000)
+
+
+class FeedbackBody(BaseModel):
+    verdict: str = Field(..., max_length=12)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.post("/nodes/register")
+def register(body: RegisterBody, request: Request, x_pw_token: str | None = Header(default=None)):
+    _auth(x_pw_token)
+    ip = request.client.host if request.client else ""
+    return store.register_node(body.model_dump(), ip=ip)   # {node_id, node_secret}
+
+
+@app.post("/nodes/heartbeat")
+def heartbeat(body: HeartbeatBody, x_pw_token: str | None = Header(default=None),
+              x_node_secret: str | None = Header(default=None)):
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    store.heartbeat(node_id, body.load)
+    return {"ok": True}
+
+
+@app.get("/tasks/next")
+def next_task(x_pw_token: str | None = Header(default=None),
+              x_node_secret: str | None = Header(default=None)):
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    task = store.next_task(node_id)
+    if task is None:
+        return Response(status_code=204)
+    return task
+
+
+@app.post("/tasks/{task_id}/result")
+def task_result(task_id: str, result: dict, x_pw_token: str | None = Header(default=None),
+                x_node_secret: str | None = Header(default=None)):
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    accepted = store.complete_task(task_id, result, node_id=node_id)
+    if not accepted:
+        raise HTTPException(status_code=409, detail="task not yours, unknown, or already done")
+    return {"accepted": True}
+
+
+@app.post("/users")
+def make_user(body: UserBody):
+    res = store.register_user(body.handle)
+    if res.get("error"):
+        raise HTTPException(status_code=409, detail=res["error"])
+    return res
+
+
+@app.get("/me")
+def me(x_user_secret: str | None = Header(default=None)):
+    return store.user_balance(_user_auth(x_user_secret))
+
+
+@app.post("/jobs")
+def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
+    handle = _user_auth(x_user_secret)
+    out = store.create_job(handle, body.question)
+    out["balance"] = store.user_balance(handle)
+    return out
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    view = store.job_view(job_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="unknown job_id")
+    return view
+
+
+@app.post("/jobs/{job_id}/feedback")
+def feedback(job_id: str, body: FeedbackBody, x_user_secret: str | None = Header(default=None)):
+    who = _user_auth(x_user_secret)
+    if not store.record_feedback(job_id, body.verdict, who):
+        raise HTTPException(status_code=400, detail="bad verdict or unknown job")
+    return {"ok": True}
+
+
+@app.get("/metrics")
+def metrics():
+    return store.metrics()
+
+
+@app.get("/status")
+def status():
+    return store.status()
+
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return APP_HTML
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard():
+    return DASHBOARD_HTML
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host=CONFIG.host, port=CONFIG.port)
