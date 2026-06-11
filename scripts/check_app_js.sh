@@ -9,10 +9,14 @@ source .venv/bin/activate 2>/dev/null || true
 command -v node >/dev/null || { echo "node not found — skipping JS check"; exit 0; }
 
 fail=0
+tmpdir="$(mktemp -d)"
+tmp="$tmpdir/check.js"   # must end in .js so node treats it as a script
+trap 'rm -rf "$tmpdir"' EXIT
 for spec in "council.net.app:APP_HTML" "council.net.dashboard:DASHBOARD_HTML" "council.serve:SERVE_HTML"; do
   mod="${spec%%:*}"; var="${spec##*:}"
-  js="$(python3 -c "import re,importlib;m=importlib.import_module('$mod');print(re.findall(r'<script>(.*?)</script>', getattr(m,'$var'), re.DOTALL)[-1])")"
-  if printf '%s' "$js" | node --check /dev/stdin; then
+  # write to a real temp file — `node --check /dev/stdin` can't read a pipe on Linux CI
+  python3 -c "import re,importlib;m=importlib.import_module('$mod');open('$tmp','w').write(re.findall(r'<script>(.*?)</script>', getattr(m,'$var'), re.DOTALL)[-1])"
+  if node --check "$tmp"; then
     echo "✓ $mod inline JS parses clean"
   else
     echo "✗ $mod inline JS SYNTAX ERROR (see above)"; fail=1
