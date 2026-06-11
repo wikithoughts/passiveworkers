@@ -9,7 +9,7 @@ source .venv/bin/activate 2>/dev/null || true
 command -v node >/dev/null || { echo "node not found — skipping JS check"; exit 0; }
 
 fail=0
-for spec in "council.net.app:APP_HTML" "council.net.dashboard:DASHBOARD_HTML"; do
+for spec in "council.net.app:APP_HTML" "council.net.dashboard:DASHBOARD_HTML" "council.serve:SERVE_HTML"; do
   mod="${spec%%:*}"; var="${spec##*:}"
   js="$(python3 -c "import re,importlib;m=importlib.import_module('$mod');print(re.findall(r'<script>(.*?)</script>', getattr(m,'$var'), re.DOTALL)[-1])")"
   if printf '%s' "$js" | node --check /dev/stdin; then

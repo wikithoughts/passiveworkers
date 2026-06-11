@@ -19,6 +19,7 @@ judging is steady while the workers diverge.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -79,7 +80,10 @@ class Judge:
                 "stream": False,
                 "options": {"temperature": 0.0, "num_predict": num_predict or self.num_predict},
             },
-            timeout=400,
+            # CPU-only/busy machines need headroom (measured: a 4B judge can exceed 400s
+            # under contention); configurable like the worker/researcher timeouts.
+            timeout=float(os.environ.get("PW_JUDGE_TIMEOUT",
+                                         os.environ.get("PW_OLLAMA_TIMEOUT", "400"))),
         )
         resp.raise_for_status()
         return (resp.json().get("response") or "").strip()
@@ -208,9 +212,14 @@ class Judge:
             if wid and pt:
                 unique.append({"worker_id": wid, "point": pt})
 
+        def _sides(v) -> str:
+            if isinstance(v, dict):    # models sometimes return {"Answer 1": "...", ...}
+                return " · ".join(f"{k}: {x}" for k, x in v.items())
+            return str(v or "").strip()
+
         consensus = [str(x).strip() for x in (parsed.get("consensus") or []) if str(x).strip()][:6]
         disagreements = [
-            {"point": str(d.get("point", "")).strip(), "sides": str(d.get("sides", "")).strip()}
+            {"point": str(d.get("point", "")).strip(), "sides": _sides(d.get("sides"))}
             for d in (parsed.get("disagreements") or []) if isinstance(d, dict) and d.get("point")
         ][:6]
         merged = str(parsed.get("merge", "")).strip()
@@ -220,7 +229,8 @@ class Judge:
                 "council": {"consensus": consensus, "disagreements": disagreements, "unique": unique}}
 
     # ------------------------------------------------------------------ 2b. COMPILE REPORT (D13)
-    def compile_report(self, question: str, contributions: list[dict], read: dict) -> str:
+    def compile_report(self, question: str, contributions: list[dict], read: dict,
+                       local: bool = False) -> str:
         """
         Editor pass for `research_report` jobs: one cited markdown report from the
         per-country contributions. The model writes ONLY the executive summary and the
@@ -251,13 +261,19 @@ class Judge:
         differences = str(parsed.get("differences", "")).strip()
 
         countries = sorted({c.get("country", "?") for c in contributions})
-        parts = [f"# Research report\n**Brief:** {question}",
-                 f"_Researched independently by {len(contributions)} computer(s) in "
-                 f"{len(countries)} countr{'y' if len(countries) == 1 else 'ies'} "
-                 f"({', '.join(countries)}), live web, compiled by a blind editor._",
+        if local:
+            byline = (f"_Researched independently by {len(contributions)} local model(s) "
+                      f"({', '.join(c.get('model', '?') for c in contributions)}) on this "
+                      "computer, live web, compiled by a blind editor._")
+        else:
+            byline = (f"_Researched independently by {len(contributions)} computer(s) in "
+                      f"{len(countries)} countr{'y' if len(countries) == 1 else 'ies'} "
+                      f"({', '.join(countries)}), live web, compiled by a blind editor._")
+        parts = [f"# Research report\n**Brief:** {question}", byline,
                  "## Executive summary", summary]
         if agreements or differences:
-            parts.append("## Where the countries agree — and differ")
+            parts.append("## Where the analysts agree — and differ" if local
+                         else "## Where the countries agree — and differ")
             if agreements:
                 parts.append(f"**Agree:** {agreements}")
             if differences:
@@ -267,9 +283,10 @@ class Judge:
             parts.append("\n".join(f"- {d.get('point', '')}"
                                    + (f" — _{d['sides']}_" if d.get("sides") else "")
                                    for d in dis if d.get("point")))
-        parts.append("## Findings by country")
+        parts.append("## Findings by analyst" if local else "## Findings by country")
         for c in contributions:
-            parts.append(f"### {c.get('country', '?')} — {c.get('model', '')}")
+            head = c.get("model", "") if local else f"{c.get('country', '?')} — {c.get('model', '')}"
+            parts.append(f"### {head}")
             parts.append((c.get("text") or "_(no findings)_"))
         return "\n\n".join(p for p in parts if p)
 

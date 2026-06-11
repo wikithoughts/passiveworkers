@@ -75,9 +75,10 @@ class BatchWorker:
             idx, item = entry.get("i", 0), str(entry.get("item", ""))
             try:
                 if fetch:
+                    from council.sanitize import spotlight
                     content = self._fetch_public(item)
                     prompt = (f"{instruction}\n\nSOURCE URL: {item}\n"
-                              f"PAGE TEXT (extracted):\n{content}\n\nOUTPUT:")
+                              f"PAGE TEXT (extracted):\n{spotlight(content)}\n\nOUTPUT:")
                 else:
                     prompt = f"{instruction}\n\nITEM:\n{item}\n\nOUTPUT (concise):"
                 out, tk = self._generate(prompt)

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "passiveworkers"
+version = "0.1.0"
+description = "Local-first deep research: your models, your connection, your disk. Multiple local LLMs research the live web as independent analysts; a blind editor compiles a cited report."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.32",
+    "ddgs>=9.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "psutil>=7.0",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+pw = "council.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["council*"]

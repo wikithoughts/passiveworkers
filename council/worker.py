@@ -71,8 +71,10 @@ class PerspectiveWorker:
             try:
                 ctx = self.web_search(question)
                 if ctx:
+                    from council.sanitize import spotlight
                     context_block = (
-                        f"\n\nResearch you gathered from your local ({self.country}) web sources:\n{ctx}\n"
+                        f"\n\nResearch you gathered from your local ({self.country}) web sources:\n"
+                        f"{spotlight(ctx)}\n"
                         "Use it where relevant and cite what you used.\n"
                     )
             except Exception:

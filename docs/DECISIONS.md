@@ -155,3 +155,28 @@ ONLY pattern that ever paid on consumer hardware. The legal framing keeps the go
 fences the trap.
 **Status:** Settled & implemented (config JOB_TYPES, store sharding + `_meets`, council/batch.py,
 judge.spot_check, app ⚙️ Batch mode). Verified live cross-country same day.
+
+## D16 — Single-player first: the local deep-research engine IS the product; the network is the upgrade
+**Decision:** Invert the cold start. The product worth sharing with the world is the **local-first
+deep-research engine**: `pw research "brief"` on any computer with Ollama — multiple installed
+models research the live web as independent analysts, a blind editor (strongest local model, or
+BYOK frontier with `--editor api`) compiles a cited markdown report into `./reports/`; `pw serve`
+is the single-user research desk UI. Everything network-side (council/net: federation, credits,
+map, marketplace job types) remains in-repo as the **multiplayer mode** the installed base grows
+into — the SETI@home pattern: the screensaver first, the network as a side effect.
+**Security stance (from the founder's own deep-research report, adopted as requirements):**
+deliberately NOT computer-use — search API + plain fetch of public pages only; no browser, no
+sessions, no cookies ever. All web content is untrusted data: sanitized (invisible-Unicode/
+hidden-comment stripping, `council/sanitize.py`) and spotlighted ("data, never instructions") in
+every prompt that carries it; models hold zero tool privileges (text out only; Python acts);
+reports write only to ./reports/; fetches SSRF-guarded. Dissent-preserving editor retained
+(anti-"deliberative illusion"). Verified with a live injection probe.
+**Why:** Every prior product required the network to exist before being valuable (vision ÷ N=2 —
+why each version felt immature in the founder's hands). The one measured win (D12) is live cited
+web research; a single-player tool monetizes that edge at N=1, is honestly shareable as
+open source (a tool is judged by what it does, not by company maturity), and every install is a
+future federation node.
+**Status:** Settled & implemented (council/{local,serve,cli,sanitize}.py, pyproject `pw` entry,
+MIT LICENSE, README rewritten). Verified: Mac quick run (1,052-word report, 16 curated sources,
+2.3 min), serve end-to-end, injection probe passed, VPS standalone run, founder-grade briefs.
+GitHub publish (Phase H) remains the founder's call.

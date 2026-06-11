@@ -1,3 +1,40 @@
+Metadata-Version: 2.4
+Name: passiveworkers
+Version: 0.1.0
+Summary: Local-first deep research: your models, your connection, your disk. Multiple local LLMs research the live web as independent analysts; a blind editor compiles a cited report.
+License: MIT License
+        
+        Copyright (c) 2026 Passive Workers contributors
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+        
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: requests>=2.32
+Requires-Dist: ddgs>=9.0
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn>=0.30
+Requires-Dist: psutil>=7.0
+Requires-Dist: pydantic>=2.0
+Dynamic: license-file
+
 # Passive Workers — local-first deep research
 
 **Your models. Your connection. Your disk.** One command turns any computer with
@@ -66,9 +103,6 @@ editor pass over locally-gathered findings — your choice; the default is fully
 | 24 GB+ | 14–32B (+ mistral-small:22b) | best local quality |
 
 Models run **sequentially** by design — no concurrent loads fighting for memory.
-On CPU-only or busy machines, cap the cast by weight size: `PW_MODEL_CAP_GB=3 pw research …`
-(big models on CPU crawl at 3–6 tok/s — a small model that fits is always faster than a large
-one that spills).
 
 ## Federation (experimental) — the multiplayer mode
 

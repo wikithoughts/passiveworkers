@@ -32,9 +32,24 @@ from urllib.parse import urlparse
 
 _TIMEOUT = float(os.environ.get("PW_WEB_TIMEOUT", "8"))
 _MAX_RESULTS = int(os.environ.get("PW_WEB_RESULTS", "5"))
-_BACKEND = os.environ.get("PW_WEB_BACKEND", "off")
+def _backend() -> str:
+    # read at CALL time, not import time — callers (e.g. council.local) may enable the
+    # web after this module is imported
+    return os.environ.get("PW_WEB_BACKEND", "off")
 _SEARX = os.environ.get("PW_SEARXNG_URL", "")
 _UA = "PassiveWorkers-Research/0.1 (mutual-aid council; egress-localized)"
+
+# Source curation: hosts that are video/social/link-farm — fine for browsing, weak as
+# research citations. Suffix-matched so subdomains are covered.
+_LOW_QUALITY_HOSTS = (
+    "youtube.com", "youtu.be", "tiktok.com", "facebook.com", "instagram.com",
+    "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "threads.net",
+    "quora.com", "slideshare.net", "scribd.com",
+)
+
+
+def _is_quality_host(host: str) -> bool:
+    return not any(host == h or host.endswith("." + h) for h in _LOW_QUALITY_HOSTS)
 
 
 # ---- SSRF / abuse guard: only public hosts (block loopback/private/link-local/CGNAT/metadata).
@@ -59,7 +74,7 @@ def _clean(results: list[dict]) -> str:
     for r in results:
         url = (r.get("href") or r.get("url") or "").strip()
         host = (urlparse(url).hostname or "").lower()
-        if not host or host in seen or not _host_is_public(host):
+        if not host or host in seen or not _host_is_public(host) or not _is_quality_host(host):
             continue
         seen.add(host)
         title = (r.get("title") or "").strip()
@@ -111,8 +126,8 @@ def _wikipedia_fallback(question: str) -> str:
 
 
 @lru_cache(maxsize=256)
-def _cached(question: str, _bucket: int) -> str:
-    if _BACKEND == "searxng":
+def _cached(question: str, _bucket: int, backend: str) -> str:
+    if backend == "searxng":
         rows = _searxng(question)
     else:
         rows = _ddgs(question)
@@ -122,14 +137,14 @@ def _cached(question: str, _bucket: int) -> str:
 
 def search(question: str) -> str:
     """The web_search hook: (question) -> findings text. Best-effort; '' on any failure."""
-    if _BACKEND == "off":
+    if _backend() == "off":
         return ""
     q = (question or "").strip()[:300]
     if not q:
         return ""
     try:
         bucket = int(time.time() // 900)   # 15-minute cache window via the lru_cache key
-        return _cached(q, bucket)
+        return _cached(q, bucket, _backend())
     except Exception:
         return ""
 
@@ -137,26 +152,28 @@ def search(question: str) -> str:
 def search_structured(query: str, max_results: int = 5) -> list[dict]:
     """Structured variant for the researcher: [{title, url, host, snippet}], SSRF-guarded,
     deduped by host. Best-effort; [] on any failure. Same egress-localization as search()."""
-    if _BACKEND == "off":
+    backend = _backend()
+    if backend == "off":
         return []
     q = (query or "").strip()[:300]
     if not q:
         return []
     try:
-        rows = _searxng(q) if _BACKEND == "searxng" else _ddgs(q)
+        rows = _searxng(q) if backend == "searxng" else _ddgs(q)
     except Exception:
         return []
+    from council.sanitize import clean as _sanitize
     out, seen = [], set()
     for r in rows:
         url = (r.get("href") or r.get("url") or "").strip()
         host = (urlparse(url).hostname or "").lower()
-        if not host or host in seen or not _host_is_public(host):
+        if not host or host in seen or not _host_is_public(host) or not _is_quality_host(host):
             continue
         seen.add(host)
-        out.append({"title": (r.get("title") or "").strip()[:160],
+        out.append({"title": _sanitize((r.get("title") or ""))[:160],
                     "url": url,
                     "host": host,
-                    "snippet": (r.get("body") or r.get("content") or "").strip()[:500]})
+                    "snippet": _sanitize((r.get("body") or r.get("content") or ""))[:500]})
         if len(out) >= max_results:
             break
     return out

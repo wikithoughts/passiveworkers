@@ -42,6 +42,7 @@ class ResearchWorker:
     country: str = "local"
     temperature: float = 0.4
     ollama_base: str = OLLAMA_BASE
+    depth: str = "standard"   # quick (plan only) | standard (plan+refine) | deep (plan+2×refine)
 
     def _generate(self, prompt: str, num_predict: int) -> tuple[str, int]:
         r = requests.post(
@@ -77,17 +78,24 @@ class ResearchWorker:
         return qs[:2]
 
     def _draft(self, brief: str, evidence: list[dict]) -> tuple[str, int]:
-        src_block = "\n".join(
+        from council.sanitize import spotlight
+        src_block = spotlight("\n".join(
             f"[S{i+1}] {e['title']} ({e['host']})\n     {e['snippet'][:300]}"
-            for i, e in enumerate(evidence))
+            for i, e in enumerate(evidence)))
+        geo = self.country not in ("", "local", "your location")
+        role = (f"You are a researcher physically located in {self.country}, writing your "
+                "contribution to a multi-country research report."
+                if geo else
+                "You are an independent research analyst writing your contribution to a "
+                "multi-analyst research report.")
+        vantage = (f"  • Add one short paragraph: what looks different from {self.country}'s "
+                   "vantage (local sources, local context), if anything.\n" if geo else "")
         return self._generate(
-            f"You are a researcher physically located in {self.country}, writing your "
-            "contribution to a multi-country research report. Using ONLY the sources below, "
+            f"{role} Using ONLY the sources below, "
             "write your findings on the brief:\n"
             "  • Lead with the most decision-relevant findings; concrete numbers and dates.\n"
             "  • Cite every claim with its [S#] marker. Never invent sources or facts.\n"
-            f"  • Add one short paragraph: what looks different from {self.country}'s "
-            "vantage (local sources, local context), if anything.\n"
+            f"{vantage}"
             "  • If the sources are thin on some aspect, say so honestly.\n"
             "  • 250-400 words. No preamble.\n\n"
             f"BRIEF:\n{brief}\n\nSOURCES:\n{src_block}\n\nFINDINGS:", num_predict=700)
@@ -107,9 +115,12 @@ class ResearchWorker:
                     evidence.append(row)
 
         _collect(self._plan_queries(brief), per_query=4)
-        if evidence:
+        if evidence and self.depth != "quick":
             _collect(self._refine_queries(brief, evidence), per_query=3)
-        evidence[:] = evidence[:12]   # keep the prompt within small-model context
+            if self.depth == "deep":
+                _collect(self._refine_queries(brief, evidence), per_query=3)
+        cap = {"quick": 8, "deep": 16}.get(self.depth, 12)
+        evidence[:] = evidence[:cap]   # keep the prompt within small-model context
 
         if not evidence:
             # No web access / nothing found — fall back to an honest no-sources note;
@@ -134,8 +145,10 @@ class ResearchWorker:
         sources = [{"id": f"S{i+1}", "title": e["title"], "url": e["url"], "host": e["host"]}
                    for i, e in enumerate(evidence)]
         src_list = "\n".join(f"[{s['id']}] {s['title']} — {s['url']}" for s in sources)
+        label = (f"SOURCES ({self.country})"
+                 if self.country not in ("", "local", "your location") else "SOURCES")
         return {
-            "text": f"{draft}\n\nSOURCES ({self.country}):\n{src_list}",
+            "text": f"{draft}\n\n{label}:\n{src_list}",
             "tokens": tokens,
             "elapsed_s": round(time.monotonic() - t0, 2),
             "research": {"country": self.country, "sources": sources},

@@ -90,6 +90,14 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## SINGLE-PLAYER FIRST (D16, 2026-06-10) — the product to share with the world
+The local deep-research engine IS the product: `pw research` (multi-model analysts, live web,
+cited report to ./reports/) + `pw serve` (local research desk). Security stance from the
+founder's research: no computer-use, sanitizer + spotlighting, zero model tool-privileges,
+injection probe in the test suite. The network below is the MULTIPLAYER mode the installed
+base grows into. Next: founder reads the founder-grade reports → polish → GitHub (Phase H,
+founder's call) → PyPI.
+
 ## THE PIVOT (D13, 2026-06-10) — async work marketplace; flagship: Distributed Deep Research
 R1 ✅ SHIPPED: typed jobs (`JOB_TYPES`: chat / research_report, per-type price + deadline);
 iterative per-country researcher (`council/researcher.py`, multi-round, cited, SSRF-guarded);
