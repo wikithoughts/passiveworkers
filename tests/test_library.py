@@ -17,7 +17,17 @@ def _fake_embed(texts):
 def test_chunking_overlap():
     chunks = L._chunk("word " * 1000)
     assert len(chunks) >= 2
-    assert all(len(c) <= L._CHUNK_CHARS for c in chunks)
+    # chunks may exceed CHUNK_CHARS by the prepended overlap tail (boundary insurance)
+    assert all(len(c) <= L._CHUNK_CHARS + L._OVERLAP + 8 for c in chunks)
+
+
+def test_chunking_is_structure_aware():
+    # a header should start a fresh chunk, never straddle the previous section
+    text = "# Section A\n" + ("alpha " * 50) + "\n## Section B\n" + ("beta " * 50)
+    chunks = L._chunk(text)
+    assert any("Section A" in c for c in chunks) and any("Section B" in c for c in chunks)
+    # no single chunk contains BOTH section bodies fused together
+    assert not any(("alpha" in c and "beta" in c and "Section B" not in c) for c in chunks)
 
 
 def test_add_and_search(tmp_path, monkeypatch):
@@ -41,6 +51,41 @@ def test_empty_library_returns_no_hits(tmp_path, monkeypatch):
     lib = L.Library(db_path=tmp_path / "empty.db")
     assert lib.is_empty()
     assert lib.search("anything") == []
+
+
+def test_incremental_skip_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "embed", _fake_embed)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    doc = tmp_path / "memo.md"
+    doc.write_text("Project Polaris budget. " * 20)
+    assert lib._add_file(doc) >= 1          # first index
+    assert lib._add_file(doc) == 0          # unchanged → skipped
+    doc.write_text("Project Polaris CHANGED budget. " * 20)
+    assert lib._add_file(doc) >= 1          # changed → re-indexed
+
+
+def test_hybrid_search_returns_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "embed", _fake_embed)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    (tmp_path / "a.md").write_text("Project Polaris ships in Finland with a fixed budget. " * 5)
+    (tmp_path / "b.md").write_text("The cat sat in the weather all afternoon. " * 5)
+    lib.add(str(tmp_path / "a.md")); lib.add(str(tmp_path / "b.md"))
+    hits = lib.search("polaris budget", k=1, window=False)
+    assert hits and hits[0]["title"] == "a.md"
+
+
+def test_search_result_never_leaks_context_blurb(tmp_path, monkeypatch):
+    # the contextual blurb / context column must never appear in the displayed [L#] quote
+    monkeypatch.setattr(L, "embed", _fake_embed)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    (tmp_path / "a.md").write_text("Project Polaris budget in Finland. " * 6)
+    lib.add(str(tmp_path / "a.md"))
+    for h in lib.search("polaris", k=2):
+        assert set(h.keys()) == {"source", "title", "ord", "text", "score"}
+        assert "context" not in h
 
 
 def test_unsupported_filetype(tmp_path):

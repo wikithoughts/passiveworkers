@@ -35,6 +35,14 @@ Your files are chunked and embedded **locally** (Ollama `nomic-embed-text`) into
 `~/.passiveworkers/library.db` — nothing is uploaded. Reports cite documents as `[L#]` and web
 sources as `[S#]`, kept in separate sections.
 
+Retrieval is state-of-the-art but lean: **hybrid** (dense embeddings ⊕ BM25 lexical, fused by
+reciprocal rank fusion) so exact names/codes/numbers aren't missed; **structure-aware chunking**
+that never straddles a section; **parent-window** expansion for grounding; and optional
+**Contextual Retrieval** (`PW_CONTEXTUAL_CHUNKS=1`, Anthropic's technique — a small local model
+situates each chunk before indexing) and **reranking** (`PW_RERANK=1`). Indexing is incremental
+(unchanged files are skipped). Measure it on your own corpus with `python scripts/bench_rag.py` —
+we publish what actually helps, not vendor numbers.
+
 ### Use it from your own AI (MCP)
 
 ```bash

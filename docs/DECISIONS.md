@@ -262,3 +262,37 @@ prompt markers and the listing align; `fix_dangling_citations` generalized to `[
 instruction conditional on which sources exist. (integration) MCP stdout corruption → progress to
 stderr; `numpy` promoted to a core dependency; federation worker pins `scope="web"` (no operator
 library access). Regression tests added (confinement, dangling-`[L#]`). 25 unit tests green.
+
+## D20 — Best-in-class local RAG: hybrid retrieval + structure-aware chunking + contextual retrieval
+**Decision:** Upgrade the private-library RAG to the current (2026) state of the art, grounded in a
+research pass and **measured on our own corpus** (not vendor numbers): (1) **Hybrid retrieval** —
+dense cosine ⊕ BM25 lexical, fused by Reciprocal Rank Fusion (k=60), top-50/retriever
+(`council/retrieval.py`, pure-Python, zero new deps); catches exact terms (names/codes/numbers)
+dense can miss. (2) **Structure-aware chunking** — split on headers then recurse
+paragraph→line→sentence→word to ~2000 chars; never straddle a section (replaced the old whitespace-
+collapsing 1400-char slicer, the measured weak link). (3) **Parent-window expansion** (small-to-big)
+via the existing `ord` column — retrieve precise chunks, feed neighbor-expanded context. (4)
+**Contextual Retrieval** (Anthropic technique, flag `PW_CONTEXTUAL_CHUNKS=1`): a small local model
+writes a situating blurb prepended before embedding/BM25; title is always prepended free; the blurb
+never leaks into the displayed `[L#]` quote (separate `text` column). (5) **Incremental indexing** —
+content-hash skip-unchanged. (6) **Opt-in listwise rerank** (`PW_RERANK=1`, zero-dep local-LLM).
+**Measured honestly (scripts/bench_rag.py):** on small clean corpora a strong local embedder
+(nomic-embed-text) already saturates retrieval (dense 7/7 = hybrid 7/7), including exact-code and
+buried-term cases — so hybrid is robustness insurance for the long tail, and the everyday wins are
+the chunker, parent-window, and contextual blurbs. We publish this rather than a vendor "+35%."
+**Skipped as overkill for a lean local tool:** GraphRAG, ColBERT/late-interaction, cloud rerankers,
+trusting vendor benchmark numbers.
+**Status:** Settled & implemented (council/retrieval.py, council/library.py; scripts/bench_rag.py;
+tests). Default path stays fast (contextual + rerank are opt-in).
+
+### D20 addendum — adversarial review pass (R8)
+A workflow review (3 dimensions × adversarial verify) surfaced 13 findings; 9 confirmed and fixed
+before commit: (HIGH) `BM25.top()` recomputed the score vector inside the sort key → O(n²); now
+computed once. (med) char overlap inflated chunks past the size budget → `_split_recursive` now
+targets `CHUNK_CHARS − OVERLAP` so stored chunks stay ≤ budget. (low) recursive split dropped
+sentence punctuation at flush → separator re-appended. (med/low security) rerank candidate text and
+the situating-blurb document are untrusted → both now `spotlight()`-wrapped before the LLM call.
+(low) query-time rebuilt the whole matrix+BM25 each call → cached on a (count, max-id) fingerprint
+(helps the 3-analysts/run and serve/MCP loop). (low) mixed pre/post-contextual embedding spaces →
+one-line re-index hint. (verified safe) the context blurb never leaks into `[L#]` quotes — locked
+with a test. 34 unit tests green.

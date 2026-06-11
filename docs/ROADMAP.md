@@ -90,6 +90,14 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R8 — BEST-IN-CLASS LOCAL RAG (D20, 2026-06-11)
+Hybrid retrieval (dense ⊕ BM25 ⊕ RRF, council/retrieval.py), structure-aware chunking,
+parent-window (small-to-big), Anthropic Contextual Retrieval (PW_CONTEXTUAL_CHUNKS), incremental
+indexing, opt-in listwise rerank (PW_RERANK). Grounded in a research pass; measured on our own
+corpus (scripts/bench_rag.py) — honest finding: a strong local embedder saturates small corpora,
+so hybrid is long-tail insurance and chunking/window/contextual are the everyday wins. Skipped
+GraphRAG/ColBERT/cloud-rerankers as overkill. Next: federation (FEDERATION_V2 assisted task) + PyPI.
+
 ## R7 — COMPLETE THE APP (D19, 2026-06-11)
 Local-documents RAG (`pw library`, fully-local embeddings, [L#] citations, --local/--web scope),
 MCP server (`pw mcp` — research/library_search/library_add tools for Claude Desktop/Codex), real
