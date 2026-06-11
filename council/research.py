@@ -269,10 +269,31 @@ def _strip_html(html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def fetch_extract(url: str, max_chars: int = 6000) -> str:
-    """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized plain text.
+def _extract_main(html: str) -> tuple[str, str]:
+    """(main_text, iso_date) from raw HTML. Prefer trafilatura (real boilerplate removal +
+    metadata, Apache-2.0; see docs/PRIOR_ART.md); fall back to our regex strip if it's
+    absent or yields nothing. Date is best-effort ('' when unknown)."""
+    try:
+        import trafilatura
+        text = trafilatura.extract(html, include_comments=False, include_tables=True,
+                                   favor_precision=True) or ""
+        date = ""
+        try:
+            md = trafilatura.extract_metadata(html)
+            date = (getattr(md, "date", "") or "") if md else ""
+        except Exception:
+            date = ""
+        if text.strip():
+            return text.strip(), date
+    except Exception:
+        pass
+    return _strip_html(html), ""
+
+
+def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
+    """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized main text.
     Shared by the researcher (page evidence) and batch fetch shards. Raises on failure —
-    callers treat page evidence as best-effort."""
+    callers treat page evidence as best-effort. with_date=True → (text, iso_date)."""
     import requests
     from council.sanitize import clean
     host = (urlparse(url).hostname or "").lower()
@@ -281,4 +302,6 @@ def fetch_extract(url: str, max_chars: int = 6000) -> str:
     r = requests.get(url, headers={"User-Agent": _UA}, timeout=15, stream=True)
     r.raise_for_status()
     raw = r.raw.read(_FETCH_CAP, decode_content=True).decode("utf-8", "replace")
-    return clean(_strip_html(raw))[:max_chars]
+    text, date = _extract_main(raw)
+    text = clean(text)[:max_chars]
+    return (text, date) if with_date else text

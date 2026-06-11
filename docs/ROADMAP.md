@@ -90,6 +90,15 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R6 — REUSE + TRUST ARCHITECTURE (D18, 2026-06-11)
+Embedded trafilatura (real main-content/date extraction, regex fallback); tamper-evident result
+digest (FEDERATION_V2 step 1). Decided reuse policy (embed libs / reimplement techniques / MCP
+interop — no forks; PRIOR_ART.md), transparency-mandatory (never hidden work), and computer-use =
+human-mediated `assisted` handoff (operator uses their own agentic AI under approval — never our
+autonomous code). Master structure in docs/FEDERATION_V2.md. Next build: the `assisted` task class
+(job type + operator approval UI); then signed/encrypted delivery + chunked artifacts (security-review
+gated); then MCP server + local-docs RAG.
+
 ## R5 — ECOSYSTEM LESSONS (D17, 2026-06-11)
 Full-page evidence (fetch_extract), STORM-lite perspective planner, SearXNG auto-prefer +
 docker-compose, DDG backoff, arXiv/Wikipedia routing, SimpleQA bench script. Deliberately not

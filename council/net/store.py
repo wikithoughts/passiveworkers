@@ -356,6 +356,15 @@ class Store:
                     "payload": json.loads(row["payload"]), "lens": row["lens"],
                     "country": row["country"], "model": row["model"]}
 
+    @staticmethod
+    def result_digest(result: dict) -> str:
+        """Canonical SHA-256 of a task result — tamper-evidence (FEDERATION_V2 trust step 1).
+        Any later alteration of a stored deliverable becomes detectable. Canonical = sorted
+        keys, compact separators, so the hash is stable across serializations."""
+        canonical = json.dumps(result, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def complete_task(self, task_id: str, result: dict, node_id: Optional[str] = None) -> bool:
         """node_id (when provided) must own the task — blocks task hijacking."""
         with self.lock:
@@ -364,6 +373,10 @@ class Store:
                 return False
             if node_id is not None and t["node_id"] != node_id:
                 return False  # not your task
+            # stamp a tamper-evident digest into the stored result before persisting
+            result = dict(result)
+            result["_digest"] = self.result_digest({k: v for k, v in result.items()
+                                                     if k != "_digest"})
             self.conn.execute("UPDATE tasks SET status='done', result=? WHERE task_id=?",
                               (json.dumps(result), task_id))
             self.conn.commit()
@@ -552,6 +565,7 @@ class Store:
                             "status": a["status"], "status_label": label.get(a["status"], a["status"]),
                             "score": a["score"], "text": res.get("text", ""),
                             "tokens": res.get("tokens"), "elapsed_s": res.get("elapsed_s"),
+                            "digest": res.get("_digest"),   # tamper-evidence (FEDERATION_V2)
                             "is_baseline": False})
             baseline = json.loads(job["baseline"]) if job["baseline"] else None
             done = [x for x in ans if x["status"] == "done" and x["score"] is not None]

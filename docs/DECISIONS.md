@@ -201,3 +201,35 @@ The multi-model dissent-preserving council + tested security stance + federation
 local-deep-research's killer feature), MCP server (lets Claude and friends call us),
 JS-rendered scraping.
 **Status:** Settled & implemented (R5).
+
+## D18 — Reuse policy, transparency-mandatory, and computer-use = human-mediated handoff
+**Decision (three settled points):**
+1. **Reuse policy.** (a) EMBED mature single-purpose libraries as clean pip deps with attribution,
+   never forks — first embed: trafilatura (Apache-2.0) for main-content/date extraction. (b) LEARN
+   techniques and REIMPLEMENT in our idiom from the agent frameworks (gpt-researcher Apache-2.0,
+   local-deep-research MIT, STORM MIT) — do NOT vendor their LangChain/LangGraph orchestration; it
+   would explode our dependency surface and break our auditable, no-tool-privilege, no-computer-use
+   promise, and the orchestration is our differentiator. (c) INTEROP via MCP (roadmap), not absorption.
+   Credits in docs/PRIOR_ART.md.
+2. **Informed, tiered consent (never deception).** An operator gives INFORMED consent to a *class*
+   of work (e.g. "run research / inference tasks"); thereafter individual tasks of that class run
+   without a per-task dialog — the legitimate volunteer-compute pattern (BOINC/SETI@home), and what
+   the founder proposed: don't bother the operator for every unit, but they always know the work
+   class, can see logs, and can stop. Sensitive classes (licensed-software, computer-use,
+   heavy-compute) escalate to explicit per-task human approval with a brief and **minimal context**
+   (privacy for both operator and asker). The ONLY thing forbidden is DECEPTION — running work an
+   operator hasn't been told the nature of, or misrepresenting it. That (not tiered consent) is the
+   residential-proxy/botnet line (CFAA, 911 S5). The operator can always audit and revoke.
+3. **Computer-use = human-mediated handoff, never autonomous agent code (founder's resolution).** When
+   a task needs a real computer driven (browser, licensed software), it is handed to the human
+   operator, who completes it via their OWN agentic AI (Claude, Codex) or by hand, under approval and
+   with a bounded brief, returning the owned deliverable. Our code never automates anyone's machine,
+   holds no sessions/credentials. This dissolves the CFAA/proxy exposure and the Task-Injection attack
+   surface entirely, and becomes the `assisted` marketplace job type (docs/FEDERATION_V2.md). A
+   sandboxed public-only headless JS reader remains a possible minor, far-later, gated capability — not
+   a priority, since the human-mediated path covers the hard cases.
+**Why:** The founder asked whether to fork the leaders and whether to pursue computer-use/distributed
+downloads with work hidden from operators. Two of those re-enter settled legal traps; this decision
+keeps the legal, valuable core of each and records the elegant human-mediated resolution.
+**Status:** Settled. Implemented this round: trafilatura embed, tamper-evident result digest
+(FEDERATION_V2 step 1), PRIOR_ART + FEDERATION_V2 docs. The rest is designed and gated.

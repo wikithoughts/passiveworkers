@@ -77,6 +77,9 @@ On CPU-only or busy machines, cap the cast by weight size: `PW_MODEL_CAP_GB=3 pw
 (big models on CPU crawl at 3–6 tok/s — a small model that fits is always faster than a large
 one that spills).
 
+Page evidence uses [trafilatura](https://github.com/adbar/trafilatura) for clean main-content
+extraction (with a regex fallback); full credits in [docs/PRIOR_ART.md](docs/PRIOR_ART.md).
+
 ## Federation (experimental) — the multiplayer mode
 
 Everything above runs on one machine. The same repo contains the network layer
@@ -85,8 +88,12 @@ different windows on the web — each node researches from its own egress and re
 cited findings** (never proxied traffic), an editor merges with per-country sections, and a
 non-tradeable mutual-aid credit accounts for who helped whom. It already powers a live
 two-country deployment, plus typed marketplace jobs (deep research, sharded batch work with
-capability matching). The long game is a commons of computers doing real work for each other —
-**no token, no secondary market, money only ever at the edges.**
+capability matching). Two principles are absolute: **operators always see and consent to the
+work their machine does** (never hidden tasks), and when a job needs a real computer driven, it
+is **handed to the human operator** to do with their own AI under approval — our code never
+automates anyone's machine. The long game is a commons of computers doing real work for each
+other — **no token, no secondary market, money only ever at the edges.** See
+[docs/FEDERATION_V2.md](docs/FEDERATION_V2.md).
 
 ## Documentation
 

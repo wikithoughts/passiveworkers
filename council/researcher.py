@@ -87,8 +87,9 @@ class ResearchWorker:
 
         def _ev(i: int, e: dict) -> str:
             # full-page extract when we fetched one (denser grounding), else the snippet
+            dated = f" [{e['date']}]" if e.get("date") else ""
             if e.get("page"):
-                return f"[S{i+1}] {e['title']} ({e['host']})\n     EXTRACT: {e['page'][:1500]}"
+                return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     EXTRACT: {e['page'][:1500]}"
             return f"[S{i+1}] {e['title']} ({e['host']})\n     {e['snippet'][:300]}"
 
         src_block = spotlight("\n".join(_ev(i, e) for i, e in enumerate(evidence)))
@@ -140,7 +141,7 @@ class ResearchWorker:
             n_pages = {"quick": 2, "deep": 4}.get(self.depth, 3)
             for e in evidence[:n_pages]:
                 try:
-                    e["page"] = fetch_extract(e["url"], max_chars=1500)
+                    e["page"], e["date"] = fetch_extract(e["url"], max_chars=1500, with_date=True)
                 except Exception:
                     pass
 
@@ -164,9 +165,12 @@ class ResearchWorker:
             except Exception:
                 draft, tokens = (f"(This {self.country} node found the sources below but could "
                                  "not synthesize in time — titles and links are its findings.)", 0)
-        sources = [{"id": f"S{i+1}", "title": e["title"], "url": e["url"], "host": e["host"]}
+        sources = [{"id": f"S{i+1}", "title": e["title"], "url": e["url"], "host": e["host"],
+                    "date": e.get("date", "")}
                    for i, e in enumerate(evidence)]
-        src_list = "\n".join(f"[{s['id']}] {s['title']} — {s['url']}" for s in sources)
+        src_list = "\n".join(
+            f"[{s['id']}] {s['title']}" + (f" ({s['date']})" if s['date'] else "") + f" — {s['url']}"
+            for s in sources)
         label = (f"SOURCES ({self.country})"
                  if self.country not in ("", "local", "your location") else "SOURCES")
         return {

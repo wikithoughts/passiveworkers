@@ -18,6 +18,11 @@ dependencies = [
     "pydantic>=2.0",
 ]
 
+[project.optional-dependencies]
+# Better main-content + date extraction for page evidence (Apache-2.0). Graceful
+# fallback to a regex strip when absent — install for noticeably cleaner reports.
+extract = ["trafilatura>=2.0"]
+
 [project.scripts]
 pw = "council.cli:main"
 
