@@ -12,6 +12,7 @@ report in ./reports/. The network app (council/net) is the separate multiplayer 
 
 from __future__ import annotations
 
+import os
 import pathlib
 import threading
 import uuid
@@ -173,8 +174,9 @@ refreshHist();
 
 def main() -> None:
     import uvicorn
-    print("🔬 Research desk → http://127.0.0.1:8770  (Ctrl-C to stop)", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=8770, log_level="warning")
+    host = os.environ.get("PW_SERVE_HOST", "127.0.0.1")  # 0.0.0.0 only inside containers
+    print(f"🔬 Research desk → http://{host}:8770  (Ctrl-C to stop)", flush=True)
+    uvicorn.run(app, host=host, port=8770, log_level="warning")
 
 
 if __name__ == "__main__":

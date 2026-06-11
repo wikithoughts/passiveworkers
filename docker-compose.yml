@@ -1,0 +1,36 @@
+# Passive Workers — recommended setup: the research desk + a self-hosted SearXNG.
+# SearXNG is the ecosystem's converged answer to public-search rate limiting AND keeps
+# your queries off commercial search providers. `pw research` auto-detects it.
+#
+#   docker compose up -d searxng     # just the private meta-search (pw runs on the host)
+#   docker compose up -d             # search + research desk together
+#
+# Note: the research desk needs to reach your Ollama; on Docker Desktop that is
+# host.docker.internal (preconfigured below). Running `pw` directly on the host with
+# only SearXNG in Docker is the simplest setup.
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: pw-searxng
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8080/
+    restart: unless-stopped
+
+  research-desk:
+    build: .
+    container_name: pw-desk
+    command: pw serve
+    ports:
+      - "127.0.0.1:8770:8770"
+    environment:
+      - PW_OLLAMA_BASE=http://host.docker.internal:11434
+      - PW_SEARXNG_URL=http://searxng:8080
+      - PW_WEB_BACKEND=searxng
+    volumes:
+      - ./reports:/app/reports
+    depends_on:
+      - searxng
+    restart: unless-stopped

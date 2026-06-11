@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import socket
 import time
 from functools import lru_cache
@@ -33,9 +34,30 @@ from urllib.parse import urlparse
 _TIMEOUT = float(os.environ.get("PW_WEB_TIMEOUT", "8"))
 _MAX_RESULTS = int(os.environ.get("PW_WEB_RESULTS", "5"))
 def _backend() -> str:
-    # read at CALL time, not import time — callers (e.g. council.local) may enable the
-    # web after this module is imported
-    return os.environ.get("PW_WEB_BACKEND", "off")
+    # Read at CALL time, not import time — callers (e.g. council.local) may enable the
+    # web after this module is imported. Auto-prefer a local SearXNG when one is up:
+    # the ecosystem's converged answer to DDG rate limiting (gpt-researcher #478,
+    # local-deep-research #18, open-webui, CrewAI…), and better for privacy.
+    b = os.environ.get("PW_WEB_BACKEND", "off")
+    if b == "ddgs" and _searxng_alive():
+        return "searxng"
+    return b
+
+
+@lru_cache(maxsize=1)
+def _searxng_alive() -> bool:
+    url = os.environ.get("PW_SEARXNG_URL") or "http://127.0.0.1:8080"
+    try:
+        import requests
+        r = requests.get(f"{url.rstrip('/')}/search",
+                         params={"q": "ping", "format": "json"},
+                         headers={"User-Agent": _UA}, timeout=2)
+        if r.ok:
+            os.environ.setdefault("PW_SEARXNG_URL", url)
+            return True
+    except Exception:
+        pass
+    return False
 _SEARX = os.environ.get("PW_SEARXNG_URL", "")
 _UA = "PassiveWorkers-Research/0.1 (mutual-aid council; egress-localized)"
 
@@ -90,23 +112,72 @@ def _ddgs(question: str) -> list[dict]:
         from ddgs import DDGS            # current package name
     except ImportError:
         from duckduckgo_search import DDGS  # older name, same API
-    with DDGS(timeout=int(_TIMEOUT)) as ddg:
-        # region world → engines localize on THIS node's egress IP (the moat).
-        return list(ddg.text(question, region="wt-wt", safesearch="moderate",
-                             max_results=_MAX_RESULTS))
+    # DDG rate-limits aggressively at scale (systemic across the ecosystem) —
+    # 3 tries with exponential backoff + jitter before giving up.
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            with DDGS(timeout=int(_TIMEOUT)) as ddg:
+                # region world → engines localize on THIS node's egress IP (the moat).
+                return list(ddg.text(question, region="wt-wt", safesearch="moderate",
+                                     max_results=_MAX_RESULTS))
+        except Exception as e:
+            last = e
+            time.sleep((2 ** attempt) + (hash(question) % 7) / 10)
+    raise last  # type: ignore[misc]
 
 
 def _searxng(question: str) -> list[dict]:
     import requests
-    host = urlparse(_SEARX).hostname or ""
+    searx = os.environ.get("PW_SEARXNG_URL") or _SEARX or "http://127.0.0.1:8080"
+    host = urlparse(searx).hostname or ""
     # SearXNG may legitimately run on loopback ON this node; allow that explicitly.
     if not (_host_is_public(host) or host in ("127.0.0.1", "localhost")):
         return []
-    r = requests.get(f"{_SEARX.rstrip('/')}/search",
+    r = requests.get(f"{searx.rstrip('/')}/search",
                      params={"q": question, "format": "json", "safesearch": 1},
                      headers={"User-Agent": _UA}, timeout=_TIMEOUT)
     r.raise_for_status()
     return r.json().get("results", [])
+
+
+# ---- keyless routable engines (engine routing v1: web | academic | encyclopedic) ----
+def _arxiv(question: str, max_results: int = 5) -> list[dict]:
+    """arXiv's free API — for academic queries. Returns the common row shape."""
+    import requests
+    import xml.etree.ElementTree as ET
+    r = requests.get("https://export.arxiv.org/api/query",
+                     params={"search_query": f"all:{question}", "max_results": max_results,
+                             "sortBy": "relevance"},
+                     headers={"User-Agent": _UA}, timeout=_TIMEOUT + 4)
+    r.raise_for_status()
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    rows = []
+    for e in ET.fromstring(r.text).findall("a:entry", ns):
+        title = (e.findtext("a:title", "", ns) or "").strip()
+        url = (e.findtext("a:id", "", ns) or "").strip()
+        summary = (e.findtext("a:summary", "", ns) or "").strip()
+        if title and url:
+            rows.append({"title": title, "href": url, "body": summary})
+    return rows
+
+
+def _wikipedia(question: str, max_results: int = 4) -> list[dict]:
+    """Wikipedia's free full-text search API — for encyclopedic queries. Same row shape."""
+    import requests
+    r = requests.get("https://en.wikipedia.org/w/api.php",
+                     params={"action": "query", "list": "search", "srsearch": question,
+                             "srlimit": max_results, "format": "json"},
+                     headers={"User-Agent": _UA}, timeout=_TIMEOUT)
+    r.raise_for_status()
+    rows = []
+    for hit in r.json().get("query", {}).get("search", []):
+        title = hit.get("title", "")
+        if title:
+            rows.append({"title": title,
+                         "href": "https://en.wikipedia.org/wiki/" + title.replace(" ", "_"),
+                         "body": re.sub(r"<[^>]+>", "", hit.get("snippet", ""))})
+    return rows
 
 
 def _wikipedia_fallback(question: str) -> str:
@@ -149,9 +220,10 @@ def search(question: str) -> str:
         return ""
 
 
-def search_structured(query: str, max_results: int = 5) -> list[dict]:
+def search_structured(query: str, max_results: int = 5, engine: str = "web") -> list[dict]:
     """Structured variant for the researcher: [{title, url, host, snippet}], SSRF-guarded,
-    deduped by host. Best-effort; [] on any failure. Same egress-localization as search()."""
+    deduped by host. Best-effort; [] on any failure. Same egress-localization as search().
+    `engine`: web (meta-search) | academic (arXiv) | encyclopedic (Wikipedia) — keyless."""
     backend = _backend()
     if backend == "off":
         return []
@@ -159,7 +231,14 @@ def search_structured(query: str, max_results: int = 5) -> list[dict]:
     if not q:
         return []
     try:
-        rows = _searxng(q) if backend == "searxng" else _ddgs(q)
+        if engine == "academic":
+            rows = _arxiv(q, max_results)
+        elif engine == "encyclopedic":
+            rows = _wikipedia(q, max_results)
+        elif backend == "searxng":
+            rows = _searxng(q)
+        else:
+            rows = _ddgs(q)
     except Exception:
         return []
     from council.sanitize import clean as _sanitize
@@ -177,3 +256,29 @@ def search_structured(query: str, max_results: int = 5) -> list[dict]:
         if len(out) >= max_results:
             break
     return out
+
+
+# ---- full-page evidence (R5/D17: the leaders draft from pages, not snippets) ----
+_FETCH_CAP = 200_000   # bytes per page — extraction input, not archival
+_HTML_JUNK = re.compile(r"(?is)<(script|style|noscript|svg|header|footer|nav)[^>]*>.*?</\1>")
+_TAGS = re.compile(r"(?s)<[^>]+>")
+
+
+def _strip_html(html: str) -> str:
+    text = _TAGS.sub(" ", _HTML_JUNK.sub(" ", html))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def fetch_extract(url: str, max_chars: int = 6000) -> str:
+    """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized plain text.
+    Shared by the researcher (page evidence) and batch fetch shards. Raises on failure —
+    callers treat page evidence as best-effort."""
+    import requests
+    from council.sanitize import clean
+    host = (urlparse(url).hostname or "").lower()
+    if not url.startswith(("http://", "https://")) or not _host_is_public(host):
+        raise ValueError(f"not a public http(s) URL: {url[:80]}")
+    r = requests.get(url, headers={"User-Agent": _UA}, timeout=15, stream=True)
+    r.raise_for_status()
+    raw = r.raw.read(_FETCH_CAP, decode_content=True).decode("utf-8", "replace")
+    return clean(_strip_html(raw))[:max_chars]

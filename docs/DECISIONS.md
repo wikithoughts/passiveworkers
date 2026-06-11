@@ -180,3 +180,24 @@ future federation node.
 MIT LICENSE, README rewritten). Verified: Mac quick run (1,052-word report, 16 curated sources,
 2.3 min), serve end-to-end, injection probe passed, VPS standalone run, founder-grade briefs.
 GitHub publish (Phase H) remains the founder's call.
+
+## D17 — Ecosystem lessons adopted: full-page evidence, perspectives, SearXNG-first
+**Decision:** Adopt the proven quality playbook from the category leaders while keeping our
+differentiators. (1) **Full-page evidence**: analysts draft from SSRF-guarded, sanitized page
+EXTRACTS (top results fetched via shared `research.fetch_extract`), not 500-char snippets —
+gpt-researcher (27.6k★) scrapes 20+ full pages; this was our biggest quality gap. (2) **STORM-lite
+perspective planning**: the smallest local model discovers K distinct angles; each analyst
+researches the brief through its own angle — question diversity multiplying our existing model
+diversity (Stanford STORM's proven technique). (3) **SearXNG-first**: auto-prefer a local SearXNG
+instance, `docker-compose.yml` ships one; DDG calls now retry with backoff — DDG rate limiting is a
+systemic plague across the ecosystem (gpt-researcher #478, local-deep-research #18, open-webui,
+CrewAI, dify) and we will not wait to be bitten. (4) **Keyless engine routing v1**: arXiv +
+Wikipedia full-text as routable engines. (5) **Benchmark candor**: `scripts/bench_simpleqa.py`
+publishes SimpleQA-subset results including misses.
+**What we deliberately did NOT copy:** the leaders run multiple agent ROLES on one model; nobody
+runs cross-FAMILY models and surfaces their disagreement, and none lead with injection defenses.
+The multi-model dissent-preserving council + tested security stance + federation remain ours.
+**Roadmap (recorded, not built):** local-documents RAG ("your PDFs + the live web" —
+local-deep-research's killer feature), MCP server (lets Claude and friends call us),
+JS-rendered scraping.
+**Status:** Settled & implemented (R5).

@@ -90,6 +90,11 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R5 — ECOSYSTEM LESSONS (D17, 2026-06-11)
+Full-page evidence (fetch_extract), STORM-lite perspective planner, SearXNG auto-prefer +
+docker-compose, DDG backoff, arXiv/Wikipedia routing, SimpleQA bench script. Deliberately not
+copied: single-model multi-role designs. Next candidates: local-docs RAG, MCP server.
+
 ## SINGLE-PLAYER FIRST (D16, 2026-06-10) — the product to share with the world
 The local deep-research engine IS the product: `pw research` (multi-model analysts, live web,
 cited report to ./reports/) + `pw serve` (local research desk). Security stance from the

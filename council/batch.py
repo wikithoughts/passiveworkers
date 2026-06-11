@@ -18,26 +18,16 @@ batch continues (the judge's spot-check and score reflect quality).
 from __future__ import annotations
 
 import os
-import re
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 import requests
 
-from council.research import _host_is_public
+from council.research import fetch_extract
 
 OLLAMA_BASE = "http://localhost:11434"
 _GEN_TIMEOUT = float(os.environ.get("PW_BATCH_GEN_TIMEOUT",
                                     os.environ.get("PW_OLLAMA_TIMEOUT", "480")))
-_FETCH_CAP = 200_000   # bytes per page — extraction input, not archival
-_UA = "PassiveWorkers-Batch/0.1 (mutual-aid marketplace; owned deliverables only)"
-
-
-def _strip_html(html: str) -> str:
-    html = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", html)
-    text = re.sub(r"(?s)<[^>]+>", " ", html)
-    return re.sub(r"\s+", " ", text).strip()
 
 
 @dataclass
@@ -59,15 +49,6 @@ class BatchWorker:
         d = r.json()
         return (d.get("response") or "").strip(), (d.get("eval_count") or 0)
 
-    def _fetch_public(self, url: str) -> str:
-        host = (urlparse(url).hostname or "").lower()
-        if not url.startswith(("http://", "https://")) or not _host_is_public(host):
-            raise ValueError(f"not a public http(s) URL: {url[:80]}")
-        r = requests.get(url, headers={"User-Agent": _UA}, timeout=15, stream=True)
-        r.raise_for_status()
-        return _strip_html(r.raw.read(_FETCH_CAP, decode_content=True)
-                           .decode("utf-8", "replace"))[:6000]
-
     def process(self, instruction: str, shard: list[dict], fetch: bool = False) -> dict:
         t0 = time.monotonic()
         results, tokens, ok = [], 0, 0
@@ -76,7 +57,7 @@ class BatchWorker:
             try:
                 if fetch:
                     from council.sanitize import spotlight
-                    content = self._fetch_public(item)
+                    content = fetch_extract(item)
                     prompt = (f"{instruction}\n\nSOURCE URL: {item}\n"
                               f"PAGE TEXT (extracted):\n{spotlight(content)}\n\nOUTPUT:")
                 else:

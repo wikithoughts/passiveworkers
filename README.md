@@ -24,6 +24,11 @@ pw research "What changed in EU AI Act enforcement this quarter, and who has bee
 Prefer a UI? **`pw serve`** → a single-user research desk at `http://127.0.0.1:8770` —
 brief in, live progress, rendered report, history of everything you've researched.
 
+**Recommended setup (avoids public-search rate limits, keeps queries private):**
+```bash
+docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
+```
+
 ## Why this exists
 
 - **Currency beats memory.** Frontier chatbots answer from training data that is months or
@@ -31,9 +36,11 @@ brief in, live progress, rendered report, history of everything you've researche
   live-web research was the only thing that beat a frontier model — both times currency mattered.
 - **Private by construction.** No account, no server, no telemetry. The only thing that leaves
   your machine is the web searches themselves. Reports are files on your disk.
-- **Plural by design.** Different model families make *different* mistakes. Independent analysts
-  plus a blind editor that **preserves disagreement** (agree / differ / unique sections — never a
-  forced consensus) catch what any single model hallucinates.
+- **Plural by design.** Different model families make *different* mistakes. A planner discovers
+  distinct angles (STORM-style); each analyst researches its own angle with its own model and
+  drafts from **full page extracts**, and a blind editor **preserves disagreement**
+  (agree / differ / unique sections — never a forced consensus). Question diversity × model
+  diversity catches what any single model hallucinates.
 - **Free forever.** It's your hardware.
 
 ## Honesty section (when NOT to use this)

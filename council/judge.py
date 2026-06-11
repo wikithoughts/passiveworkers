@@ -186,7 +186,9 @@ class Judge:
             f"QUESTION:\n{question}\n\nCANDIDATES:\n{joined}\n\nJSON:"
         )
         raw = self._generate(prompt, num_predict=min(1100, max(500, longest * 3)))
-        parsed = _extract_json(raw) or {}
+        parsed = _extract_json(raw)
+        if not isinstance(parsed, dict):   # models sometimes emit a bare list — never crash
+            parsed = {}
 
         def _wid(disp_idx: int):
             try:
@@ -215,6 +217,8 @@ class Judge:
         def _sides(v) -> str:
             if isinstance(v, dict):    # models sometimes return {"Answer 1": "...", ...}
                 return " · ".join(f"{k}: {x}" for k, x in v.items())
+            if isinstance(v, list):    # …or ["Answer 1: ...", "Answer 2: ..."]
+                return " · ".join(str(x) for x in v)
             return str(v or "").strip()
 
         consensus = [str(x).strip() for x in (parsed.get("consensus") or []) if str(x).strip()][:6]
@@ -340,7 +344,9 @@ class Judge:
             'Respond with ONLY JSON: {"winner": "A" | "B" | "tie", "reason": "..."}'
         )
         raw = self._generate(prompt, num_predict=300)
-        parsed = _extract_json(raw) or {}
+        parsed = _extract_json(raw)
+        if not isinstance(parsed, dict):
+            parsed = {}
         winner = str(parsed.get("winner", "tie")).strip().upper()
         winner = winner if winner in {"A", "B", "TIE"} else "TIE"
         return {"winner": "tie" if winner == "TIE" else winner, "reason": str(parsed.get("reason", ""))}

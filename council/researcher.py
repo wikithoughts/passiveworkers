@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import requests
 
 from council.judge import _extract_json
-from council.research import search_structured
+from council.research import fetch_extract, search_structured
 
 OLLAMA_BASE = "http://localhost:11434"
 _GEN_TIMEOUT = float(os.environ.get("PW_RESEARCH_GEN_TIMEOUT",
@@ -43,6 +43,8 @@ class ResearchWorker:
     temperature: float = 0.4
     ollama_base: str = OLLAMA_BASE
     depth: str = "standard"   # quick (plan only) | standard (plan+refine) | deep (plan+2×refine)
+    angle: str = ""           # STORM-lite: the distinct perspective THIS analyst researches through
+    page_evidence: bool = True  # fetch top result pages (leaders draft from pages, not snippets)
 
     def _generate(self, prompt: str, num_predict: int) -> tuple[str, int]:
         r = requests.post(
@@ -57,9 +59,12 @@ class ResearchWorker:
 
     # ------------------------------------------------------------------ rounds
     def _plan_queries(self, brief: str) -> list[str]:
+        focus = (f"Focus specifically on this angle of the brief: {self.angle}\n"
+                 if self.angle else "")
         raw, _ = self._generate(
             "You are planning web research. Turn this brief into exactly 3 concrete, "
             "specific search queries (different angles, current-year aware). "
+            f"{focus}"
             'Reply STRICT JSON only: ["query one","query two","query three"]\n\n'
             f"BRIEF:\n{brief}\n\nJSON:", num_predict=140)
         parsed = _extract_json(raw)
@@ -79,15 +84,22 @@ class ResearchWorker:
 
     def _draft(self, brief: str, evidence: list[dict]) -> tuple[str, int]:
         from council.sanitize import spotlight
-        src_block = spotlight("\n".join(
-            f"[S{i+1}] {e['title']} ({e['host']})\n     {e['snippet'][:300]}"
-            for i, e in enumerate(evidence)))
+
+        def _ev(i: int, e: dict) -> str:
+            # full-page extract when we fetched one (denser grounding), else the snippet
+            if e.get("page"):
+                return f"[S{i+1}] {e['title']} ({e['host']})\n     EXTRACT: {e['page'][:1500]}"
+            return f"[S{i+1}] {e['title']} ({e['host']})\n     {e['snippet'][:300]}"
+
+        src_block = spotlight("\n".join(_ev(i, e) for i, e in enumerate(evidence)))
         geo = self.country not in ("", "local", "your location")
         role = (f"You are a researcher physically located in {self.country}, writing your "
                 "contribution to a multi-country research report."
                 if geo else
                 "You are an independent research analyst writing your contribution to a "
                 "multi-analyst research report.")
+        if self.angle:
+            role += f" Your assigned angle: {self.angle} — go deep on it; others cover the rest."
         vantage = (f"  • Add one short paragraph: what looks different from {self.country}'s "
                    "vantage (local sources, local context), if anything.\n" if geo else "")
         return self._generate(
@@ -121,6 +133,16 @@ class ResearchWorker:
                 _collect(self._refine_queries(brief, evidence), per_query=3)
         cap = {"quick": 8, "deep": 16}.get(self.depth, 12)
         evidence[:] = evidence[:cap]   # keep the prompt within small-model context
+
+        # Full-page evidence (D17): fetch the top result pages and draft from extracts —
+        # the single biggest quality lever the ecosystem leaders proved. Best-effort.
+        if self.page_evidence and evidence:
+            n_pages = {"quick": 2, "deep": 4}.get(self.depth, 3)
+            for e in evidence[:n_pages]:
+                try:
+                    e["page"] = fetch_extract(e["url"], max_chars=1500)
+                except Exception:
+                    pass
 
         if not evidence:
             # No web access / nothing found — fall back to an honest no-sources note;

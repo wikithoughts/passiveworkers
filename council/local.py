@@ -27,7 +27,7 @@ import time
 
 import requests
 
-from council.judge import Judge
+from council.judge import Judge, _extract_json
 from council.researcher import ResearchWorker
 from council.worker import Answer
 
@@ -95,6 +95,31 @@ class _ApiEditor(Judge):
         return (r.json()["choices"][0]["message"]["content"] or "").strip()
 
 
+def plan_angles(brief: str, planner_model: str, k: int) -> list[str]:
+    """STORM-lite: one cheap call on the SMALLEST model discovers K distinct perspectives;
+    each analyst then researches the brief through its own angle (question diversity on
+    top of model diversity). Empty list on failure — analysts research angle-less."""
+    if k < 2:
+        return []
+    try:
+        r = requests.post(f"{OLLAMA}/api/generate", json={
+            "model": planner_model,
+            "prompt": ("Identify exactly "
+                       f"{k} DISTINCT angles for researching this brief — different lenses "
+                       "that together cover it (e.g. regulatory, costs/economics, "
+                       "practitioner experience, recent developments — pick what fits THIS "
+                       'brief). Reply STRICT JSON only: ["angle one","angle two",…]\n\n'
+                       f"BRIEF:\n{brief}\n\nJSON:"),
+            "stream": False, "options": {"temperature": 0.3, "num_predict": 160}},
+            timeout=float(os.environ.get("PW_OLLAMA_TIMEOUT", "300")))
+        r.raise_for_status()
+        parsed = _extract_json((r.json().get("response") or "").strip())
+        angles = [str(a).strip() for a in parsed if str(a).strip()] if isinstance(parsed, list) else []
+        return angles[:k]
+    except Exception:
+        return []
+
+
 def fix_dangling_citations(text: str) -> str:
     """Drop [S#] markers that don't resolve to a listed source (per analyst section,
     sources are appended inline so the check is local to the text block)."""
@@ -114,13 +139,21 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
     emit(f"🔬 Deep research ({depth}) — analysts: {', '.join(analysts)} · editor: "
          f"{editor_model if editor_mode == 'local' else editor_mode}")
 
+    # STORM-lite perspective planning: distinct angle per analyst (smallest model plans)
+    angles = plan_angles(brief, models[0]["name"], len(analysts))
+    if angles:
+        emit("angles: " + " | ".join(angles))
+    page_evidence = not float(os.environ.get("PW_MODEL_CAP_GB", "0") or 0)  # CPU-capped → snippets
+
     contributions, answers = [], []
     for i, model in enumerate(analysts, 1):
-        emit(f"[{i}/{len(analysts)}] {model} researching the live web…")
+        angle = angles[i - 1] if i <= len(angles) else ""
+        emit(f"[{i}/{len(analysts)}] {model} researching the live web…"
+             + (f" (angle: {angle})" if angle else ""))
         t = time.monotonic()
         rw = ResearchWorker(worker_id=model, model=model, lens="independent analyst",
                             country=os.environ.get("PW_COUNTRY", "your location"),
-                            depth=depth)
+                            depth=depth, angle=angle, page_evidence=page_evidence)
         out = rw.research(brief)
         text = fix_dangling_citations(out["text"])
         nsrc = len(out["research"]["sources"])
