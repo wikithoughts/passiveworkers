@@ -6,7 +6,7 @@
 into `./reports/`.
 
 ```bash
-pip install -e .            # (PyPI release planned)
+pip install '.[all]'        # core + extraction + private-docs + MCP  (PyPI release planned)
 ollama pull qwen3:14b       # any decent models you like — it auto-detects what you have
 pw research "What changed in EU AI Act enforcement this quarter, and who has been fined?"
 ```
@@ -23,6 +23,29 @@ pw research "What changed in EU AI Act enforcement this quarter, and who has bee
 
 Prefer a UI? **`pw serve`** → a single-user research desk at `http://127.0.0.1:8770` —
 brief in, live progress, rendered report, history of everything you've researched.
+
+### Research your own documents too (private, local RAG)
+
+```bash
+pw library add ~/Documents/contracts        # index files or folders (PDF, Word, txt, md)
+pw research "What are the renewal terms across my contracts?" --local   # docs only
+pw research "How do my notes compare to the latest guidance?"           # docs + live web (default)
+```
+Your files are chunked and embedded **locally** (Ollama `nomic-embed-text`) into
+`~/.passiveworkers/library.db` — nothing is uploaded. Reports cite documents as `[L#]` and web
+sources as `[S#]`, kept in separate sections.
+
+### Use it from your own AI (MCP)
+
+```bash
+pw mcp        # run as an MCP server (stdio)
+```
+Add to Claude Desktop's `claude_desktop_config.json` so your assistant can call the engine:
+```json
+{ "mcpServers": { "passive-workers": { "command": "pw", "args": ["mcp"] } } }
+```
+Tools exposed: `research`, `library_search`, `library_add`. Your own agentic AI orchestrates;
+our multi-model, live-web + private-library engine is the capability it reaches for.
 
 **Recommended setup (avoids public-search rate limits, keeps queries private):**
 ```bash
@@ -51,6 +74,15 @@ models lose that fight 0/10 (`docs/TRIAL_RESULTS.md`). This tool wins when the a
 **on today's web** — prices, regulations, releases, markets, anything where "as of when?"
 decides usefulness. Optional `--editor api` brings your own OpenRouter key for a frontier
 editor pass over locally-gathered findings — your choice; the default is fully local.
+
+## Benchmark (honest, small sample)
+
+On a 25-question subset of OpenAI's SimpleQA, the engine scored **64%** (single `qwen2.5:14b`,
+snippet-only search, LLM-graded — `scripts/bench_simpleqa.py`). Context, plainly: SimpleQA rewards
+short factoid recall, which is the *opposite* of what this tool is built for (multi-source reports
+where currency and citation matter); the leaders' ~95% figures use bigger models, deeper agentic
+loops, and more sources. We publish the number — small sample and all — because the honest floor is
+more useful to you than a cherry-picked one. Run it yourself: `python scripts/bench_simpleqa.py --n 100`.
 
 ## Security model (designed in, not bolted on)
 

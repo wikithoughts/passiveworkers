@@ -90,6 +90,14 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R7 — COMPLETE THE APP (D19, 2026-06-11)
+Local-documents RAG (`pw library`, fully-local embeddings, [L#] citations, --local/--web scope),
+MCP server (`pw mcp` — research/library_search/library_add tools for Claude Desktop/Codex), real
+pytest suite + GitHub Actions CI, packaging extras (extract/docs/mcp/all), published SimpleQA number.
+The single-player engine is now a category of one: private docs + live web + multi-model dissent +
+injection-tested security + MCP-callable. Next track: federation/marketplace (FEDERATION_V2 — the
+assisted human-in-the-loop task class), and PyPI publish (founder's call).
+
 ## R6 — REUSE + TRUST ARCHITECTURE (D18, 2026-06-11)
 Embedded trafilatura (real main-content/date extraction, regex fallback); tamper-evident result
 digest (FEDERATION_V2 step 1). Decided reuse policy (embed libs / reimplement techniques / MCP

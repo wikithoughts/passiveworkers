@@ -9,6 +9,13 @@ description = "Local-first deep research: your models, your connection, your dis
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
+keywords = ["deep-research", "ollama", "local-first", "llm", "rag", "privacy", "mcp"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: Console",
+]
 dependencies = [
     "requests>=2.32",
     "ddgs>=9.0",
@@ -16,12 +23,23 @@ dependencies = [
     "uvicorn>=0.30",
     "psutil>=7.0",
     "pydantic>=2.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
 # Better main-content + date extraction for page evidence (Apache-2.0). Graceful
 # fallback to a regex strip when absent — install for noticeably cleaner reports.
 extract = ["trafilatura>=2.0"]
+# Private-document library (local RAG): index your own PDFs/Word/text files.
+docs = ["pypdf>=4.0", "python-docx>=1.1"]
+# Run as an MCP server so Claude Desktop / Codex can call the engine as a tool.
+mcp = ["mcp>=1.0"]
+# Everything.
+all = ["trafilatura>=2.0", "pypdf>=4.0", "python-docx>=1.1", "mcp>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/wikithoughts/passiveworkers"
+Repository = "https://github.com/wikithoughts/passiveworkers"
 
 [project.scripts]
 pw = "council.cli:main"

@@ -2,8 +2,11 @@
 """
 council/cli.py — the `pw` command
 ==================================
-    pw research "your brief" [--quick|--deep] [--editor api] [--analysts N]
+    pw research "your brief" [--quick|--deep] [--editor api] [--analysts N] [--local|--web]
     pw serve                       # local research desk at http://127.0.0.1:8770
+    pw library add <path|dir>      # index your own documents (private, local RAG)
+    pw library list|remove|clear
+    pw mcp                         # run as an MCP server (Claude Desktop, Codex, …)
 """
 
 from __future__ import annotations
@@ -24,6 +27,14 @@ def main() -> int:
     if cmd == "serve":
         from council.serve import main as serve_main
         serve_main()
+        return 0
+    if cmd == "library":
+        sys.argv = ["pw library"] + rest
+        from council.library import main as library_main
+        return library_main()
+    if cmd == "mcp":
+        from council.mcp_server import main as mcp_main
+        mcp_main()
         return 0
     print(f"unknown command: {cmd}\n\n{__doc__.strip()}")
     return 2

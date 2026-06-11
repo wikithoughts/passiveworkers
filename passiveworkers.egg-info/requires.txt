@@ -1,6 +1,0 @@
-requests>=2.32
-ddgs>=9.0
-fastapi>=0.115
-uvicorn>=0.30
-psutil>=7.0
-pydantic>=2.0

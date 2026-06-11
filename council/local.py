@@ -39,7 +39,8 @@ _EXCLUDE = ("embed", "vision", "image")
 
 def _make_emit(on_progress):
     def emit(msg: str) -> None:
-        print(f"  {msg}", flush=True)
+        # stderr, not stdout: keeps the MCP stdio JSON-RPC channel clean (still shown in terminals)
+        print(f"  {msg}", file=sys.stderr, flush=True)
         if on_progress:
             try:
                 on_progress(msg)
@@ -121,15 +122,18 @@ def plan_angles(brief: str, planner_model: str, k: int) -> list[str]:
 
 
 def fix_dangling_citations(text: str) -> str:
-    """Drop [S#] markers that don't resolve to a listed source (per analyst section,
-    sources are appended inline so the check is local to the text block)."""
-    listed = set(re.findall(r"^\[(S\d+)\]", text, re.MULTILINE))
-    return re.sub(r"\[(S\d+)(?:,\s*(?:S\d+\s*)+)?\]",
-                  lambda m: m.group(0) if m.group(1) in listed else "", text) if listed else text
+    """Drop [S#]/[L#] markers that don't resolve to a listed source (web [S#] or local
+    document [L#]); the source lists are appended inline so the check is local to the block."""
+    listed = set(re.findall(r"^\[([SL]\d+)\]", text, re.MULTILINE))
+    if not listed:
+        return text
+    return re.sub(r"\[([SL]\d+)(?:,\s*(?:[SL]\d+\s*)+)?\]",
+                  lambda m: m.group(0) if m.group(1) in listed else "", text)
 
 
 def run(brief: str, depth: str = "standard", editor_mode: str = "local",
-        out_dir: str = "reports", n_analysts: int = 3, on_progress=None) -> pathlib.Path:
+        out_dir: str = "reports", n_analysts: int = 3, scope: str = "both",
+        on_progress=None) -> pathlib.Path:
     t0 = time.monotonic()
     emit = _make_emit(on_progress)
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")   # live web ON — the whole point
@@ -153,7 +157,7 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         t = time.monotonic()
         rw = ResearchWorker(worker_id=model, model=model, lens="independent analyst",
                             country=os.environ.get("PW_COUNTRY", "your location"),
-                            depth=depth, angle=angle, page_evidence=page_evidence)
+                            depth=depth, angle=angle, page_evidence=page_evidence, scope=scope)
         out = rw.research(brief)
         text = fix_dangling_citations(out["text"])
         nsrc = len(out["research"]["sources"])
@@ -204,10 +208,14 @@ def main() -> int:
                    help="api = BYOK frontier editor over local findings (OPENROUTER_API_KEY)")
     p.add_argument("--analysts", type=int, default=3, help="how many local models analyze (1-4)")
     p.add_argument("--out", default="reports", help="output directory")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--local", action="store_true", help="research ONLY your library (no web)")
+    g.add_argument("--web", action="store_true", help="research ONLY the live web (no library)")
     a = p.parse_args()
     depth = "quick" if a.quick else "deep" if a.deep else "standard"
+    scope = "local" if a.local else "web" if a.web else "both"
     run(a.brief, depth=depth, editor_mode=a.editor, out_dir=a.out,
-        n_analysts=max(1, min(4, a.analysts)))
+        n_analysts=max(1, min(4, a.analysts)), scope=scope)
     return 0
 
 

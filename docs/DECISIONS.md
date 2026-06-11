@@ -233,3 +233,32 @@ downloads with work hidden from operators. Two of those re-enter settled legal t
 keeps the legal, valuable core of each and records the elegant human-mediated resolution.
 **Status:** Settled. Implemented this round: trafilatura embed, tamper-evident result digest
 (FEDERATION_V2 step 1), PRIOR_ART + FEDERATION_V2 docs. The rest is designed and gated.
+
+## D19 — Local-documents RAG + MCP server: the single-player engine becomes a category of one
+**Decision:** Ship two roadmap features that, combined with what we already have, make the tool
+unique. (1) **Private-document library (local RAG)**: `pw library add` indexes PDFs/Word/text,
+chunked + embedded locally via Ollama `nomic-embed-text` into ~/.passiveworkers/library.db (SQLite +
+numpy cosine — no heavy vector DB); the research engine draws on these documents ALONGSIDE the live
+web (`--local`/`--web`/both), citing docs as `[L#]` vs web `[S#]`. Fully local, keyless, nothing
+uploaded — reinforces the privacy promise. (2) **MCP server** (`pw mcp`, optional `[mcp]` extra):
+exposes `research`/`library_search`/`library_add` over stdio so Claude Desktop / Codex / any MCP
+client calls the engine as a tool — the interop play (D18) and the founder's "use your own agentic
+AI" worldview realized. Plus: real pytest suite (locks the `_extract_json` bug class + sanitizer +
+digest + RAG), GitHub Actions CI, packaging extras (extract/docs/mcp/all), publish-ready pyproject.
+**Why:** Founder mandate to complete the app and make it unique. No other tool fuses private docs +
+live web + multi-MODEL dissent-preserving council + injection-tested security + MCP-callable. Each
+piece exists somewhere; the combination is ours. Single-player first remains the strategy (D16);
+federation/marketplace (FEDERATION_V2) is the deliberate next track.
+**Status:** Settled & implemented (council/library.py, council/mcp_server.py, tests/, CI, pyproject
+extras). Verified: local-only RAG research cites [L#] from a private doc; MCP server exposes 3 tools;
+20 unit tests green; clean-venv `pip install` exposes `pw`.
+
+### D19 addendum — adversarial review pass (R7)
+A workflow review (3 dimensions × adversarial verify) surfaced 12 findings; 9 confirmed and fixed
+before publish: (sec) MCP `library_add` arbitrary-path read → `PW_LIBRARY_ROOTS` confinement
+(default home) + symlink skip; unbounded ingest → per-file/size/count/total caps; `library_search`
+output now sanitized+spotlighted. (correctness) `[L#]` dedup mismatch → one `[L#]` per document so
+prompt markers and the listing align; `fix_dangling_citations` generalized to `[SL]`; cite
+instruction conditional on which sources exist. (integration) MCP stdout corruption → progress to
+stderr; `numpy` promoted to a core dependency; federation worker pins `scope="web"` (no operator
+library access). Regression tests added (confinement, dangling-`[L#]`). 25 unit tests green.

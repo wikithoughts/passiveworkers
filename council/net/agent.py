@@ -128,7 +128,8 @@ class Agent:
             from council.researcher import ResearchWorker
             rw = ResearchWorker(self.node_id, self.answer_model,
                                 lens=task.get("lens", self.lens),
-                                country=task.get("country", self.country))
+                                country=task.get("country", self.country),
+                                scope="web")  # federation = web only; no operator's private library
             return rw.research(payload["question"])
         web = None
         if os.environ.get("PW_WEB_BACKEND", "off") != "off":
