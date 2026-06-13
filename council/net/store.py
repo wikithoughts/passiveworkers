@@ -435,6 +435,10 @@ class Store:
             if t["status"] != "open":
                 return {"ok": False, "error": f"already {t['status']}"}
             owner = _clip(owner)
+            if not owner:
+                # every assisted claim must bind to a non-empty operator identity — it's the
+                # handle an asker pins for out-of-band key trust (D25); an empty one has no anchor.
+                return {"ok": False, "error": "operator identity (owner) required to accept"}
             job = self.conn.execute("SELECT asker FROM jobs WHERE job_id=?", (t["job_id"],)).fetchone()
             if job and owner == job["asker"]:
                 return {"ok": False, "error": "cannot accept your own assisted offer"}
@@ -880,10 +884,11 @@ class Store:
             jt = self.conn.execute(
                 "SELECT node_id, country, status FROM tasks WHERE job_id=? AND type='judge' LIMIT 1",
                 (job_id,)).fetchone()
-            # assisted: surface the operator's signature over the deliverable (D23)
+            # assisted: surface the operator's signature over the deliverable (D23). The asker
+            # verifies it against an OUT-OF-BAND PINNED key (D25), not a coordinator-reported one,
+            # so the coordinator's view of the key is no longer part of the trust decision.
             sig = signer = None
             encrypt_to = ""
-            registered_sign_pub = None
             operator = op_rep = op_ratings = None
             rated = False
             at = self.conn.execute(
@@ -899,16 +904,6 @@ class Store:
                     sig, signer = ares.get("signature"), ares.get("signer_pub")
                 if at["payload"]:
                     encrypt_to = json.loads(at["payload"]).get("encrypt_to", "")
-                # the key the claiming operator REGISTERED — the asker binds the signature to
-                # this, so a delivery can't be signed by an arbitrary key (D23 review)
-                if at["node_id"]:
-                    nd = self.conn.execute("SELECT profile FROM nodes WHERE node_id=?",
-                                           (at["node_id"],)).fetchone()
-                    if nd and nd["profile"]:
-                        try:
-                            registered_sign_pub = json.loads(nd["profile"]).get("sign_pub")
-                        except Exception:
-                            registered_sign_pub = None
             return {
                 "job_id": job["job_id"], "asker": job["asker"], "question": job["question"],
                 "type": job["type"] or "chat",
@@ -920,7 +915,6 @@ class Store:
                 "receipt": json.loads(job["receipt"]) if job["receipt"] else None,
                 "baseline": baseline,
                 "signature": sig, "signer_pub": signer, "encrypt_to": encrypt_to,
-                "registered_sign_pub": registered_sign_pub,
                 "operator": operator, "operator_reputation": op_rep,
                 "operator_ratings": op_ratings, "rated": rated,
                 "answers": ans,

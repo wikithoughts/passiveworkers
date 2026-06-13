@@ -383,9 +383,11 @@ fetch. Ciphertext hash is verified BEFORE decryption. Keys persist per identity 
   holds ciphertext and the asker's public key (public by design).
 - Signing binds the deliverable to the operator's REGISTERED key and detects tampering. Its
   limit: the coordinator stores that registered key, so a fully hostile coordinator that rewrites the
-  node record + content + signature together needs out-of-band key trust / PKI to defeat — future work. (Encryption's `encrypt_to` has the symmetric
-  caveat: a hostile coordinator could substitute its own pubkey at job-post; mitigation is the asker
-  publishing their key out-of-band — noted.)
+  node record + content + signature together needs out-of-band key trust to defeat — **now addressed
+  in [D25] via TOFU + explicit key pinning** (`pw trust`), which verifies against a pin the
+  coordinator can't change. (Encryption's `encrypt_to` has the symmetric caveat: a hostile
+  coordinator could substitute its own pubkey at job-post; mitigation is the asker publishing their
+  key out-of-band — noted.)
 **Why:** "Continue" — FEDERATION_V2 step 2, the security groundwork for operators exchanging real
 files. Confidentiality + authenticity are what make a marketplace of strangers' computers trustworthy.
 **Status:** Settled & implemented. Verified end-to-end through the real API (encrypt-to-asker,
@@ -446,3 +448,58 @@ all fixed before commit, each with a regression test:
   capability requirement. Fix: when an offer sets requirements, an unknown node is ineligible
   (cannot prove capability); a no-requirement task is still acceptable by any node. (Covered by the
   existing capability-gate + accept lifecycle tests.)
+
+## D25 — Out-of-band operator key trust (TOFU + pinning): closes the D23 signing gap
+**Decision:** Give the asker a root of trust the coordinator does not control. D23's signing bound a
+deliverable to the key the **coordinator** reported for an operator (`registered_sign_pub`), so a
+fully hostile coordinator could rewrite the node record + content + signature together and still
+"verify." D25 closes that: the asker maintains a local **pin store** (`~/.passiveworkers/trust.json`,
+0600, pure stdlib — `council/trust.py`) mapping an operator handle → its Ed25519 signing key, and
+`pw fetch` verifies every delivery against the **pinned** key, not the coordinator-reported one.
+- **TOFU** (SSH `known_hosts` model): on the first signed delivery from an operator, pin the key —
+  but only **after** the signature verifies (we never pin a key taken from an invalid signature) —
+  and warn that first contact is unverified until the fingerprint is compared out of band.
+- **Explicit pin**: the operator runs `pw fingerprint` (prints their signing pubkey + an 80-bit
+  base32 `PW-XXXX-XXXX-XXXX-XXXX` fingerprint) and shares the key over a trusted channel; the asker
+  runs `pw trust add <operator> <pubkey>` (also `trust list` / `trust remove`).
+- **Mismatch → refuse**: if a pinned operator presents a different key, fetch aborts and shows both
+  fingerprints; re-pinning a rotated key is always an explicit, human-verified action (never
+  automatic), so a coordinator can't silently rotate a pinned operator's key.
+**Result:** for any operator the asker has pinned out of band, signing now defeats even a fully
+hostile coordinator — it can neither present a different key (refused at `classify`) nor forge a
+signature under the pinned key (verification fails on tampered content). TOFU narrows, but does not
+eliminate, the window for operators not yet pinned — documented honestly, not overstated. A full
+directory PKI remains out of scope (and unnecessary for a commons where operators can publish a
+fingerprint on a profile/README).
+**Why:** "Continue" — completes the FEDERATION_V2 trust thread (R11 crypto → R12 reputation → R13 key
+trust). The remaining D23 caveat was the one piece preventing the marketplace's authenticity
+guarantee from being whole.
+**Status:** Settled & implemented. `council/trust.py` + `pw fingerprint` / `pw trust` + fetch verifies
+against the pin. 87 tests green.
+
+### D25 addendum — adversarial review pass (out-of-band key trust)
+A workflow review (3 lenses × adversarial verify, 14 agents) surfaced 11 confirmed findings — two of
+them *critical bypasses of the very guarantee R13 claims*. All fixed before commit, with regression
+tests, and the security-critical logic was extracted into a unit-testable helper
+(`operator._verify_delivery_signature`) so it no longer hides behind HTTP:
+- **(CRITICAL) Unsigned delivery bypassed everything.** `fetch` gated all verification on
+  `if sig and signer:`, so a hostile coordinator could just *strip the signature* and ship tampered
+  content. Fix: a **pinned** operator MUST sign — an unsigned delivery from them is refused.
+- **(CRITICAL) Blank operator handle → verify against the coordinator's own key.** With `operator=""`
+  the pin lookup missed and verification fell back to the coordinator-supplied key (self-consistent,
+  meaningless). Fix: a signed delivery with no operator handle has no trust anchor → refused.
+- **(HIGH) Silent downgrade with no crypto extra.** A signed delivery was *accepted unverified* when
+  PyNaCl was absent. Fix: refuse (exit 2), matching the encryption path — never accept unverified.
+- **(HIGH) Missing operator-identity guard.** `accept_assisted` now rejects an empty owner so every
+  claim carries a pinnable identity (defense-in-depth for honest coordinators).
+- **(HIGH) Insecure save fallback / corrupt-store data loss.** `trust.json` now writes **atomically**
+  (temp + `os.replace`, 0600 from creation, fallback still chmods); an unreadable store is **moved to
+  `.corrupt` with a warning** instead of being silently overwritten (which would drop every pin). Same
+  chmod-fallback hardening applied to `crypto.py`.
+- **(HIGH/MED) Swallowed TOFU-pin errors + test gap.** The broad `except: pass` is gone; a failed pin
+  now surfaces a clear warning, and the new helper is covered by tests for unsigned-from-pinned,
+  blank-handle, crypto-absent, TOFU-pins-only-valid, never-pins-invalid, and pinned key-swap.
+- **(MED) Concurrent-write TOCTOU.** Mitigated by the atomic replace; full file locking is
+  disproportionate for a single-user local store (a lost pin re-establishes via TOFU) — documented.
+- **(LOW) Dead `registered_sign_pub`** removed from `job_view` (D23 vestige, unused under D25); the
+  `operator.py` module docstring now lists every command.

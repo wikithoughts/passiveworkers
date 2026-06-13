@@ -90,6 +90,19 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R13 — OUT-OF-BAND KEY TRUST (D25, 2026-06-13)
+Closes the D23 signing limitation: the asker now pins an operator's signing key locally
+(`council/trust.py`, stdlib, ~/.passiveworkers/trust.json 0600) and `pw fetch` verifies against the
+PINNED key, not the coordinator-reported one — so a fully hostile coordinator can no longer forge a
+delivery for a pinned operator. TOFU on first signed delivery (pinned only after the signature
+verifies) + explicit `pw trust add/list/remove`; operators publish a short fingerprint with `pw
+fingerprint`; a key mismatch on a pinned operator is refused (re-pin is an explicit human action).
+87 tests. Adversarial review caught + fixed 11 findings pre-commit, incl. TWO critical bypasses
+(unsigned delivery skipped all checks; a blank operator handle verified against the coordinator's own
+key) — verification logic extracted into a unit-tested helper. FEDERATION_V2 authenticity thread
+complete (crypto → reputation → key trust). Next: web UI for the marketplace; PyPI publish + recruit
+operators; optional fingerprint-on-profile discovery.
+
 ## R12 — OPERATOR REPUTATION (D24, 2026-06-13)
 Asker ratings for assisted work (`pw rate <job> <score>`, POST /jobs/{id}/rate) feed operator
 reputation (unified with council judge-score reputation); `requires.min_reputation` gates offers to

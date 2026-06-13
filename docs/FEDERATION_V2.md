@@ -42,14 +42,19 @@ Every task result is stored with a canonical SHA-256 (`store.result_digest`), su
 `job_view` per answer. Any later alteration of a stored deliverable is detectable. This is the floor;
 step 2 raises it to defend against a hostile coordinator.
 
-### 2. Signed + optionally encrypted delivery — design
+### 2. Signed + optionally encrypted delivery — BUILT (D23) + out-of-band key trust (D25)
 - Each node holds a keypair; deliverables are **signed** with the node's private key and verified by
-  the asker against the node's published public key. Unlike today's per-node-secret HMAC (the
-  coordinator knows the secret), this protects even against a malicious coordinator.
+  the asker against the operator's signing key (`council/crypto.py`, `[crypto]` extra).
 - Optional **end-to-end payload encryption**: the asker publishes a public key with the job; the
   producer encrypts the deliverable to it; the coordinator relays opaque ciphertext it cannot read.
+  Real confidentiality even against a hostile coordinator.
+- **Out-of-band key trust (D25, BUILT):** the asker pins an operator's signing key locally
+  (`council/trust.py`; TOFU on first signed delivery, or explicit `pw trust add` after comparing a
+  `pw fingerprint`) and `pw fetch` verifies against the **pinned** key — so signing now defeats even
+  a fully hostile coordinator for any pinned operator (it can't present a different key or forge a
+  signature under the pinned one). This was the open caveat the original step-2 design flagged.
 - This is the operator's "encryption between computers / no one can inject into the work," at the
-  right layer. **Security review required before shipping.**
+  right layer.
 
 ### 3. Content-addressed artifact store + chunking — design
 - Deliverables become **files**, not just text rows. Producer splits a file into chunks, hashes each,

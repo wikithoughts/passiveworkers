@@ -11,6 +11,11 @@ human is always the agent and always consents to a bounded brief.
     pw tasks                       list open assisted offers you're eligible for
     pw accept <task_id>            consent to + claim an offer (prints the full brief)
     pw deliver <task_id> <text>    deliver your result (text, or @path to a file)
+    pw fingerprint                 print your signing pubkey + fingerprint to share (operator)
+    pw trust add <op> <key>        pin an operator's signing key out of band (asker)
+    pw trust list | remove <op>    show / drop pinned operators (asker)
+    pw fetch <job> <dir>           download + verify a delivered file (asker)
+    pw keygen | rate <job> <0-10>  encryption key / rate a deliverable (asker)
 
 Requires (operator env): PW_COORDINATOR, PW_TOKEN, PW_OWNER (your handle). Optional:
 PW_NAME, PW_COUNTRY. Identity (node_id + secret) is cached in ~/.passiveworkers/operator.json
@@ -197,6 +202,63 @@ class Operator:
         return 0
 
 
+def _verify_delivery_signature(view: dict, merged: str) -> tuple[bool, int]:
+    """Decide whether a delivery's signature clears out-of-band trust (D25). Pure except for the
+    TOFU pin side effect (which it surfaces, never swallows). Returns (ok, exit_code): ok=False
+    means the caller must abort with exit_code.
+
+    The guarantee for a PINNED operator holds even against a fully hostile coordinator:
+      • it can't simply omit the signature (a pinned operator MUST sign → refused),
+      • it can't blank the operator handle to dodge the pin (signed-but-unidentified → refused),
+      • it can't present a different key (classify → MISMATCH → refused),
+      • it can't forge a signature under the pinned key (crypto.verify fails → refused),
+      • it can't make us accept unverified by hiding the crypto extra (→ refused, not downgraded).
+    """
+    from council import trust
+    sig, signer = view.get("signature"), view.get("signer_pub")
+    operator = (view.get("operator") or "").strip()
+    # A signed delivery must name its operator, or there's no out-of-band anchor to trust.
+    if sig and signer and not operator:
+        print("✗ signed delivery has no operator handle to anchor trust — refusing")
+        return False, 1
+    pinned = trust.get(operator) if operator else None
+    # A pinned operator always signs; an unsigned delivery from them is a downgrade attack.
+    if pinned and not (sig and signer):
+        print(f"✗ operator '{operator}' is pinned but this delivery is unsigned — refusing")
+        return False, 1
+    if not (sig and signer):
+        print("⚠ delivery is unsigned and the operator is unpinned — integrity is NOT "
+              "cryptographically verified (ask the operator to deliver with the crypto extra, "
+              "then pin them with `pw trust add`)")
+        return True, 0
+    status, existing = trust.classify(operator, signer)
+    if status == trust.MISMATCH:
+        print(f"✗ operator '{operator}' presented key {trust.fingerprint(signer)} but the pinned "
+              f"key is {existing['fp']} — refusing (key rotation, another machine, or tampering).\n"
+              f"  If you trust the new key, verify it out of band then: pw trust add {operator} {signer}")
+        return False, 1
+    from council import crypto as C
+    if not C.available():
+        print("✗ signature present but the crypto extra isn't installed — cannot verify, refusing "
+              "to accept unverified (pip install 'passiveworkers[crypto]')")
+        return False, 2
+    verify_key = existing["pub"] if existing else signer
+    if not C.verify(verify_key, merged.encode(), sig):
+        print("✗ signature INVALID — deliverable may be tampered or signed by another key")
+        return False, 1
+    if status == trust.PINNED_MATCH:
+        print(f"signature: ✓ valid · operator '{operator}' matches pinned key {existing['fp']}")
+    else:                                     # UNPINNED → TOFU-pin a VALID key (never a bad one)
+        try:
+            trust.pin(operator, signer, source="tofu")
+            print(f"signature: ✓ valid · first contact — pinned operator '{operator}' as "
+                  f"{trust.fingerprint(signer)} (confirm out of band: ask them for `pw fingerprint`)")
+        except Exception as e:               # surface a persistence failure, don't hide it
+            print(f"signature: ✓ valid, but could NOT save the trust pin ({e}) — future deliveries "
+                  f"from '{operator}' won't be auto-verified until you run: pw trust add {operator} {signer}")
+    return True, 0
+
+
 def fetch(job_id: str, out_dir: str) -> int:
     """Asker side: download a delivered FILE artifact, verify every chunk, reassemble.
     Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret)."""
@@ -208,24 +270,9 @@ def fetch(job_id: str, out_dir: str) -> int:
     uh = {"X-User-Secret": sec}
     view = requests.get(f"{base}/jobs/{job_id}", timeout=15).json()
     merged = view.get("merged") or ""
-    # verify the operator's signature, BOUND to the key they registered (D23 review): a
-    # delivery signed by some other key, or by a key ≠ the claiming operator's, is rejected.
-    sig, signer = view.get("signature"), view.get("signer_pub")
-    registered = view.get("registered_sign_pub")
-    if sig and signer:
-        try:
-            from council import crypto as C
-            if C.available():
-                ok = C.verify(signer, merged.encode(), sig)
-                bound = (registered is None) or (signer == registered)
-                if not bound:
-                    print("✗ signature key ≠ the claiming operator's registered key — rejecting")
-                    return 1
-                print(f"signature: {'✓ valid (operator ' + signer[:12] + '…)' if ok else '✗ INVALID — deliverable may be tampered'}")
-                if not ok:
-                    return 1
-        except Exception:
-            pass
+    ok, code = _verify_delivery_signature(view, merged)
+    if not ok:
+        return code
     # downgrade guard: if WE required encryption (encrypt_to set), refuse a plaintext deliverable
     if view.get("encrypt_to"):
         m = A.read_artifact(merged)
@@ -287,15 +334,63 @@ def keygen() -> int:
     return 0
 
 
+def fingerprint() -> int:
+    """Operator: print your SIGNING public key + its fingerprint so an asker can pin you out of
+    band (the trust anchor a hostile coordinator can't forge, D25)."""
+    from council import crypto as C
+    from council import trust
+    if not C.available():
+        print("install the crypto extra first: pip install 'passiveworkers[crypto]'"); return 2
+    kp = C.load_or_create(STATE.parent / "operator_keys.json", "sign")
+    print("Your signing public key (share with askers so they can `pw trust add <you> <key>`):\n")
+    print(kp["pub"])
+    print(f"\nFingerprint (read this to them over a trusted channel): {trust.fingerprint(kp['pub'])}")
+    return 0
+
+
+def trust_cmd(args: list) -> int:
+    """Asker: manage pinned operator signing keys (out-of-band trust, D25).
+        pw trust add <operator> <pubkey>   pin an operator's signing key
+        pw trust list                      show pinned operators + fingerprints
+        pw trust remove <operator>         unpin
+    """
+    from council import trust
+    sub = args[0] if args else ""
+    if sub == "add" and len(args) >= 3:
+        rec = trust.pin(args[1], args[2], source="manual")
+        print(f"✓ pinned operator '{args[1]}' → {rec['fp']}\n"
+              f"  Confirm this fingerprint matches what the operator told you (pw fingerprint).")
+        return 0
+    if sub == "list":
+        pins = trust.list_pins()
+        if not pins:
+            print("No pinned operators yet. They're pinned on first signed delivery (TOFU), or "
+                  "explicitly with: pw trust add <operator> <pubkey>")
+            return 0
+        for op, rec in sorted(pins.items()):
+            print(f"  {op:<20} {rec['fp']}   ({rec.get('source', '?')})")
+        return 0
+    if sub == "remove" and len(args) >= 2:
+        print("✓ unpinned" if trust.remove(args[1]) else "✗ no such pinned operator")
+        return 0
+    print("usage: pw trust add <operator> <pubkey> | pw trust list | pw trust remove <operator>")
+    return 2
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args:
-        print("usage: pw tasks | accept <id> | deliver <id> <text|@file <job>> | fetch <job> <dir>")
+        print("usage: pw tasks | accept <id> | deliver <id> <text|@file <job>> | fetch <job> <dir>\n"
+              "       keygen | rate <job> <0-10> | fingerprint | trust add|list|remove")
         return 2
     if args[0] == "fetch" and len(args) >= 3:
         return fetch(args[1], args[2])
     if args[0] == "keygen":
         return keygen()
+    if args[0] == "fingerprint":
+        return fingerprint()
+    if args[0] == "trust":
+        return trust_cmd(args[1:])
     if args[0] == "rate" and len(args) >= 3:
         return rate(args[1], args[2])
     op = Operator()

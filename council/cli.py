@@ -9,6 +9,10 @@ council/cli.py — the `pw` command
     pw mcp                         # run as an MCP server (Claude Desktop, Codex, …)
     pw tasks                       # list open assisted offers you can do (federation)
     pw accept <id> | deliver <id> <text|@file>
+    pw fetch <job> <dir>           # download + verify a delivered file (asker)
+    pw rate <job> <0-10>           # rate an assisted deliverable → operator reputation (asker)
+    pw fingerprint                 # print your signing key + fingerprint to share (operator)
+    pw trust add <op> <key> | list | remove <op>   # pin operator keys out of band (asker)
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ def main() -> int:
         from council.mcp_server import main as mcp_main
         mcp_main()
         return 0
-    if cmd in ("tasks", "accept", "deliver", "fetch", "keygen", "rate"):
+    if cmd in ("tasks", "accept", "deliver", "fetch", "keygen", "rate", "fingerprint", "trust"):
         sys.argv = ["pw", cmd] + rest   # operator.main dispatches on argv[1] (the verb)
         from council.operator import main as operator_main
         return operator_main()

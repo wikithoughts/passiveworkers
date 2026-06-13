@@ -94,6 +94,10 @@ def load_or_create(path: pathlib.Path, kind: str) -> dict:
         os.chmod(path, 0o600)
     except Exception:
         path.write_text(json.dumps(allk))   # fallback (e.g. platforms without mode support)
+        try:
+            os.chmod(path, 0o600)            # a private key must never be world-readable
+        except Exception:
+            pass
     return allk[kind]
 
 

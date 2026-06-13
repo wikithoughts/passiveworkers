@@ -10,3 +10,4 @@ reports/
 build/
 dist/
 .pytest_cache/
+.claude/
