@@ -6,10 +6,12 @@
 into `./reports/`.
 
 ```bash
-pip install '.[all]'        # core + extraction + private-docs + MCP  (PyPI release planned)
-ollama pull qwen3:14b       # any decent models you like — it auto-detects what you have
+pip install 'passiveworkers[all]'   # core + extraction + private-docs + MCP
+ollama pull qwen3:14b               # any decent models you like — it auto-detects what you have
 pw research "What changed in EU AI Act enforcement this quarter, and who has been fined?"
 ```
+
+> From source instead: `git clone https://github.com/wikithoughts/passiveworkers && pip install '.[all]'`
 
 ```
 🔬 Deep research (standard) — analysts: qwen3:14b, gemma3:12b, llama3.2 · editor: qwen3:14b

@@ -1,58 +1,42 @@
 # Releasing to PyPI
 
-The package is **publish-ready and verified** — the only missing piece is a PyPI API token, which is
-tied to your PyPI account (login + 2FA) and can't be created for you.
+## Current state — **0.1.0 PUBLISHED 2026-06-13** ✅
 
-## Verified state (as of 2026-06-13)
+`passiveworkers` **0.1.0 is live**: https://pypi.org/project/passiveworkers/0.1.0/ — anyone can
+`pip install passiveworkers`. Verified end-to-end (twine check PASSED, clean-venv install from PyPI
+exposes a working `pw`). Token used: 1Password item **"PyPI API for Claude"** (field `credential`),
+read into a subshell env at upload time — never written to `~/.pypirc` or any file.
+
+> **0.1.0 is burned.** A version number on PyPI can never be reused, even after a yank. The **next**
+> release MUST bump `version` in `pyproject.toml` (`0.1.1` for fixes, `0.2.0` for features).
+>
+> **Next-bump cleanup (cosmetic):** switch `pyproject.toml` to the SPDX form `license = "MIT"` (drop
+> `license = { file = "LICENSE" }`) so PyPI shows a clean `license_expression` instead of embedding
+> the full license text in the metadata field.
+
+## How it was published (repeat for the next bumped version)
+
+1. Bump `version` in `pyproject.toml`, commit.
+2. `rm -rf dist/ build/ *.egg-info && python -m build` (rebuild so artifacts match committed code).
+3. `twine check dist/*` → must PASS; `tar tzf dist/*.tar.gz` → confirm no secrets bundled.
+4. Smoke-test the wheel in a throwaway venv: `pip install dist/*.whl` → `pw --help` works.
+5. Upload (token never persisted):
+   ```bash
+   TWINE_USERNAME=__token__ \
+   TWINE_PASSWORD="$(op item get 'PyPI API for Claude' --fields credential --reveal)" \
+   twine upload --non-interactive dist/*
+   ```
+6. Verify: `curl -s -o /dev/null -w '%{http_code}' https://pypi.org/pypi/passiveworkers/<ver>/json`
+   = 200, and `pip install passiveworkers==<ver>` in a clean venv runs `pw`.
+
+---
+
+### Original prep notes (pre-publish, 2026-06-13)
 
 - `python -m build` → clean wheel + sdist.
 - `twine check dist/*` → **PASSED** (both artifacts).
-- Name **`passiveworkers` is available** on PyPI and TestPyPI (HTTP 404 = unclaimed).
-- Version **0.1.0**, never published. (First public release — 0.1.0 is correct.)
+- Name **`passiveworkers` was available** on PyPI and TestPyPI (HTTP 404 = unclaimed). _(Now claimed.)_
+- Version **0.1.0**, first public release.
 
-## Publish (one-time setup + upload)
-
-1. **Create a PyPI account + API token:** pypi.org → Account settings → API tokens → *Add API
-   token* (scope: "Entire account" for the first upload, then narrow to the project). Copy the
-   `pypi-…` token.
-
-2. **Give twine the token** (either way):
-
-   ```bash
-   # option A: environment (per-shell)
-   export TWINE_USERNAME=__token__
-   export TWINE_PASSWORD=pypi-AgEI...your-token...
-
-   # option B: ~/.pypirc (persistent)
-   cat > ~/.pypirc <<'EOF'
-   [pypi]
-     username = __token__
-     password = pypi-AgEI...your-token...
-   EOF
-   chmod 600 ~/.pypirc
-   ```
-
-3. **(Recommended) dry run on TestPyPI first:**
-
-   ```bash
-   python -m build
-   twine upload --repository testpypi dist/*
-   pip install -i https://test.pypi.org/simple/ passiveworkers   # smoke test in a fresh venv
-   ```
-
-4. **Publish to real PyPI:**
-
-   ```bash
-   python -m build              # rebuild so the artifacts match the committed code
-   twine check dist/*
-   twine upload dist/*
-   ```
-
-   Then `pip install passiveworkers` works for everyone.
-
-## After publishing
-
-- A version number on PyPI **cannot be reused** — even if you delete a release, `0.1.0` is burned.
-  So only upload when the artifacts are the ones you want public. Bump to `0.1.1` (or `0.2.0`) in
-  `pyproject.toml` for the next release.
-- The README's install line already says `pip install passiveworkers`; nothing else to change.
+_(Superseded: the original "create an account / .pypirc" steps were removed after 0.1.0 shipped —
+the account exists, the token is in 1Password, and we use the env-var upload above, never `.pypirc`.)_
