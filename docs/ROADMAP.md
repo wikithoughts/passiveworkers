@@ -90,6 +90,14 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R11 — CRYPTOGRAPHIC DELIVERY (D23, 2026-06-13)
+Signed deliverables (Ed25519: operator signs, asker verifies) + end-to-end encrypted files (X25519
+SealedBox: asker `pw keygen` → encrypt_to → operator seals → coordinator relays ciphertext-only →
+asker decrypts). Optional [crypto] extra (PyNaCl), graceful fallback. council/crypto.py +
+encrypted-artifact codec. FEDERATION_V2 step 2 done. Honest trust model documented (encryption =
+real guarantee; signing binds to operator key, full hostile-coordinator defense needs PKI = future).
+Next: PyPI publish + recruit operators; out-of-band key trust / PKI; richer operator UX.
+
 ## R10 — FILE DELIVERY (D22, 2026-06-13)
 Content-addressed, chunked, integrity-verified file artifacts (council/artifacts.py, stdlib):
 operators deliver real files (`pw deliver <task> @file <job>`), askers fetch+verify+reassemble

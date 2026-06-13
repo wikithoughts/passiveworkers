@@ -38,7 +38,7 @@ def main() -> int:
         from council.mcp_server import main as mcp_main
         mcp_main()
         return 0
-    if cmd in ("tasks", "accept", "deliver", "fetch"):
+    if cmd in ("tasks", "accept", "deliver", "fetch", "keygen"):
         sys.argv = ["pw", cmd] + rest   # operator.main dispatches on argv[1] (the verb)
         from council.operator import main as operator_main
         return operator_main()

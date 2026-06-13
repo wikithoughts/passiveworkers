@@ -366,3 +366,41 @@ byte cap (200 MB) replaces the count cap. (MED) path-escape guard now segment-aw
 tagged artifact discriminator (no confusing JSON text for a file); manifest validates size + hex
 chunk hashes; empty file valid. Verified end-to-end (octet-stream upload, payment gate, 413,
 conservation). 52 tests green.
+
+## D23 — Cryptographic delivery: signed deliverables + end-to-end encrypted files (optional)
+**Decision:** Two cryptographic guarantees on top of content-addressed delivery (D22), both via the
+optional `[crypto]` extra (PyNaCl/libsodium) with graceful fallback to D22 integrity when absent.
+(1) **Signing (Ed25519)**: an operator signs (exactly the stored bytes) with a private key the
+coordinator never sees (`council/crypto.py`); `pw fetch` verifies the signature AND that the signer
+key equals the key the claiming operator REGISTERED (`registered_sign_pub` from the node record),
+aborting on either mismatch. So a delivery can't be signed by an arbitrary key, and content tampering
+is detected. (2) **Encryption (X25519 SealedBox)**: the asker publishes a
+public key with the job (`encrypt_to`, via `pw keygen`); the operator seals each file chunk to it;
+the coordinator stores ONLY ciphertext (verified: a stored blob ≠ plaintext); the asker unseals on
+fetch. Ciphertext hash is verified BEFORE decryption. Keys persist per identity (0600).
+**Honest trust model (documented, not overstated):**
+- Encryption is a REAL confidentiality guarantee even against a hostile coordinator — it only ever
+  holds ciphertext and the asker's public key (public by design).
+- Signing binds the deliverable to the operator's REGISTERED key and detects tampering. Its
+  limit: the coordinator stores that registered key, so a fully hostile coordinator that rewrites the
+  node record + content + signature together needs out-of-band key trust / PKI to defeat — future work. (Encryption's `encrypt_to` has the symmetric
+  caveat: a hostile coordinator could substitute its own pubkey at job-post; mitigation is the asker
+  publishing their key out-of-band — noted.)
+**Why:** "Continue" — FEDERATION_V2 step 2, the security groundwork for operators exchanging real
+files. Confidentiality + authenticity are what make a marketplace of strangers' computers trustworthy.
+**Status:** Settled & implemented. Verified end-to-end through the real API (encrypt-to-asker,
+ciphertext-only storage, signature verify, decrypt to original bytes, wrong-key rejected, conserved).
+57 tests green (crypto tests skip cleanly without the extra).
+
+### D23 addendum — adversarial review pass (crypto)
+A workflow review (3 dimensions × adversarial verify) surfaced 13 findings; the real ones fixed
+before commit: (HIGH) operator signed the FULL deliverable but sent/stored a `[:200000]` truncation
+→ honest >200k-char deliveries verified as INVALID; now signs exactly the bytes sent. (HIGH) the
+signature was self-referential (asker never checked the signer key against the operator's REGISTERED
+key) → job_view now exposes `registered_sign_pub` and `pw fetch` rejects a signer ≠ the claiming
+operator's registered key. (HIGH) encryption downgrade — an asker who required `encrypt_to` would
+silently accept a plaintext deliverable → fetch now refuses a non-encrypted file when encryption was
+required. (MED) `operator.json` (a bearer node-secret) now chmod 0600; D23 prose corrected to match
+the (now-real) binding. (LOW) strict base64 (`validate=True`); crypto funcs raise a clear error /
+verify() returns False when PyNaCl is absent; key files created owner-only (no TOCTOU window). 60
+tests green; large-text parity + registered-key binding verified end-to-end.

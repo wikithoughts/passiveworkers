@@ -83,6 +83,33 @@ def chunk_file(path: str) -> tuple[dict, dict[str, bytes]]:
 _HEX64 = __import__("re").compile(r"^[0-9a-f]{64}$")
 
 
+def chunk_file_encrypted(path: str, seal_fn) -> tuple[dict, dict[str, bytes]]:
+    """Like chunk_file, but each plaintext chunk is encrypted via seal_fn(bytes)->bytes before
+    hashing/storing. The blob address is the hash of the CIPHERTEXT (so content-addressing and
+    integrity still apply); the manifest is flagged `encrypted` and its size is the PLAINTEXT
+    size. The coordinator only ever stores ciphertext it cannot read (D23)."""
+    p = pathlib.Path(path).expanduser().resolve()
+    if not p.is_file():
+        raise ValueError(f"not a file: {path}")
+    size = p.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise ValueError(f"file too large ({size // 1_000_000} MB > {MAX_FILE_BYTES // 1_000_000} MB)")
+    blobs: dict[str, bytes] = {}
+    order: list[str] = []
+    with p.open("rb") as f:
+        while True:
+            buf = f.read(CHUNK_SIZE)
+            if not buf:
+                break
+            ct = seal_fn(buf)
+            h = _h(ct)
+            blobs[h] = ct
+            order.append(h)
+    manifest = {"name": p.name, "size": size, "chunk_size": CHUNK_SIZE,
+                "chunks": order, "root": manifest_root(order), "encrypted": True}
+    return manifest, blobs
+
+
 def verify_manifest(manifest: dict) -> bool:
     """The manifest's declared root must match its ordered chunk list, chunk hashes must be
     well-formed, and size must be a non-negative int (catches a doctored manifest before we
@@ -96,11 +123,14 @@ def verify_manifest(manifest: dict) -> bool:
     return manifest.get("root") == manifest_root(chunks)
 
 
-def reassemble(manifest: dict, fetch_chunk, out_dir: str) -> pathlib.Path:
+def reassemble(manifest: dict, fetch_chunk, out_dir: str, decrypt=None) -> pathlib.Path:
     """Fetch each chunk via fetch_chunk(hash)->bytes, VERIFY each against its hash, and write
     the file into out_dir only if everything checks out. fetch_chunk failures or any hash
     mismatch raise — a corrupted/swapped chunk never reaches disk. Path-safe: the manifest
-    name is reduced to a basename inside out_dir."""
+    name is reduced to a basename inside out_dir. If the manifest is `encrypted`, `decrypt`
+    (bytes->bytes) is applied AFTER the ciphertext hash is verified."""
+    if manifest.get("encrypted") and decrypt is None:
+        raise ValueError("manifest is encrypted but no decrypt key provided")
     if not verify_manifest(manifest):
         raise ValueError("manifest root does not match its chunk list")
     out = pathlib.Path(out_dir).expanduser().resolve()
@@ -111,11 +141,18 @@ def reassemble(manifest: dict, fetch_chunk, out_dir: str) -> pathlib.Path:
     if dest != out and out not in dest.parents:
         raise ValueError("unsafe output path")
     total = 0
+    encrypted = bool(manifest.get("encrypted"))
     with dest.open("wb") as f:
         for h in manifest["chunks"]:
             data = fetch_chunk(h)
-            if data is None or _h(data) != h:
+            if data is None or _h(data) != h:   # verify the (cipher)text against its address
                 raise ValueError(f"chunk {h[:12]}… missing or corrupted — aborting")
+            if encrypted:
+                try:
+                    data = decrypt(data)        # decrypt AFTER integrity check
+                except Exception:
+                    dest.unlink(missing_ok=True)
+                    raise ValueError("decryption failed (wrong key or tampered chunk)")
             f.write(data)
             total += len(data)
     if manifest.get("size") is not None and total != manifest["size"]:

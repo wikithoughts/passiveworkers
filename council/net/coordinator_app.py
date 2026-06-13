@@ -111,6 +111,7 @@ class JobBody(BaseModel):
     requires: dict | None = None    # capability gate, e.g. {"model": "qwen3:14b", "min_ram_gb": 16}
     fetch: bool = False             # shard_map: items are PUBLIC URLs to fetch+process (D15 rules)
     context: str = Field(default="", max_length=4000)   # assisted: bounded context for the operator
+    encrypt_to: str = Field(default="", max_length=100)  # assisted: asker box pubkey for E2E file encryption (D23)
 
 
 class FeedbackBody(BaseModel):
@@ -189,6 +190,8 @@ def accept_assisted(task_id: str, x_pw_token: str | None = Header(default=None),
 
 class DeliverBody(BaseModel):
     deliverable: str = Field(..., max_length=200_000)
+    signature: str = Field(default="", max_length=200)    # operator's Ed25519 sig (D23)
+    signer_pub: str = Field(default="", max_length=100)    # operator's verify key (b64)
 
 
 @app.post("/tasks/{task_id}/deliver")
@@ -198,7 +201,8 @@ def deliver_assisted(task_id: str, body: DeliverBody,
     """Operator returns the owned deliverable; the ledger settles (D21)."""
     _auth(x_pw_token)
     node_id = _node_auth(x_node_secret)
-    out = store.deliver_assisted(task_id, node_id, body.deliverable)
+    out = store.deliver_assisted(task_id, node_id, body.deliverable,
+                                 signature=body.signature, signer_pub=body.signer_pub)
     if not out.get("ok"):
         raise HTTPException(status_code=409, detail=out.get("error", "cannot deliver"))
     return out
@@ -293,7 +297,8 @@ def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,
-                           requires=body.requires, fetch=body.fetch, context=body.context)
+                           requires=body.requires, fetch=body.fetch, context=body.context,
+                           encrypt_to=body.encrypt_to)
     out["balance"] = store.user_balance(handle)
     if out.get("status") == "pending_answers" and (body.type or "chat") != "shard_map":
         # the honest single-model compare only makes sense for answer/report jobs —

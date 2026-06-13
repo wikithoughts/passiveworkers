@@ -132,7 +132,9 @@ capability matching, and **assisted** human-in-the-loop tasks — `pw tasks` / `
 `pw deliver`: an operator consents to a bounded brief and does it with their own AI or by hand,
 never our autonomous code). Deliverables can be **real files**, moved as content-addressed,
 integrity-verified chunks (`pw deliver <task> @file <job>` → `pw fetch <job> <dir>`) — a
-corrupted or swapped chunk is detected, never written. Two principles are absolute: **operators always see and consent to the
+corrupted or swapped chunk is detected, never written. With the `[crypto]` extra, deliverables are
+**signed** (the asker verifies which operator produced them) and files can be **end-to-end
+encrypted** to the asker (`pw keygen` → the coordinator relays ciphertext it cannot read). Two principles are absolute: **operators always see and consent to the
 work their machine does** (never hidden tasks), and when a job needs a real computer driven, it
 is **handed to the human operator** to do with their own AI under approval — our code never
 automates anyone's machine. The long game is a commons of computers doing real work for each

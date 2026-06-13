@@ -250,7 +250,7 @@ class Store:
     def create_job(self, asker: str, question: str, minds: int | None = None,
                    job_type: str = "chat", items: Optional[list] = None,
                    requires: Optional[dict] = None, fetch: bool = False,
-                   context: str = "") -> dict:
+                   context: str = "", encrypt_to: str = "") -> dict:
         with self.lock:
             asker = _clip(asker)
             if job_type not in JOB_TYPES:
@@ -259,7 +259,7 @@ class Store:
             # any consenting, capable operator may claim, do (with their own AI or by hand),
             # and deliver. No autonomous computer-use by us; the human is the agent.
             if job_type == "assisted":
-                return self._create_assisted(asker, question, context, requires)
+                return self._create_assisted(asker, question, context, requires, encrypt_to)
             # Answer-workers = online nodes that declare a model AND meet the job's
             # capability requirements; prefer higher reputation.
             candidates = [n for n in self.online_nodes()
@@ -341,7 +341,7 @@ class Store:
 
     # ------------------------------------------------------------------ assisted (D21)
     def _create_assisted(self, asker: str, question: str, context: str,
-                         requires: Optional[dict]) -> dict:
+                         requires: Optional[dict], encrypt_to: str = "") -> dict:
         """Create an OPEN assisted offer (called under self.lock from create_job)."""
         job_id = str(uuid.uuid4())
         pool = round(CONFIG.worker_pool / CONFIG.fleet_size * JOB_TYPES["assisted"]["pool_mult"], 4)
@@ -364,7 +364,8 @@ class Store:
             (job_id, asker, question, "pending_assist", _now(), None, None, None, None, pool, "assisted"))
         # ONE open task, no node_id — any consenting capable operator may claim it.
         payload = {"question": question, "job_type": "assisted",
-                   "context": (context or "")[:4000], "requires": requires or {}, "price": pool}
+                   "context": (context or "")[:4000], "requires": requires or {}, "price": pool,
+                   "encrypt_to": (encrypt_to or "")[:100]}
         self.conn.execute(
             "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(uuid.uuid4()), job_id, "assisted", None, "open",
@@ -387,6 +388,7 @@ class Store:
                             "context": payload.get("context", ""),
                             "requires": payload.get("requires") or {},
                             "price": payload.get("price"),
+                            "encrypt_to": payload.get("encrypt_to", ""),
                             "age_s": round(_now() - t["created"], 1)})
             return out
 
@@ -416,9 +418,11 @@ class Store:
             self._save_ledger()
             self.conn.commit()
             return {"ok": True, "task_id": task_id, "job_id": t["job_id"],
-                    "brief": payload.get("question", ""), "context": payload.get("context", "")}
+                    "brief": payload.get("question", ""), "context": payload.get("context", ""),
+                    "encrypt_to": payload.get("encrypt_to", "")}
 
-    def deliver_assisted(self, task_id: str, node_id: str, deliverable: str) -> dict:
+    def deliver_assisted(self, task_id: str, node_id: str, deliverable: str,
+                         signature: str = "", signer_pub: str = "") -> dict:
         """Operator returns the owned deliverable; settle (operator paid the pool, conserved)."""
         with self.lock:
             t = self.conn.execute(
@@ -442,6 +446,9 @@ class Store:
                 if not verify_manifest(manifest) or not self.blobs_present(t["job_id"], manifest["chunks"]):
                     return {"ok": False, "error": "file incomplete — upload all chunks before delivering"}
             result = {"text": deliverable}
+            if signature and signer_pub:   # D23: operator's signature over the deliverable
+                result["signature"] = signature[:200]
+                result["signer_pub"] = signer_pub[:100]
             result["_digest"] = self.result_digest(result)
             pool = job["pool"] or 0.0
             # release the escrow hold to the operator (asker was already debited at offer
@@ -788,6 +795,29 @@ class Store:
             jt = self.conn.execute(
                 "SELECT node_id, country, status FROM tasks WHERE job_id=? AND type='judge' LIMIT 1",
                 (job_id,)).fetchone()
+            # assisted: surface the operator's signature over the deliverable (D23)
+            sig = signer = None
+            encrypt_to = ""
+            registered_sign_pub = None
+            at = self.conn.execute(
+                "SELECT result, payload, node_id FROM tasks WHERE job_id=? AND type='assisted' LIMIT 1",
+                (job_id,)).fetchone()
+            if at:
+                if at["result"]:
+                    ares = json.loads(at["result"])
+                    sig, signer = ares.get("signature"), ares.get("signer_pub")
+                if at["payload"]:
+                    encrypt_to = json.loads(at["payload"]).get("encrypt_to", "")
+                # the key the claiming operator REGISTERED — the asker binds the signature to
+                # this, so a delivery can't be signed by an arbitrary key (D23 review)
+                if at["node_id"]:
+                    nd = self.conn.execute("SELECT profile FROM nodes WHERE node_id=?",
+                                           (at["node_id"],)).fetchone()
+                    if nd and nd["profile"]:
+                        try:
+                            registered_sign_pub = json.loads(nd["profile"]).get("sign_pub")
+                        except Exception:
+                            registered_sign_pub = None
             return {
                 "job_id": job["job_id"], "asker": job["asker"], "question": job["question"],
                 "type": job["type"] or "chat",
@@ -798,6 +828,8 @@ class Store:
                 "judge_machine_key": mkey(jt["node_id"]) if jt else None,
                 "receipt": json.loads(job["receipt"]) if job["receipt"] else None,
                 "baseline": baseline,
+                "signature": sig, "signer_pub": signer, "encrypt_to": encrypt_to,
+                "registered_sign_pub": registered_sign_pub,
                 "answers": ans,
             }
 

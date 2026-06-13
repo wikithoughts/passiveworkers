@@ -34,8 +34,10 @@ extract = ["trafilatura>=2.0"]
 docs = ["pypdf>=4.0", "python-docx>=1.1"]
 # Run as an MCP server so Claude Desktop / Codex can call the engine as a tool.
 mcp = ["mcp>=1.0"]
+# Signed + encrypted marketplace deliverables (Ed25519 + X25519 SealedBox).
+crypto = ["pynacl>=1.5"]
 # Everything.
-all = ["trafilatura>=2.0", "pypdf>=4.0", "python-docx>=1.1", "mcp>=1.0"]
+all = ["trafilatura>=2.0", "pypdf>=4.0", "python-docx>=1.1", "mcp>=1.0", "pynacl>=1.5"]
 
 [project.urls]
 Homepage = "https://github.com/wikithoughts/passiveworkers"
