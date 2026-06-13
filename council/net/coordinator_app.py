@@ -112,10 +112,16 @@ class JobBody(BaseModel):
     fetch: bool = False             # shard_map: items are PUBLIC URLs to fetch+process (D15 rules)
     context: str = Field(default="", max_length=4000)   # assisted: bounded context for the operator
     encrypt_to: str = Field(default="", max_length=100)  # assisted: asker box pubkey for E2E file encryption (D23)
+    split: list[float] | None = Field(default=None, max_length=16)  # shard_map: explicit per-worker weights (else capacity-weighted, D32)
 
 
 class FeedbackBody(BaseModel):
     verdict: str = Field(..., max_length=12)
+
+
+class ProgressBody(BaseModel):
+    done: int = Field(..., ge=0)
+    total: int = Field(..., ge=1)
 
 
 @app.get("/healthz")
@@ -159,6 +165,17 @@ def task_result(task_id: str, result: dict, x_pw_token: str | None = Header(defa
     if not accepted:
         raise HTTPException(status_code=409, detail="task not yours, unknown, or already done")
     return {"accepted": True}
+
+
+@app.post("/tasks/{task_id}/progress")
+def task_progress(task_id: str, body: ProgressBody, x_pw_token: str | None = Header(default=None),
+                  x_node_secret: str | None = Header(default=None)):
+    """A worker reports mid-flight progress on its claimed task (D32). Best-effort: a rejected
+    report (not yours / already done / bad numbers) just isn't recorded — it never errors the run."""
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    store.update_task_progress(node_id, task_id, body.done, body.total)
+    return {"ok": True}
 
 
 @app.get("/tasks/offers")
@@ -312,7 +329,7 @@ def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,
                            requires=body.requires, fetch=body.fetch, context=body.context,
-                           encrypt_to=body.encrypt_to)
+                           encrypt_to=body.encrypt_to, split=body.split)
     out["balance"] = store.user_balance(handle)
     if out.get("status") == "pending_answers" and (body.type or "chat") != "shard_map":
         # the honest single-model compare only makes sense for answer/report jobs —

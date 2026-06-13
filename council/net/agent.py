@@ -112,6 +112,18 @@ class Agent:
         except requests.RequestException as exc:
             print(f"[agent] heartbeat failed: {exc}")
 
+    def _report_progress(self, task_id: str, done: int, total: int) -> None:
+        """Best-effort mid-flight progress for a claimed task (D32). Never raises — a dropped
+        progress ping must not affect the actual work or its result."""
+        if not task_id:
+            return
+        try:
+            requests.post(f"{self.base}/tasks/{task_id}/progress",
+                          json={"done": int(done), "total": int(total)},
+                          headers=self._node_headers(), timeout=10)
+        except requests.RequestException:
+            pass
+
     # ------------------------------------------------------------------ task handlers
     def _do_answer(self, task: dict) -> dict:
         payload = task.get("payload") or {}
@@ -123,8 +135,18 @@ class Agent:
             from council.batch import BatchWorker
             bw = BatchWorker(self.node_id, self.answer_model,
                              country=task.get("country", self.country))
+            # D32: report progress as items complete (throttled) so the coordinator can show a job
+            # completion % and the reaper sees a live, advancing claim instead of guessing.
+            last = [0.0]
+
+            def _on_progress(done: int, total: int) -> None:
+                t = time.monotonic()
+                if done >= total or t - last[0] >= 3.0:
+                    last[0] = t
+                    self._report_progress(task.get("task_id", ""), done, total)
+
             return bw.process(question, payload.get("shard") or [],
-                              fetch=bool(payload.get("fetch")))
+                              fetch=bool(payload.get("fetch")), on_progress=_on_progress)
         if payload.get("job_type") == "research_report" \
                 and os.environ.get("PW_WEB_BACKEND", "off") != "off":
             # D13: async deep-research job — this node's own multi-round, egress-localized

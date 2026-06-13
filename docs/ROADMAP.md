@@ -90,6 +90,30 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R20 — DISTRIBUTED TASK ORCHESTRATION, Phase-1 (D32, 2026-06-13) — "work for you AND others"
+Reframed the product (README/pyproject/cli/MCP/ANNOUNCE/CONTRIBUTE): Passive Workers = *make your
+computer work for you and others*, a compute network where **deep research is the flagship task, not
+the whole product** — restoring the documented strategy (D13/D16/D21) to the surface copy. A 3-agent
+council review found the vision is blocked by **orchestration gaps, not constraints** (the legal/crypto/
+trust groundwork is already built). Built the **scheduling half** on the existing `shard_map`:
+- **Failover** — the reaper *reassigns* a stalled task (node offline OR claim past timeout) to a fresh
+  capable node (`retries` counter; job fails only when no replacement / retries exhausted) instead of
+  failing the whole job. Pre-settle → ledger conservation preserved.
+- **Progress %** — workers report `done/total` (`POST /tasks/{id}/progress`, ownership-enforced);
+  `GET /jobs/{id}` exposes a completion fraction; `BatchWorker` emits it per item (throttled).
+- **Capacity-weighted + user-specified split** — shard sizes by cores/RAM/load or an explicit `split`,
+  replacing flat round-robin; global index preserved so in-order reassembly is unchanged.
+Plus 4 cheap review wins (judge anti-position-bias shuffle was a `len%len==0` no-op; baseline shape
+guard; record_feedback asker-only; digest-honesty). **210 tests (+26 across the round)**: new
+`test_reaper_failover`, `test_shard_orchestration`, `test_federation_http`, `test_review_fixes`.
+Review (3 lenses × verify, 8 agents) → 4 fixed: a CRITICAL non-finite-`split` crash, progress now
+resets the claim clock on forward motion (no churn on slow nodes) but ignores spam, `done>total` rejected.
+**Phase-2 (next):** task-type dispatch *registry* (collapse the ~5 hardcoded `if job_type ==` sites)
++ **download-extract** and **code-generation** task types (compute-over-fetched-data per D4; execution
+via `assisted` per D15/D18). **Phase-3:** multi-producer file reassembly; 2-stage pipeline/DAG (generalize
+`_maybe_start_judging`); security hardening (rate limiting, SSRF redirect/TOCTOU pinning, per-operator
+enrollment tokens, blob peak-memory cap).
+
 ## R19 — CURRENT-YEAR QUERY INJECTION + BREAKING AUTO-DEEPEN (D31, 2026-06-13) — fix what ranking can't
 R18 left one honest residual: "most recent FOMC meeting" still returned the SEO-dominant 2023 page —
 recency *ranking* can't lift a fresh source search never returned. R19 fixes it at the **query**:

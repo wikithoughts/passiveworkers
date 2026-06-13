@@ -52,13 +52,15 @@ class BatchWorker:
         d = r.json()
         return (d.get("response") or "").strip(), (d.get("eval_count") or 0)
 
-    def process(self, instruction: str, shard: list[dict], fetch: bool = False) -> dict:
+    def process(self, instruction: str, shard: list[dict], fetch: bool = False,
+                on_progress=None) -> dict:
         t0 = time.monotonic()
         # the instruction is the asker's TASK (kept as a directive) but still scrubbed of invisible/
         # bidi/HTML-comment injection vectors; every per-item value is untrusted DATA → spotlighted.
         instruction = clean(instruction)
         results, tokens, ok = [], 0, 0
-        for entry in shard:
+        total = len(shard)
+        for n, entry in enumerate(shard, start=1):
             idx, item = entry.get("i", 0), str(entry.get("item", ""))
             try:
                 if fetch:
@@ -74,6 +76,13 @@ class BatchWorker:
             except Exception as e:
                 results.append({"i": idx, "item": item,
                                 "output": f"(error: {type(e).__name__}: {str(e)[:120]})"})
+            # mid-flight progress (D32): report items done / total so the coordinator can show a
+            # job completion % and the reaper sees a live, advancing claim. Best-effort by the caller.
+            if on_progress:
+                try:
+                    on_progress(n, total)
+                except Exception:
+                    pass
         elapsed = round(time.monotonic() - t0, 2)
         return {
             "text": (f"Processed {ok}/{len(shard)} items in {elapsed}s on this "

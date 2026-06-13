@@ -38,6 +38,11 @@ from council.sanitize import sanitize_brief
 
 _now = time.time  # server runtime (not a workflow script)
 _FIELD_MAX = 80   # cap node/owner string lengths (defense-in-depth vs. abuse)
+# Failover (D32): how many times a task may be reassigned before the job fails, and how long a
+# CLAIMED-but-undelivered task may sit (as a fraction of the job's deadline) before it's "stalled"
+# even though its node still heartbeats. node-OFFLINE stalls are reassigned immediately.
+_MAX_TASK_RETRIES = int(os.environ.get("PW_MAX_TASK_RETRIES", "2"))
+_CLAIM_TIMEOUT_FRAC = float(os.environ.get("PW_CLAIM_TIMEOUT_FRAC", "0.6"))
 
 
 def _hash(secret: str) -> str:
@@ -100,6 +105,12 @@ class Store:
             self.conn.execute("ALTER TABLE jobs ADD COLUMN pool REAL")
         if "type" not in cols:       # job type — async work marketplace (D13); null/legacy = chat
             self.conn.execute("ALTER TABLE jobs ADD COLUMN type TEXT")
+        # tasks migrations (D32 orchestration): reassignment counter + per-task progress.
+        tcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(tasks)")}
+        if "retries" not in tcols:   # how many times this task has been reassigned on failover
+            self.conn.execute("ALTER TABLE tasks ADD COLUMN retries INTEGER DEFAULT 0")
+        if "progress" not in tcols:  # JSON {"done":N,"total":M} a worker reports mid-flight
+            self.conn.execute("ALTER TABLE tasks ADD COLUMN progress TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------ ledger persistence
@@ -258,10 +269,50 @@ class Store:
                 return False
         return True
 
+    @staticmethod
+    def _capacity(node: Any) -> float:
+        """A positive capacity weight for load-aware split sizing (D32): cores + a RAM bonus,
+        scaled down by current CPU load. Faster, less-loaded machines get a bigger shard. Always
+        >0 so every selected worker can take at least its apportioned share."""
+        try:
+            prof = json.loads(node["profile"]) if isinstance(node["profile"], str) else (node["profile"] or {})
+        except Exception:
+            prof = {}
+        try:
+            cores = float(prof.get("cores") or 1) or 1.0
+        except (TypeError, ValueError):
+            cores = 1.0
+        try:
+            ram = float(prof.get("ram_gb") or 0)
+        except (TypeError, ValueError):
+            ram = 0.0
+        try:
+            load = float(node["load"] or 0.0)
+        except (TypeError, ValueError):
+            load = 0.0
+        return max(0.1, (cores + ram / 8.0) * max(0.1, 1.0 - min(1.0, max(0.0, load))))
+
+    @staticmethod
+    def _apportion(total: int, weights: list[float]) -> list[int]:
+        """Largest-remainder (Hamilton) apportionment: split `total` items across len(weights)
+        buckets proportional to weights, with sum(result) == total exactly and each >= 0."""
+        n = len(weights)
+        if n == 0 or total <= 0:
+            return [0] * n
+        s = sum(w for w in weights if w > 0) or float(n)
+        raw = [total * (w if w > 0 else 0.0) / s for w in weights]
+        base = [int(x) for x in raw]
+        rem = total - sum(base)
+        order = sorted(range(n), key=lambda i: raw[i] - base[i], reverse=True)
+        for k in range(rem):
+            base[order[k % n]] += 1
+        return base
+
     def create_job(self, asker: str, question: str, minds: int | None = None,
                    job_type: str = "chat", items: Optional[list] = None,
                    requires: Optional[dict] = None, fetch: bool = False,
-                   context: str = "", encrypt_to: str = "") -> dict:
+                   context: str = "", encrypt_to: str = "",
+                   split: Optional[list] = None) -> dict:
         with self.lock:
             asker = _clip(asker)
             # The single networked choke point for the brief/instruction (D26): scrub invisible/bidi
@@ -305,8 +356,10 @@ class Store:
                 self.conn.commit()
                 return {"job_id": job_id, "status": "failed", "error": why}
 
-            # shard_map: split the items across the selected workers (round-robin, keeping
-            # each item's global index so the merged output preserves input order).
+            # shard_map: split the items across the selected workers, sized by CAPACITY
+            # (cores/RAM/load) or an explicit user `split`, keeping each item's GLOBAL index so the
+            # merged output preserves input order (D32). Never select more workers than items, so
+            # no node sits idle and the asker isn't charged for an empty shard.
             shards: dict = {}
             if job_type == "shard_map":
                 clean = [str(x).strip()[:2000] for x in (items or []) if str(x).strip()][:200]
@@ -319,9 +372,26 @@ class Store:
                     self.conn.commit()
                     return {"job_id": job_id, "status": "failed",
                             "error": "batch job needs a non-empty items list"}
+                if len(workers) > len(clean):
+                    workers = workers[:len(clean)]
+                    pool = round(CONFIG.worker_pool / CONFIG.fleet_size * len(workers)
+                                 * JOB_TYPES[job_type]["pool_mult"], 4)
+                # weights: an explicit, FINITE, positive, worker-count-matching `split` wins; else
+                # capacity. (Non-finite weights — inf/nan — would make _apportion's int(raw) crash;
+                # an invalid split silently falls back to capacity rather than erroring the job. review)
+                if (isinstance(split, list) and len(split) == len(workers)
+                        and all(isinstance(w, (int, float)) and not isinstance(w, bool)
+                                and math.isfinite(w) and w > 0 for w in split)):
+                    weights = [float(w) for w in split]
+                else:
+                    weights = [self._capacity(w) for w in workers]
+                counts = self._apportion(len(clean), weights)
                 shards = {w["node_id"]: [] for w in workers}
-                for idx, it in enumerate(clean):
-                    shards[workers[idx % len(workers)]["node_id"]].append({"i": idx, "item": it})
+                pos = 0
+                for w, c in zip(workers, counts):
+                    for _ in range(c):
+                        shards[w["node_id"]].append({"i": pos, "item": clean[pos]})
+                        pos += 1
 
             self.ledger.open_account(asker)
             cost = self.ledger.quote(pool, CONFIG.judge_fee)
@@ -346,7 +416,9 @@ class Store:
                     payload["shard"] = shards.get(n["node_id"], [])
                     payload["fetch"] = bool(fetch)
                 self.conn.execute(
-                    "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
+                "owner,lens,country,model,created,score,claimed_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), job_id, "answer", n["node_id"], "queued",
                      json.dumps(payload), None,
                      n["node_id"], n["owner"],
@@ -411,7 +483,9 @@ class Store:
                    "context": (context or "")[:4000], "requires": requires or {}, "price": pool,
                    "encrypt_to": (encrypt_to or "")[:100]}
         self.conn.execute(
-            "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
+            "owner,lens,country,model,created,score,claimed_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(uuid.uuid4()), job_id, "assisted", None, "open",
              json.dumps(payload), None, None, None, "", "", "", _now(), None, None))
         self._save_ledger(); self.conn.commit()
@@ -657,6 +731,41 @@ class Store:
                     "payload": json.loads(row["payload"]), "lens": row["lens"],
                     "country": row["country"], "model": row["model"]}
 
+    def update_task_progress(self, node_id: str, task_id: str, done: int, total: int) -> bool:
+        """A worker reports mid-flight progress on its CLAIMED task (D32). Node-ownership enforced
+        (a node may only report on its own task). Stored as JSON {"done","total"}; job_view turns it
+        into a job completion fraction. Review-hardened:
+          • FORWARD progress (done strictly increases) resets the claim clock (`claimed_at`), so a
+            slow-but-honest node keeps its work and isn't reassigned out from under itself.
+          • A non-advancing report (same/lower done) is IGNORED — no write, no claim reset — so a
+            node can neither spam writes (lock-contention DoS) nor keep a stalled claim alive forever
+            without actually progressing.
+          • `done > total` is rejected (a bounded, ordered contract — no misleading records).
+        Best-effort — a rejected report never affects the result."""
+        with self.lock:
+            t = self.conn.execute("SELECT node_id, status, progress FROM tasks WHERE task_id=?",
+                                  (task_id,)).fetchone()
+            if not t or t["node_id"] != node_id or t["status"] == "done":
+                return False
+            try:
+                d, tot = int(done), int(total)
+            except (TypeError, ValueError):
+                return False
+            if tot <= 0 or d < 0 or d > tot:
+                return False
+            prev = 0
+            if t["progress"]:
+                try:
+                    prev = int(json.loads(t["progress"]).get("done") or 0)
+                except Exception:
+                    prev = 0
+            if d <= prev:
+                return True   # accepted but ignored: no forward progress → no write, no claim reset
+            self.conn.execute("UPDATE tasks SET progress=?, claimed_at=? WHERE task_id=?",
+                              (json.dumps({"done": d, "total": tot}), _now(), task_id))
+            self.conn.commit()
+            return True
+
     @staticmethod
     def result_digest(result: dict) -> str:
         """Canonical SHA-256 of a task result — tamper-evidence (FEDERATION_V2 trust step 1).
@@ -722,7 +831,9 @@ class Store:
                 entry["sample"] = [rows[i] for i in idx][:3] if rows else []
             payload_answers.append(entry)
         self.conn.execute(
-            "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
+            "owner,lens,country,model,created,score,claimed_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(uuid.uuid4()), job_id, "judge", judge["node_id"], "queued",
              json.dumps({"question": job["question"], "answers": payload_answers,
                          "job_type": job["type"] or "chat"}), None,
@@ -809,6 +920,47 @@ class Store:
         self._save_ledger()
         self.conn.commit()
 
+    # ------------------------------------------------------------------ failover (D32)
+    def _pick_replacement(self, job: Any, task: Any) -> Optional[sqlite3.Row]:
+        """A fresh node to take over a stalled task: a distinct, online, capable node, highest
+        reputation first. Answer tasks → a new answer node not already in this job; judge tasks →
+        an online judge node, preferring one that didn't answer (self-deal guard). None if there
+        is no eligible replacement."""
+        job_id = job["job_id"]
+        assigned = {r["node_id"] for r in self.conn.execute(
+            "SELECT node_id FROM tasks WHERE job_id=?", (job_id,))}
+
+        def _rep(n):
+            a = self.ledger.accounts.get(n["owner"])
+            return a.avg_quality if a else 0.0
+
+        if task["type"] == "judge":
+            answer_owners = {r["owner"] for r in self.conn.execute(
+                "SELECT owner FROM tasks WHERE job_id=? AND type='answer'", (job_id,))}
+            cands = [n for n in self.online_nodes(judge_only=True) if n["node_id"] != task["node_id"]]
+            external = [n for n in cands
+                        if n["owner"] not in answer_owners and n["node_id"] not in assigned]
+            pool_c = external or [n for n in cands if n["node_id"] not in assigned] or cands
+        else:
+            pool_c = [n for n in self.online_nodes()
+                      if n["answer_model"] and n["node_id"] != task["node_id"]
+                      and n["node_id"] not in assigned]
+        if not pool_c:
+            return None
+        pool_c.sort(key=lambda n: (_rep(n), n["last_seen"]), reverse=True)
+        return pool_c[0]
+
+    def _reassign_task(self, task: Any, repl: sqlite3.Row) -> None:
+        """Re-queue a stalled task to `repl`: new node/owner/locale, clear the claim+progress, and
+        bump retries. The payload (the shard or the judge's answer set) is preserved, so the new
+        node does exactly the same work. Pre-settle → no ledger effect (conservation holds)."""
+        model = repl["judge_model"] if task["type"] == "judge" else repl["answer_model"]
+        self.conn.execute(
+            "UPDATE tasks SET node_id=?, worker_id=?, owner=?, lens=?, country=?, model=?, "
+            "status='queued', claimed_at=NULL, progress=NULL, retries=? WHERE task_id=?",
+            (repl["node_id"], repl["node_id"], repl["owner"], repl["lens"], repl["country"],
+             model, (task["retries"] or 0) + 1, task["task_id"]))
+
     # ------------------------------------------------------------------ reaper
     def _reap_loop(self) -> None:
         interval = max(10.0, CONFIG.node_ttl_s / 2)
@@ -846,21 +998,39 @@ class Store:
             stuck = list(self.conn.execute(
                 "SELECT * FROM jobs WHERE status IN ('pending_answers','judging')"))
             for job in stuck:
-                fail = None
-                deadline = JOB_TYPES.get(job["type"] or "chat", JOB_TYPES["chat"])["deadline_s"]
+                jt = job["type"] or "chat"
+                deadline = JOB_TYPES.get(jt, JOB_TYPES["chat"])["deadline_s"]
                 if now - job["created"] > deadline:
-                    fail = f"deadline exceeded ({int(deadline)}s)"
-                else:
-                    # If any not-done task's assigned node has gone stale, the job can't progress.
-                    tasks = self.conn.execute(
-                        "SELECT node_id, status FROM tasks WHERE job_id=? AND status!='done'",
-                        (job["job_id"],)).fetchall()
-                    for t in tasks:
-                        nd = self.conn.execute("SELECT last_seen FROM nodes WHERE node_id=?",
-                                               (t["node_id"],)).fetchone()
-                        if not nd or now - nd["last_seen"] > CONFIG.node_ttl_s:
-                            fail = "assigned node went offline"
-                            break
+                    self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
+                                      (f"deadline exceeded ({int(deadline)}s)", job["job_id"]))
+                    continue
+                # Per-task FAILOVER (D32): a not-done task whose node went OFFLINE, or whose claim
+                # has been held past the claim timeout WITHOUT a result, is "stalled". Reassign it
+                # to a fresh capable node (status→queued, new owner, claim cleared, retries+1)
+                # rather than failing the whole job. The job fails ONLY when no replacement exists
+                # or a task's retries are exhausted. Settlement still runs once at the end (when the
+                # judge completes), so the ledger is never touched here → conservation is preserved.
+                claim_timeout = max(CONFIG.node_ttl_s, deadline * _CLAIM_TIMEOUT_FRAC)
+                fail = None
+                for t in list(self.conn.execute(
+                        "SELECT * FROM tasks WHERE job_id=? AND status!='done'", (job["job_id"],))):
+                    nd = self.conn.execute("SELECT last_seen FROM nodes WHERE node_id=?",
+                                           (t["node_id"],)).fetchone()
+                    offline = (not nd) or (now - nd["last_seen"] > CONFIG.node_ttl_s)
+                    claim_stuck = bool(t["status"] == "claimed" and t["claimed_at"]
+                                       and now - t["claimed_at"] > claim_timeout)
+                    if not (offline or claim_stuck):
+                        continue
+                    if (t["retries"] or 0) >= _MAX_TASK_RETRIES:
+                        fail = (f"task could not be completed after {_MAX_TASK_RETRIES} "
+                                f"reassignment(s)")
+                        break
+                    repl = self._pick_replacement(job, t)
+                    if not repl:
+                        fail = ("no replacement node available "
+                                + ("(assigned node offline)" if offline else "(node stalled)"))
+                        break
+                    self._reassign_task(t, repl)
                 if fail:
                     self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
                                       (fail, job["job_id"]))
@@ -922,9 +1092,30 @@ class Store:
                     sig, signer = ares.get("signature"), ares.get("signer_pub")
                 if at["payload"]:
                     encrypt_to = json.loads(at["payload"]).get("encrypt_to", "")
+            # Overall completion fraction (D32): each answer task contributes its own done/total
+            # (finished = 1.0, in-flight = its reported progress, queued = 0); the judge is one final
+            # unit. A done job is 1.0; a failed job reports whatever fraction it reached.
+            def _afrac(row):
+                if row["status"] == "done":
+                    return 1.0
+                p = row["progress"]
+                if p:
+                    try:
+                        pj = json.loads(p)
+                        tot = float(pj.get("total") or 0)
+                        return max(0.0, min(1.0, float(pj.get("done") or 0) / tot)) if tot > 0 else 0.0
+                    except Exception:
+                        return 0.0
+                return 0.0
+            if job["status"] == "done":
+                progress = 1.0
+            else:
+                n_units = len(answers) + 1   # answer tasks + the judge stage
+                judge_done = 1.0 if (jt and jt["status"] == "done") else 0.0
+                progress = round((sum(_afrac(a) for a in answers) + judge_done) / n_units, 3)
             return {
                 "job_id": job["job_id"], "asker": job["asker"], "question": job["question"],
-                "type": job["type"] or "chat",
+                "type": job["type"] or "chat", "progress": progress,
                 "status": job["status"], "error": job["error"], "merged": job["merged"],
                 "council": json.loads(job["council"]) if job["council"] else None,
                 "judge_country": jt["country"] if jt else None,

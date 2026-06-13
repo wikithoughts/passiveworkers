@@ -794,3 +794,68 @@ before commit; two MEDIUMs accepted as documented trade-offs:
 Lesson: a query-rewrite heuristic's failure modes are *over-trusting a token's meaning* (is "2000" a
 year or a price?) and *brief-vs-query scoping* (a fresh brief still has historical sub-queries) — and
 the safe move on ambiguity is to **append, never replace**, so a wrong guess never corrupts the query.
+
+## D32 — Distributed task orchestration: "make your computer work for you AND others" is the product
+**Decision:** Reframe and build toward the founder's full vision. Passive Workers is **not** "a local
+research tool" — it is *make your computer work for you and others*: a local-first network where
+machines do **typed jobs** for each other. Deep research is the **flagship single-player task** (the
+adoption engine, D16) — one task type among many, not the product. The vision: send a job → the
+network **splits it across available computers** (auto by capacity or a user-specified split) → each
+does its chunk **locally** → the parts are **reassembled and delivered back**, with **progress %**,
+**load-balancing**, and **failover** when a node stalls.
+A 3-agent review found the vision is blocked by **orchestration gaps, not constraints** — the legal/
+crypto/trust groundwork is already settled and built (D4 owned-deliverables; D15 sharded-batch
+envelope; D18 human-mediated computer-use; escrow + score-weighted conserved settlement; content-
+addressed + signed delivery; SSRF guards; the `JOB_TYPES` registry). So R20 builds the **scheduling
+half** on the existing `shard_map` machinery (Phase-1):
+- **Failover** (`store._reap_once` + `_pick_replacement`/`_reassign_task`): a not-done task whose node
+  went OFFLINE or whose claim is held past a claim-timeout is *reassigned* to a fresh capable node
+  (re-queue, new owner, claim cleared, `retries`+1) instead of failing the whole job. The job fails
+  only when no replacement exists or `PW_MAX_TASK_RETRIES` is hit. Reassignment is **pre-settle and
+  never touches the ledger** → settlement still runs once at the end over whoever actually completed,
+  so **conservation is preserved** (D1/D2 — no node-to-node transfer).
+- **Progress** (`update_task_progress` + `POST /tasks/{id}/progress` + `job_view.progress`): a worker
+  reports `done/total` mid-flight (node-ownership enforced); `job_view` exposes a job completion
+  fraction. `BatchWorker` emits it per item (throttled by the agent).
+- **Capacity-weighted + user split** (`create_job` + `_capacity`/`_apportion`): shard sizes are
+  weighted by node cores/RAM/load, or by an explicit `split`, replacing flat round-robin; the global
+  item index is preserved so in-order reassembly is unchanged. Never more workers than items.
+**Honoring designs for the new task types (steel-manned, inside the envelope; Phase-2):**
+- **"Tasks needing downloading"** → `shard_map fetch:true` *compute-over-fetched-data*: the node
+  fetches a PUBLIC URL it could lawfully fetch alone and returns the model's **extraction**, never the
+  raw bytes (D4; preserve `batch.py`'s "return output, never content"). Requires SSRF redirect/TOCTOU
+  hardening first.
+- **"Coding parts then connecting them"** → code **generation** distributes as `shard_map` (each node
+  returns generated code = an owned artifact); code **execution/integration** routes through the
+  human-mediated `assisted` path (D18) — running third-party code on contributor machines stays the
+  parked/gated track (D15).
+- **Verification of chunks**: fuzzy QA (`judge.spot_check`) for generative chunks; content-address +
+  signature for file chunks (D5/D10/D22/D23).
+**Why:** The network is the reason for the name; the strategy docs (D13 typed-job marketplace, D16
+single-player adoption engine, D21 assisted centerpiece) already define it — the gap was surfacing it
+in the copy and building the scheduler. Single-player polish stays the lead hook (it brings the
+operators), so the reframe elevates the network without demoting research.
+**Status:** Settled & Phase-1 implemented. 210 tests green (20 new: failover, shard orchestration,
+federation HTTP). No new dependency. **Phases 2-3 are roadmap** (task-type dispatch registry +
+download-extract/code-generation types; multi-producer file reassembly; pipeline/DAG by generalizing
+`_maybe_start_judging`; security hardening — rate limiting, SSRF redirect/TOCTOU pinning, per-operator
+enrollment tokens).
+
+### D32 addendum — adversarial review pass (orchestration Phase-1)
+A workflow review (3 lenses — correctness / conservation / security — × adversarial verify, 8 agents)
+returned 5 findings, **4 confirmed**, all fixed before commit:
+- **(CRITICAL) Non-finite split weights crashed the `/jobs` endpoint.** `split=[inf, 1.0]` passed the
+  naive `w > 0` check (inf > 0 is True) but made `_apportion` compute `inf/inf = nan` → `int(nan)`
+  raised `ValueError`. Fixed: the split guard requires `math.isfinite(w)`; an invalid split silently
+  falls back to capacity weighting rather than erroring the job.
+- **(HIGH) Progress didn't reset the claim clock → a slow-but-honest node was reassigned out from
+  under itself** (duplicate work). Fixed: a *forward* progress report (`done` strictly increases)
+  resets `claimed_at`, so a node that is visibly working keeps its task.
+- **(MED) Progress had no spam guard.** Fixed in the same change: a *non-advancing* report is ignored
+  (no write, no claim reset) — so a node can neither spam writes for lock contention nor keep a
+  stalled claim alive without actually progressing. (Full server-side rate limiting is Phase-3.)
+- **(LOW) `done > total` was silently clamped** (misleading record). Fixed: it's now rejected — a
+  bounded, ordered contract.
+Lesson: the dangerous inputs in a scheduler are the ones that *look valid* — `inf` passes `> 0`, and a
+"progress" signal can be weaponized both ways (to dodge failover, or to spam) unless it must represent
+*real forward motion*. The conservation invariant held throughout (reassignment is pre-settle).
