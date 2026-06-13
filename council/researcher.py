@@ -20,6 +20,7 @@ sources for the editor pass (research):
 
 from __future__ import annotations
 
+import datetime as _dt
 import os
 import time
 from dataclasses import dataclass
@@ -27,7 +28,8 @@ from dataclasses import dataclass
 import requests
 
 from council.judge import _extract_json
-from council.research import fetch_extract, route_engines, search_structured
+from council.research import (extract_date_hint, fetch_extract, is_time_sensitive,
+                              order_by_recency, route_engines, search_structured)
 
 OLLAMA_BASE = "http://localhost:11434"
 _GEN_TIMEOUT = float(os.environ.get("PW_RESEARCH_GEN_TIMEOUT",
@@ -46,6 +48,10 @@ class ResearchWorker:
     angle: str = ""           # STORM-lite: the distinct perspective THIS analyst researches through
     page_evidence: bool = True  # fetch top result pages (leaders draft from pages, not snippets)
     scope: str = "both"       # both | web | local — local pulls from your private library (D19)
+    today: str = ""           # ISO date the research is "as of" (R18); defaults to today
+
+    def _today(self) -> str:
+        return self.today or _dt.date.today().isoformat()
 
     def _generate(self, prompt: str, num_predict: int) -> tuple[str, int]:
         r = requests.post(
@@ -65,8 +71,10 @@ class ResearchWorker:
         focus = (f"Focus specifically on this angle of the brief: {self.angle}\n"
                  if self.angle else "")
         raw, _ = self._generate(
-            "You are planning web research. Turn this brief into exactly 3 concrete, "
-            "specific search queries (different angles, current-year aware). "
+            f"You are planning web research. Today is {self._today()}. Turn this brief into "
+            "exactly 3 concrete, specific search queries (different angles). For anything "
+            "time-sensitive, make the queries current — include the current year/month so the "
+            "freshest results surface. "
             f"{focus}"
             'Reply STRICT JSON only: ["query one","query two","query three"]\n\n'
             f"BRIEF:\n{brief}\n\nJSON:", num_predict=140)
@@ -89,11 +97,13 @@ class ResearchWorker:
         from council.sanitize import spotlight
 
         def _ev(i: int, e: dict) -> str:
-            # full-page extract when we fetched one (denser grounding), else the snippet
-            dated = f" [{e['date']}]" if e.get("date") else ""
+            # full-page extract when we fetched one (denser grounding), else the snippet.
+            # show the date (real or hinted) so the model can prefer the freshest source (R18).
+            d = e.get("date") or e.get("date_hint")
+            dated = f", {d}" if d else ""
             if e.get("page"):
                 return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     EXTRACT: {e['page'][:1500]}"
-            return f"[S{i+1}] {e['title']} ({e['host']})\n     {e['snippet'][:300]}"
+            return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     {e['snippet'][:300]}"
 
         web_block = "\n".join(_ev(i, e) for i, e in enumerate(evidence))
         local_block = ""
@@ -115,9 +125,13 @@ class ResearchWorker:
             ("[S#] for web sources" if evidence else ""),
             ("[L#] for your documents" if local else "")) if p) or "[S#]"
         return self._generate(
-            f"{role} Using ONLY the sources below, "
+            f"{role} Today is {self._today()}. Using ONLY the sources below, "
             "write your findings on the brief:\n"
             "  • Lead with the most decision-relevant findings; concrete numbers and dates.\n"
+            "  • CURRENCY MATTERS: when sources span time or conflict, trust the MOST RECENT "
+            "(sources are listed with their dates, freshest first), and STATE the date of any "
+            "time-sensitive fact. Do NOT rely on your own training-time memory for current "
+            "dates/figures — only what the sources below say.\n"
             f"  • Cite every claim with its marker ({cite}). Never invent sources or facts.\n"
             f"{vantage}"
             "  • If the sources are thin on some aspect, say so honestly.\n"
@@ -168,6 +182,16 @@ class ResearchWorker:
             _collect(self._refine_queries(brief, evidence), per_query=3)
             if self.depth == "deep":
                 _collect(self._refine_queries(brief, evidence), per_query=3)
+        # Freshness-biased ordering (R18/D30): the council's edge is CURRENCY, so sniff a date
+        # hint for each source and — ONLY when the brief actually cares about recency — lead with
+        # the most-recently-dated ones (they then survive the cap AND get page-fetched first).
+        # For stable-fact briefs we leave relevance order alone, so an authoritative older source
+        # isn't buried under a recent repost (review R18). Undated sources always sort behind.
+        for e in evidence:
+            e["date_hint"] = extract_date_hint(e.get("url", ""), e.get("snippet", ""))
+        fresh = is_time_sensitive(f"{brief} {self.angle}")
+        if fresh:
+            evidence[:] = order_by_recency(evidence)
         cap = {"quick": 8, "deep": 16}.get(self.depth, 12)
         evidence[:] = evidence[:cap]   # keep the prompt within small-model context
 
@@ -180,6 +204,9 @@ class ResearchWorker:
                     e["page"], e["date"] = fetch_extract(e["url"], max_chars=1500, with_date=True)
                 except Exception:
                     pass
+            # a real fetched date beats the hint; re-order so the freshest leads (time-sensitive only)
+            if fresh:
+                evidence[:] = order_by_recency(evidence)
 
         if not evidence and not local:
             # Nothing found anywhere — honest no-sources note; the judge scores it low (correct).
@@ -202,7 +229,7 @@ class ResearchWorker:
                 draft, tokens = (f"(This {self.country} node found the sources below but could "
                                  "not synthesize in time — titles and links are its findings.)", 0)
         sources = [{"id": f"S{i+1}", "title": e["title"], "url": e["url"], "host": e["host"],
-                    "date": e.get("date", "")}
+                    "date": e.get("date") or e.get("date_hint", "")}
                    for i, e in enumerate(evidence)]
         local_sources = [{"id": f"L{i+1}", "title": d["title"], "source": d["source"]}
                          for i, d in enumerate(local)]

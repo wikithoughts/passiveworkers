@@ -90,6 +90,20 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R18 — FRESHNESS-BIASED RESEARCH (D30, 2026-06-13) — act on the currency-gap finding
+The R16 run showed the council had live web but produced stale dates (EU AI Act "2027", FOMC "2023").
+R18: `research.extract_date_hint()` + `order_by_recency()` lead the research with the freshest-dated
+sources (so they survive the cap + get page-fetched first), gated on `is_time_sensitive(brief)` so
+stable-fact queries keep relevance order; the planner/drafter are date-aware ("trust the MOST RECENT,
+state the date, don't use training-memory dates"). **Verified FREE (quick-depth, no spend) on the 4
+failed questions: 3/4 fixed** — Python ✅ (3.14.6), EU AI Act ✅ (2026-08-02, was 2027), iPhone ✅
+(17e, 2026); **FOMC still fails** because the query pulls the SEO-dominant 2023 meeting — recency
+ranking can't rescue what search didn't return (a retrieval problem → R19). Review (3 lenses × verify,
+17 agents) found 3 real bugs, all fixed: impossible-date regex (datetime-validated now), body-text
+topic-year false positives (URL-only bare years), over-recency on static (gated). 162 tests (13 new).
+**NEXT R19:** code-level current-year query injection + auto-deeper depth for breaking queries (the
+FOMC residual).
+
 ## R17 — PERFORMANCE & QUALITY BACKLOG (D29, 2026-06-13) — work the audit's cheap wins
 With the eval pair able to measure quality, worked the D26 performance backlog ("do it all and do
 anything pending"). Four reversible changes: (1) **dynamic source routing** — `research.route_engines()`

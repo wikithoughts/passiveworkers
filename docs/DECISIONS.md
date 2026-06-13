@@ -702,3 +702,41 @@ time), and **4 were actionable**, all fixed:
   "what is it like" no longer triggers Wikipedia); documented the `0`/`false` off-values and the
   central-API nature of arXiv/Wikipedia.
 Net: 16 tests across the round (incl. the 2 missed-site regressions + the invented-marker guard).
+
+## D30 — Freshness-biased research: turn live-web access into *precise current* answers
+**Decision:** Act on the R16 currency-gap finding. That run showed the council had live web access but
+didn't convert it into precise current answers — it dated the EU AI Act milestone to 2027 (not
+2026-08-02) and an FOMC meeting to 2023. R18 biases the research pipeline toward recency:
+- **`research.extract_date_hint(url, text)`** sniffs a publication date from a source (URL path or
+  snippet); **`order_by_recency(evidence)`** sorts freshest-first (real fetched date > hint > sniff;
+  undated keep relevance order, behind). `researcher.research()` date-hints all evidence and reorders
+  **before the cap** (so fresh sources survive + get page-fetched first) and again after fetch.
+- **Date-aware prompts:** the planner and drafter are told today's date; the drafter must "trust the
+  MOST RECENT source, state the date of time-sensitive facts, and NOT rely on training-time memory for
+  current dates." Each source is shown with its date.
+**Why:** Currency is the product's one measured edge (D28). Live retrieval is necessary but not
+sufficient — the model needs the freshest evidence *first* and an explicit instruction to prefer it.
+**Verification (free, quick-depth, no API spend — re-ran the 4 failed questions on the fixed code):**
+**3 of 4 fixed**, including the headline year-error — Python ✅ ("3.14.6, released 10 June 2026"),
+EU AI Act ✅ ("August 2, 2026", was 2027), iPhone ✅ (iPhone 17e, March 2026, was wrong). **FOMC still
+fails** ("June 2023") — and honestly so: the *query* "most recent completed FOMC meeting" returns the
+SEO-dominant June-2023 meeting, and recency *ranking cannot rescue what search did not return*. That is
+a retrieval problem (force the current year into time-sensitive queries / freshness-filtered search),
+the clear R19 target — not a ranking one.
+**Status:** Settled & implemented. 162 tests green. No new dependency. **Deliberately deferred to R19**
+(Phase 2): auto-deepen depth for breaking-window queries, and code-level current-year query injection.
+
+### D30 addendum — adversarial review pass (freshness)
+A review (3 lenses — correctness / integration-regression / methodology — × adversarial verify,
+17 agents) confirmed the design works and found **3 actionable bugs**, all fixed before commit:
+- **(HIGH) Impossible dates.** The month-name regexes accepted day `0`/`32`, emitting strings like
+  `2026-02-30` that corrupt the lexicographic sort. Fixed: day pattern restricted to 1-31 **and**
+  every full date is validated with `datetime.date()` (impossible dates fall back to month-year/empty).
+- **(HIGH) Topic-year false positives.** A bare year in prose ("the 2008 crisis" in a 2026 article)
+  was sniffed as the publish date → a fresh source wrongly ranked old. Fixed: bare years are trusted
+  **only from URL paths**; from free text only *full, validated* dates count.
+- **(HIGH) Over-recency on stable facts.** Recency reordering could bury an authoritative older source
+  under a recent repost on static questions. Fixed: reordering is gated on `is_time_sensitive(brief)`
+  (recency keywords) so stable-fact briefs keep relevance order — protecting the eval's static control.
+Lesson: a ranking heuristic's failure modes are mostly bad *inputs* (malformed/ambiguous dates) and
+mis-*scoping* (applying it where recency is irrelevant) — the review caught both.

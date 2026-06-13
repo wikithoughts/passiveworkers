@@ -324,6 +324,98 @@ def _extract_main(html: str) -> tuple[str, str]:
     return _strip_html(html), ""
 
 
+# ---- freshness signals (R18/D30): the council's edge is currency, so lead with recent sources ----
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+           "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+_DAY = r"(0?[1-9]|[12]\d|3[01])"                                  # 1-31 only (no 0/32+)
+_ISO_RE = re.compile(r"(20\d{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])")
+_URL_YM_RE = re.compile(r"/(20\d{2})/(0[1-9]|1[0-2])(?:/|\b)")
+_URL_Y_RE = re.compile(r"/(20[1-3]\d)(?:/|\b)")
+_MON = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+_MON_DMY = re.compile(rf"(?i)\b{_DAY}\s+{_MON}[a-z]*\.?,?\s+(20\d{{2}})\b")
+_MON_MDY = re.compile(rf"(?i)\b{_MON}[a-z]*\.?\s+{_DAY},?\s+(20\d{{2}})\b")
+_MON_MY = re.compile(rf"(?i)\b{_MON}[a-z]*\.?\s+(20\d{{2}})\b")
+
+# does a brief/query actually care about recency? If not, recency reordering is noise (and could
+# bury an authoritative older source under a recent repost), so we leave relevance order alone.
+_TEMPORAL_RE = re.compile(
+    r"(?i)\b(current|currently|latest|newest|recent|recently|now|today|as of|up.?to.?date|"
+    r"most recent|breaking|so far|to date|right now|when|next|upcoming|deadline|date|"
+    r"this (year|month|week)|202\d)\b")
+
+
+def _valid_ymd(y, mo, d) -> bool:
+    try:
+        import datetime
+        datetime.date(int(y), int(mo), int(d))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def extract_date_hint(url: str, text: str = "") -> str:
+    """Best-effort publication date as 'YYYY-MM-DD' / 'YYYY-MM' / 'YYYY' (most precise first),
+    or '' if none. A freshness RANKING signal, not an authority claim. Trust is stratified
+    (review R18): URL-path dates are intentional publication dates (trusted at all granularities);
+    from free TEXT only FULL, valid dates are trusted — a bare year in prose ('the 2008 crisis')
+    is usually a TOPIC year, not the publish date, so it is ignored. All full dates are validated
+    (no impossible days like 2026-02-30)."""
+    url, text = url or "", text or ""
+
+    def _full(y, mo, d):
+        return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}" if _valid_ymd(y, mo, d) else ""
+
+    # 1) full ISO date — URL first, then text (both are precise, low ambiguity)
+    for blob in (url, text):
+        m = _ISO_RE.search(blob)
+        if m and (v := _full(m.group(1), m.group(2), m.group(3))):
+            return v
+    # 2) month-name full dates — text only (URLs don't carry these), validated
+    m = _MON_DMY.search(text)
+    if m and (v := _full(m.group(3), _MONTHS[m.group(2).lower()[:3]], m.group(1))):
+        return v
+    m = _MON_MDY.search(text)
+    if m and (v := _full(m.group(3), _MONTHS[m.group(1).lower()[:3]], m.group(2))):
+        return v
+    # 3) URL year/month (intentional path date)
+    m = _URL_YM_RE.search(url)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    # 4) month-year in text ('Aug 2026' — usually an as-of/publish signal, less so a topic date)
+    m = _MON_MY.search(text)
+    if m:
+        return f"{m.group(2)}-{_MONTHS[m.group(1).lower()[:3]]:02d}"
+    # 5) bare year ONLY from a URL path (a bare year in free text is too often a topic year)
+    m = _URL_Y_RE.search(url)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def is_time_sensitive(text: str) -> bool:
+    """True when a brief/query shows recency intent — the gate for freshness reordering (R18)."""
+    return bool(_TEMPORAL_RE.search(text or ""))
+
+
+def _pad_date(d: str) -> str:
+    """'2026' -> '2026-00-00', '2026-06' -> '2026-06-00' so ISO strings compare chronologically."""
+    parts = (d or "").split("-")
+    while len(parts) < 3:
+        parts.append("00")
+    return "-".join(parts[:3])
+
+
+def order_by_recency(evidence: list[dict]) -> list[dict]:
+    """Reorder evidence so the most-recently-dated sources come first (using each item's
+    'date' if fetched, else 'date_hint', else a sniff of url+snippet); undated items keep their
+    original relative (relevance) order and sort last. Stable; returns a new list."""
+    def _key(item: dict) -> str:
+        d = item.get("date") or item.get("date_hint") \
+            or extract_date_hint(item.get("url", ""), item.get("snippet", ""))
+        return _pad_date(d) if d else ""
+    return sorted(evidence, key=_key, reverse=True)
+
+
 def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
     """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized main text.
     Shared by the researcher (page evidence) and batch fetch shards. Raises on failure —
