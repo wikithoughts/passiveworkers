@@ -29,6 +29,7 @@ import requests
 
 from council.judge import Judge, _extract_json
 from council.researcher import ResearchWorker
+from council.sanitize import sanitize_brief
 from council.worker import Answer
 
 OLLAMA = os.environ.get("PW_OLLAMA_BASE", "http://localhost:11434")
@@ -136,6 +137,9 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         on_progress=None) -> pathlib.Path:
     t0 = time.monotonic()
     emit = _make_emit(on_progress)
+    brief = sanitize_brief(brief)                      # the one user input → clean + length-bound
+    if not brief:
+        raise ValueError("empty brief — give something to research")
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")   # live web ON — the whole point
 
     models = detect_models()

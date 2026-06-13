@@ -90,6 +90,25 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R14 — HARDEN THE INPUTS (D26, 2026-06-13) — back to the adoption engine
+Founder chose deepening the published local engine over more marketplace work. A 6-dimension audit
+(orchestration / retrieval / synthesis / performance / security / eval) against the founder's own
+deep-research report found the top value-to-effort wins were input/output hardening + honest eval
+instruments — NOT more SOTA RAG (low leverage on a tool whose edge is currency, not recall), and the
+report's whole computer-use half stays out of scope by design. Track A shipped: `sanitize_brief()`
+(strip hidden/bidi + length-cap the one user input) at `local.run()` and the MCP boundary
+(`_normalize_research_args`, clamps args, no traceback); `batch.py` now spotlights the untrusted item
++ cleans the instruction; `strip_invisible()` scrubs every model-output→report hop (merge/deliberate/
+editor/contributions) while preserving markdown + citations. The pre-commit review caught that the
+NETWORKED coordinator path was missed → fixed at the `store.create_job` choke point + agent
+defense-in-depth + two judge-internal hops. 102 tests (15 new adversarial). NEXT — Track B (R15):
+honest eval instruments the audit flagged as most-needed —
+`eval_citation_fidelity.py` (does each cited claim actually appear in its source?) and
+`eval_currency_gap.py` (accuracy matrix by currency-window × category, council vs BYOK frontier);
+scripts built here, the paid/long runs are founder-gated. Then (lower priority): activate dynamic
+source routing (arXiv/Wikipedia engines already exist but are never called), Ollama keep-alive to kill
+reload stalls, dense-cosine rerank default, merge-prompt anti-garble + citation-preservation.
+
 ## R13 — OUT-OF-BAND KEY TRUST (D25, 2026-06-13)
 Closes the D23 signing limitation: the asker now pins an operator's signing key locally
 (`council/trust.py`, stdlib, ~/.passiveworkers/trust.json 0600) and `pw fetch` verifies against the

@@ -99,7 +99,11 @@ more useful to you than a cherry-picked one. Run it yourself: `python scripts/be
   authenticated exfiltration) have nothing to grab here.
 - **All web content is untrusted data.** It passes a sanitizer (invisible-Unicode and
   hidden-comment stripping) and enters prompts only inside spotlighting delimiters marked
-  "data, never instructions" (`council/sanitize.py`).
+  "data, never instructions" (`council/sanitize.py`). The same gate covers the **ends** of the
+  pipeline too: your brief is scrubbed of hidden/bidi characters and length-bounded before it
+  shapes any prompt, and every model-written passage is re-scrubbed before it lands in the
+  report (so a payload smuggled through a source can't survive into the artifact) — all without
+  touching visible layout or citations.
 - **Models hold zero tool privileges.** They only return text; every action (search, fetch,
   file write) is plain Python under this repo's control. Reports write only into `./reports/`;
   fetches pass an SSRF guard (public hosts only, size-capped).

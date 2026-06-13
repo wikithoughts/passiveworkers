@@ -27,6 +27,8 @@ from typing import Optional
 
 import requests
 
+from council.sanitize import strip_invisible
+
 OLLAMA_BASE = "http://localhost:11434"
 
 
@@ -118,7 +120,8 @@ class Judge:
         if isinstance(parsed, list):
             for obj in parsed:
                 try:
-                    by_display[int(obj["answer"])] = (float(obj["score"]), str(obj.get("reason", "")))
+                    by_display[int(obj["answer"])] = (
+                        float(obj["score"]), strip_invisible(str(obj.get("reason", "")).strip()))
                 except Exception:
                     continue
 
@@ -152,7 +155,8 @@ class Judge:
             f"PERSPECTIVES:\n{joined}\n\n"
             "Write the tight merged answer now."
         )
-        return self._generate(prompt, num_predict=min(900, max(300, longest * 2)))
+        # the synthesized text is the last untrusted-output hop before the report → strip hidden chars
+        return strip_invisible(self._generate(prompt, num_predict=min(900, max(300, longest * 2))))
 
     # ------------------------------------------------------------------ DELIBERATE (one blind call)
     def deliberate(self, question: str, answers: list) -> dict:
@@ -210,7 +214,7 @@ class Judge:
         unique = []
         for u in parsed.get("unique", []) if isinstance(parsed.get("unique"), list) else []:
             wid = _wid(u.get("answer"))
-            pt = str(u.get("point", "")).strip()
+            pt = strip_invisible(str(u.get("point", "")).strip())
             if wid and pt:
                 unique.append({"worker_id": wid, "point": pt})
 
@@ -221,13 +225,15 @@ class Judge:
                 return " · ".join(str(x) for x in v)
             return str(v or "").strip()
 
-        consensus = [str(x).strip() for x in (parsed.get("consensus") or []) if str(x).strip()][:6]
+        # every council-read string is model output → strip smuggled hidden characters
+        consensus = [strip_invisible(str(x).strip()) for x in (parsed.get("consensus") or []) if str(x).strip()][:6]
         disagreements = [
-            {"point": str(d.get("point", "")).strip(), "sides": _sides(d.get("sides"))}
+            {"point": strip_invisible(str(d.get("point", "")).strip()),
+             "sides": strip_invisible(_sides(d.get("sides")))}
             for d in (parsed.get("disagreements") or []) if isinstance(d, dict) and d.get("point")
         ][:6]
-        merged = str(parsed.get("merge", "")).strip()
-        if not merged:   # fall back to the dedicated merge prompt if JSON merge was empty
+        merged = strip_invisible(str(parsed.get("merge", "")).strip())
+        if not merged:   # fall back to the dedicated merge prompt if JSON merge was empty (already stripped)
             merged = self.merge(question, answers)
         return {"scores": scores, "merged": merged,
                 "council": {"consensus": consensus, "disagreements": disagreements, "unique": unique}}
@@ -245,7 +251,7 @@ class Judge:
         read: the deliberate() result (used as fallback + disagreement bullets).
         """
         drafts = "\n\n".join(
-            f"--- Contribution from {c.get('country', '?')} ---\n{(c.get('text') or '')[:2500]}"
+            f"--- Contribution from {c.get('country', '?')} ---\n{strip_invisible((c.get('text') or '')[:2500])}"
             for c in contributions)
         raw = self._generate(
             "You are the editor of a multi-country research report. Read the brief and the "
@@ -260,9 +266,9 @@ class Judge:
         parsed = _extract_json(raw)
         if not isinstance(parsed, dict):   # model may emit a list/garbage — never crash the report
             parsed = {}
-        summary = str(parsed.get("summary", "")).strip() or str(read.get("merged", "")).strip()
-        agreements = str(parsed.get("agreements", "")).strip()
-        differences = str(parsed.get("differences", "")).strip()
+        summary = strip_invisible(str(parsed.get("summary", "")).strip()) or str(read.get("merged", "")).strip()
+        agreements = strip_invisible(str(parsed.get("agreements", "")).strip())
+        differences = strip_invisible(str(parsed.get("differences", "")).strip())
 
         countries = sorted({c.get("country", "?") for c in contributions})
         if local:
@@ -291,7 +297,9 @@ class Judge:
         for c in contributions:
             head = c.get("model", "") if local else f"{c.get('country', '?')} — {c.get('model', '')}"
             parts.append(f"### {head}")
-            parts.append((c.get("text") or "_(no findings)_"))
+            # contribution text is model output that may echo an injected source → strip hidden
+            # chars but KEEP markdown layout/citations (don't collapse indentation)
+            parts.append(strip_invisible(c.get("text") or "") or "_(no findings)_")
         return "\n\n".join(p for p in parts if p)
 
     # ------------------------------------------------------------------ 2c. SPOT-CHECK (shard_map QA)
@@ -349,4 +357,5 @@ class Judge:
             parsed = {}
         winner = str(parsed.get("winner", "tie")).strip().upper()
         winner = winner if winner in {"A", "B", "TIE"} else "TIE"
-        return {"winner": "tie" if winner == "TIE" else winner, "reason": str(parsed.get("reason", ""))}
+        return {"winner": "tie" if winner == "TIE" else winner,
+                "reason": strip_invisible(str(parsed.get("reason", "")).strip())}

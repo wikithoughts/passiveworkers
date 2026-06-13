@@ -503,3 +503,53 @@ tests, and the security-critical logic was extracted into a unit-testable helper
   disproportionate for a single-user local store (a lost pin re-establishes via TOFU) — documented.
 - **(LOW) Dead `registered_sign_pub`** removed from `job_view` (D23 vestige, unused under D25); the
   `operator.py` module docstring now lists every command.
+
+## D26 — Input/output hardening: scrub the brief, the batch ingress, and the report
+**Decision:** Close the remaining untrusted-data seams in the single-player engine, grounded in a
+6-dimension audit of the engine against the founder's own deep-research report. Three in-scope hops
+were unprotected:
+- **The brief.** The one user-controlled input flowed RAW into every prompt (angle planning, query
+  planning, drafting, the judge) and across the MCP boundary. New `sanitize.sanitize_brief()` strips
+  invisible/bidi/HTML-comment vectors, collapses runaway whitespace/newlines, and HARD-CAPS length
+  (`PW_MAX_BRIEF_CHARS`, default 4000 — an unbounded brief is a context-exhaustion vector across the
+  whole multi-model pipeline). Applied at `local.run()` (raises on empty) and via a testable
+  `mcp_server._normalize_research_args()` that also clamps depth/analysts/scope (clean error, never a
+  traceback). The brief is the TASK, so it is sanitized+bounded but NOT spotlighted.
+- **The batch ingress.** `batch.py` interpolated the per-item value RAW in the non-fetch path (the
+  fetch path already spotlighted page text). Now the untrusted **item** is `spotlight()`-ed (data,
+  never instructions) and the **instruction** is `clean()`-ed — closing a direct injection seam in
+  the marketplace worker code.
+- **The synthesized report.** Model output (merge/deliberate, the council read, the editor's
+  summary/agreements/differences, and each per-analyst contribution) reached the final report
+  without re-sanitization, so a model could re-emit hidden characters smuggled from an injected
+  source. New `sanitize.strip_invisible()` removes those vectors **without** touching visible layout
+  (markdown lists, code, `[S#]`/`[L#]` citations preserved) and is applied at every output→report hop.
+**Why:** "Continue" → the founder chose deepening the published local engine (the adoption engine,
+D16) over more marketplace work. The audit found the highest value-to-effort wins were NOT more SOTA
+RAG (low leverage on a tool whose proven edge is currency, not recall) but cheap, high-confidence
+hardening of the actual ingress/egress — the report's Information-Flow-Control principle applied to
+the real trust boundaries. The report's entire computer-use/browser-agent half stays correctly out of
+scope (no browser, ever — D16/D18).
+**Status:** Settled & implemented. 102 tests green. No new dependency; no change to the
+browser/session/tool-privilege boundaries.
+
+### D26 addendum — adversarial review pass (input/output hardening)
+A workflow review (2 lenses × adversarial verify, 12 agents) confirmed 6 findings — all one root
+cause I missed: **the first cut hardened the LOCAL entry points (`local.py`, `mcp_server.py`) but not
+the NETWORKED coordinator path.** The brief/instruction flowed from the coordinator's HTTP API →
+`store.create_job` → `agent.py` → every `judge` method **raw**. Impact is bounded (models hold zero
+tool privileges — at worst bad prose), but it was a real regression vs. D26's stated goal. Fixed:
+- **Choke point at `store.create_job()`** — `question` and `context` are `sanitize_brief()`-ed there,
+  so EVERY job type (chat/research_report/shard_map/assisted) and every downstream prompt + the report
+  get a clean, bounded brief regardless of which endpoint or caller created the job.
+- **Defense-in-depth at the agent** — `agent._do_answer` / `_do_judge` re-sanitize the question too
+  (the coordinator is not fully trusted, cf. D25): a hostile coordinator can't slip a hidden payload
+  into a worker/researcher/judge prompt even by crafting a payload directly.
+- **Editor-prompt input hop** — `compile_report` now `strip_invisible()`-es each contribution before
+  it enters the editor's prompt (not just on the way out), so a researcher model that re-emitted a
+  smuggled char can't influence the editor.
+- **Judge `reason` fields** — `score()` and `compare()` now strip their model-returned reason (the
+  `compare` reason is printed to stdout in `run_demo`).
+Regression tests added (5): `create_job` scrubs + length-bounds the question; the editor prompt
+contains no hidden chars; `score`/`compare` reasons are stripped. Lesson: when hardening an ingress,
+enumerate **every** entry point — the networked path is a separate trust boundary from the local CLI.

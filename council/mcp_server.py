@@ -22,6 +22,24 @@ Tools:
 from __future__ import annotations
 
 
+def _normalize_research_args(brief: str, depth: str, analysts, scope):
+    """Validate + clamp research() args at the MCP trust boundary. Returns
+    (brief, depth, analysts, scope, error): on a bad brief, error is a clean string and the rest
+    are unset; otherwise error is "". Every out-of-range value is clamped to a safe default rather
+    than raising — an MCP client never sees a traceback."""
+    from council.sanitize import sanitize_brief
+    brief = sanitize_brief(brief)
+    if not brief:
+        return "", "", 2, "both", "error: empty brief — provide a question to research."
+    depth = depth if depth in ("quick", "standard", "deep") else "quick"
+    scope = scope if scope in ("both", "web", "local") else "both"
+    try:
+        analysts = max(1, min(4, int(analysts)))
+    except (TypeError, ValueError):
+        analysts = 2
+    return brief, depth, analysts, scope, ""
+
+
 def build_server():
     from mcp.server.fastmcp import FastMCP
 
@@ -33,9 +51,10 @@ def build_server():
         """Run multi-model local deep research (live web + your private library) and return a
         cited markdown report. depth: quick|standard|deep. scope: both|web|local. Takes minutes."""
         from council.local import run
-        depth = depth if depth in ("quick", "standard", "deep") else "quick"
-        scope = scope if scope in ("both", "web", "local") else "both"
-        path = run(brief, depth=depth, n_analysts=max(1, min(4, int(analysts))), scope=scope)
+        brief, depth, analysts, scope, err = _normalize_research_args(brief, depth, analysts, scope)
+        if err:
+            return err
+        path = run(brief, depth=depth, n_analysts=analysts, scope=scope)
         return path.read_text()
 
     @mcp.tool()

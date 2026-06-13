@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import requests
 
 from council.research import fetch_extract
+from council.sanitize import clean, spotlight
 
 OLLAMA_BASE = "http://localhost:11434"
 _GEN_TIMEOUT = float(os.environ.get("PW_BATCH_GEN_TIMEOUT",
@@ -51,17 +52,19 @@ class BatchWorker:
 
     def process(self, instruction: str, shard: list[dict], fetch: bool = False) -> dict:
         t0 = time.monotonic()
+        # the instruction is the asker's TASK (kept as a directive) but still scrubbed of invisible/
+        # bidi/HTML-comment injection vectors; every per-item value is untrusted DATA → spotlighted.
+        instruction = clean(instruction)
         results, tokens, ok = [], 0, 0
         for entry in shard:
             idx, item = entry.get("i", 0), str(entry.get("item", ""))
             try:
                 if fetch:
-                    from council.sanitize import spotlight
                     content = fetch_extract(item)
                     prompt = (f"{instruction}\n\nSOURCE URL: {item}\n"
                               f"PAGE TEXT (extracted):\n{spotlight(content)}\n\nOUTPUT:")
                 else:
-                    prompt = f"{instruction}\n\nITEM:\n{item}\n\nOUTPUT (concise):"
+                    prompt = f"{instruction}\n\nITEM:\n{spotlight(item)}\n\nOUTPUT (concise):"
                 out, tk = self._generate(prompt)
                 tokens += tk
                 ok += 1

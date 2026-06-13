@@ -32,6 +32,7 @@ import time
 import requests
 
 from council.judge import Judge
+from council.sanitize import sanitize_brief
 from council.worker import Answer, PerspectiveWorker
 
 try:
@@ -114,12 +115,15 @@ class Agent:
     # ------------------------------------------------------------------ task handlers
     def _do_answer(self, task: dict) -> dict:
         payload = task.get("payload") or {}
+        # defense-in-depth (D26): the coordinator is not fully trusted (cf. D25) — re-scrub the
+        # brief/instruction here so a hostile coordinator can't slip a hidden payload into a prompt.
+        question = sanitize_brief(payload.get("question", ""))
         if payload.get("job_type") == "shard_map":
             # D13: batch shard — apply the instruction to THIS node's slice of the items.
             from council.batch import BatchWorker
             bw = BatchWorker(self.node_id, self.answer_model,
                              country=task.get("country", self.country))
-            return bw.process(payload["question"], payload.get("shard") or [],
+            return bw.process(question, payload.get("shard") or [],
                               fetch=bool(payload.get("fetch")))
         if payload.get("job_type") == "research_report" \
                 and os.environ.get("PW_WEB_BACKEND", "off") != "off":
@@ -130,7 +134,7 @@ class Agent:
                                 lens=task.get("lens", self.lens),
                                 country=task.get("country", self.country),
                                 scope="web")  # federation = web only; no operator's private library
-            return rw.research(payload["question"])
+            return rw.research(question)
         web = None
         if os.environ.get("PW_WEB_BACKEND", "off") != "off":
             try:
@@ -141,11 +145,12 @@ class Agent:
         w = PerspectiveWorker(self.node_id, self.answer_model, lens=task.get("lens", self.lens),
                               country=task.get("country", self.country), web_search=web,
                               num_predict=int(os.environ.get("PW_NUM_PREDICT", "400")))
-        a = w.answer(task["payload"]["question"])
+        a = w.answer(question)
         return {"text": a.text, "tokens": a.tokens, "elapsed_s": round(a.elapsed_s, 2)}
 
     def _do_judge(self, task: dict) -> dict:
         payload = task["payload"]
+        question = sanitize_brief(payload.get("question", ""))   # defense-in-depth (D26), see _do_answer
         answers = [
             Answer(worker_id=x["worker_id"], model=x.get("model", ""), lens=x.get("lens", ""),
                    country=x.get("country", ""), text=x["text"], tokens=0, elapsed_s=0.0)
@@ -155,11 +160,11 @@ class Agent:
         if payload.get("job_type") == "shard_map":
             # Batch QA: spot-check sampled outputs per node; the store assembles the merged
             # deliverable from the shards itself.
-            return judge.spot_check(payload["question"], payload["answers"])
-        out = judge.deliberate(payload["question"], answers)   # scores + merge + council read
+            return judge.spot_check(question, payload["answers"])
+        out = judge.deliberate(question, answers)   # scores + merge + council read
         if payload.get("job_type") == "research_report":
             # Editor pass: merged becomes the full cited multi-country report.
-            out["merged"] = judge.compile_report(payload["question"], payload["answers"], out)
+            out["merged"] = judge.compile_report(question, payload["answers"], out)
         return out
 
     # ------------------------------------------------------------------ loop

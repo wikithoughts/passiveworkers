@@ -34,6 +34,7 @@ from typing import Any, Optional
 
 from council.ledger import Account, InsufficientCredit, Ledger
 from council.net.config import CONFIG, JOB_TYPES
+from council.sanitize import sanitize_brief
 
 _now = time.time  # server runtime (not a workflow script)
 _FIELD_MAX = 80   # cap node/owner string lengths (defense-in-depth vs. abuse)
@@ -257,6 +258,12 @@ class Store:
                    context: str = "", encrypt_to: str = "") -> dict:
         with self.lock:
             asker = _clip(asker)
+            # The single networked choke point for the brief/instruction (D26): scrub invisible/bidi
+            # injection vectors + length-bound here so EVERY downstream prompt (worker, researcher,
+            # judge.score/merge/deliberate/compile_report/spot_check) and the report get a clean value,
+            # regardless of which API endpoint or caller created the job.
+            question = sanitize_brief(question)
+            context = sanitize_brief(context) if context else context
             if job_type not in JOB_TYPES:
                 job_type = "chat"
             # assisted (D21): human-in-the-loop work. NOT pre-assigned — it's an OPEN offer
