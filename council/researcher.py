@@ -199,6 +199,19 @@ class ResearchWorker:
                    for i, e in enumerate(evidence)]
         local_sources = [{"id": f"L{i+1}", "title": d["title"], "source": d["source"]}
                          for i, d in enumerate(local)]
+        # Evidence capture (R15/D27): off by default — when PW_CAPTURE_EVIDENCE=1 attach the
+        # exact extract the model SAW (full-page fetch when we have one, else the snippet) so
+        # the citation-fidelity eval can grade claims against it with no network re-fetch and
+        # no page-drift. Bounded to what the draft prompt actually used (1500 chars).
+        # LOCAL-ONLY by construction: suppressed whenever this process is a federated worker
+        # (PW_COORDINATOR set), so untrusted page text is NEVER POSTed to the coordinator — the
+        # eval drives ResearchWorker in-process, where PW_COORDINATOR is unset (review: EXTRACT-
+        # FEDERATION-LEAK).
+        if os.environ.get("PW_CAPTURE_EVIDENCE") == "1" and not os.environ.get("PW_COORDINATOR"):
+            for s, e in zip(sources, evidence):
+                s["extract"] = (e.get("page") or e.get("snippet") or "")[:1500]
+            for s, d in zip(local_sources, local):
+                s["extract"] = (d.get("text") or "")[:1500]
         blocks = []
         if sources:
             label = (f"WEB SOURCES ({self.country})"

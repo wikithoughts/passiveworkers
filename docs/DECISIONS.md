@@ -553,3 +553,57 @@ tool privileges — at worst bad prose), but it was a real regression vs. D26's 
 Regression tests added (5): `create_job` scrubs + length-bounds the question; the editor prompt
 contains no hidden chars; `score`/`compare` reasons are stripped. Lesson: when hardening an ingress,
 enumerate **every** entry point — the networked path is a separate trust boundary from the local CLI.
+
+## D27 — Honest citation-fidelity eval: does each cited claim appear in its source?
+**Decision:** Ship the first of R14's flagged eval instruments — a measurement of the product's
+core promise (*grounded* research), not a trivia benchmark. New `council/fidelity.py` is a PURE,
+dependency-free, lexical **grounding floor**: for each `[S#]`/`[L#]` claim it computes content-token
+overlap with the cited source's text (reusing `retrieval.tokenize` so it tokenizes exactly like the
+retriever it grades) and flags multi-digit numbers/years stated in a claim that are absent from its
+source (the classic fabricated statistic). `scripts/eval_citation_fidelity.py` runs it two keyless
+(no-API-cost) ways: **Mode A** scores a saved report by re-fetching its cited URLs; **Mode B** runs
+the engine fresh and scores each analyst draft against the *exact extract the model read* (via the
+new env-gated `PW_CAPTURE_EVIDENCE` capture in `researcher.py`) — reproducible, no network re-fetch,
+no page-drift. Buckets: GROUNDED / WEAK / UNGROUNDED / UNVERIFIABLE / NO_CONTENT; the headline
+"grounded rate" is *of verifiable claims*, with unreachable sources counted separately (never as
+failures).
+**Why:** The audit (D26) named citation fidelity the single most decision-guiding instrument: a
+research tool's whole credibility rests on "when it says X [S3], does S3 say X?". This is the honest
+counterpart to SimpleQA — it measures trustworthiness of the citations, the thing the council
+architecture claims to protect. It is deliberately a *floor*: lexical overlap catches off-topic
+citations and absent numbers (the common, damaging failures) but **cannot** prove semantic
+faithfulness — so a GROUNDED verdict means "not obviously fabricated", never "verified true". Built
+keyless and locally-runnable so it costs nothing to run repeatedly; the *currency-gap* instrument
+(council vs BYOK frontier, which spends API credit) is the deliberately-separate next round (R16).
+**Status:** Settled & implemented. 124 tests green (22 new). No new dependency. Evidence capture is
+**local-only by construction** — suppressed whenever `PW_COORDINATOR` is set, so captured page text
+can never reach a coordinator.
+
+### D27 addendum — adversarial review pass (citation-fidelity eval)
+A workflow review (4 lenses — security / correctness / honesty / integration — × adversarial verify,
+18 agents) confirmed **10 of 14** findings; all fixed before commit:
+- **(HIGH) Evidence-capture federation leak.** `PW_CAPTURE_EVIDENCE=1` attached ~1500-char page
+  extracts to the returned `sources`, which a *federated worker* POSTs to the coordinator — leaking
+  untrusted third-party page text off-machine. Fixed: capture is now suppressed whenever
+  `PW_COORDINATOR` is set (the eval drives the worker in-process, where it is unset), so capture is
+  local-only by construction.
+- **(HIGH) Numeric format-drift false positives.** `[a-z0-9]+` tokenization split `4.2 million` →
+  `4`,`2`, flagging a "missing number" against a source written `4,200,000`. Fixed with
+  `significant_numbers()` — only **pure multi-digit** integers/years are treated as checkable facts
+  (single digits, decimals, and alnum codes like `v1` are excluded as unmatchable by token overlap).
+  This also resolved a second finding (alnum codes mis-flagged). A genuine fabricated stat (`42%`) is
+  still caught; `4.2 million` vs `4,200,000` no longer false-flags.
+- **(MED) Mode-A report path is attacker-influenceable data.** A saved report can list arbitrary
+  URLs/paths. Hardened the re-fetch path: `_read_local` now refuses **symlinks** (no
+  `/tmp/link→/etc/secret` follow) on top of its size cap; `score_report` caps unique URL re-fetches
+  (`MAX_REPORT_URLS=200`, logged when hit) so a hostile report can't fan out thousands of GETs; a
+  defensive results ceiling (logged, never silent) bounds memory.
+- **(MED/LOW × 4) Honesty disclosures sharpened.** The output and docstrings now state plainly that
+  Mode B measures faithfulness to the *~1500-char window the model saw* (not real-world accuracy);
+  that Mode A suffers page-drift (false UNGROUNDED/UNVERIFIABLE); that union-over-cited-sources can
+  hide cross-source conflation; and that the 0.5 GROUNDED threshold is an uncalibrated heuristic
+  (`--grounded` to tune). The instrument must never read as more than the floor it is.
+Regression tests added (5): federation suppression, format-drift/code number filtering, symlink
+refusal, size-cap, and URL-cap. Lesson: an eval that *measures* honesty is held to the same bar — its
+own caveats are part of the deliverable, and its untrusted-input path (a report file) is a real trust
+boundary, not just test data.

@@ -92,6 +92,23 @@ where currency and citation matter); the leaders' ~95% figures use bigger models
 loops, and more sources. We publish the number — small sample and all — because the honest floor is
 more useful to you than a cherry-picked one. Run it yourself: `python scripts/bench_simpleqa.py --n 100`.
 
+### Citation fidelity (the metric that actually matters here)
+
+A research tool lives or dies on one question: *when it says X [S3], does source S3 say X?*
+`scripts/eval_citation_fidelity.py` measures exactly that — for every cited claim it checks
+content-overlap with the source it points at and flags numbers stated in a claim that are absent from
+the source. Two keyless (no-API-cost) modes:
+
+```bash
+python scripts/eval_citation_fidelity.py --report reports/your-report.md   # score an existing report (re-fetches its sources)
+python scripts/eval_citation_fidelity.py --run --depth quick               # fresh run, scored against the exact extract each model read
+```
+
+It is honest about being a **floor**: lexical grounding catches off-topic citations and fabricated
+numbers — the common, damaging failures — but a GROUNDED verdict means "not obviously fabricated",
+*not* "verified true" (it can't detect subtle misrepresentation). The "grounded rate" is of
+*verifiable* claims; unreachable sources are reported separately, never counted as failures.
+
 ## Security model (designed in, not bolted on)
 
 - **No browser automation, no computer use, no sessions, no cookies — ever.** Search API +

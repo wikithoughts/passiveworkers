@@ -90,6 +90,22 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R15 — HONEST CITATION-FIDELITY EVAL (D27, 2026-06-13) — measure the core promise
+Track B of the D26 audit, instrument #1: does each cited claim actually appear in its source? New
+`council/fidelity.py` (pure, dependency-free lexical **grounding floor**, reuses `retrieval.tokenize`)
++ `scripts/eval_citation_fidelity.py` — keyless, no-API-cost, two modes: **A** scores a saved report
+by re-fetching its cited URLs; **B** runs fresh and grades each analyst draft against the *exact
+extract the model read* (env-gated `PW_CAPTURE_EVIDENCE` capture in `researcher.py`, local-only by
+construction). Buckets GROUNDED/WEAK/UNGROUNDED/UNVERIFIABLE; grounded-rate is *of verifiable* claims,
+unreachable sources counted separately. Honest by design — a GROUNDED verdict is "not obviously
+fabricated", never "verified true". Pre-commit review (4 lenses × adversarial verify, 18 agents)
+confirmed 10/14 findings, all fixed: federation-leak guard on capture, multi-digit-only number check
+(kills `4.2 million` vs `4,200,000` false positives, keeps catching fabricated stats), symlink/URL/
+memory bounds on the attacker-influenceable report path, and sharpened honesty disclosures. 124 tests
+(22 new). NEXT — R16: the *currency-gap* instrument (accuracy matrix by currency-window × category,
+council vs BYOK frontier) — script buildable now, but its run **spends OpenRouter credit**, so the
+paid run stays founder-gated.
+
 ## R14 — HARDEN THE INPUTS (D26, 2026-06-13) — back to the adoption engine
 Founder chose deepening the published local engine over more marketplace work. A 6-dimension audit
 (orchestration / retrieval / synthesis / performance / security / eval) against the founder's own
