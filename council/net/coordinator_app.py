@@ -31,7 +31,7 @@ from __future__ import annotations
 import ipaddress
 import threading
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import Body, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -202,6 +202,39 @@ def deliver_assisted(task_id: str, body: DeliverBody,
     if not out.get("ok"):
         raise HTTPException(status_code=409, detail=out.get("error", "cannot deliver"))
     return out
+
+
+@app.post("/jobs/{job_id}/blobs/{blob_hash}")
+def put_blob(job_id: str, blob_hash: str, request: Request, data: bytes = Body(default=b""),
+             x_pw_token: str | None = Header(default=None),
+             x_node_secret: str | None = Header(default=None)):
+    """Operator uploads a content-addressed chunk for a job it has claimed (D22)."""
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    # reject oversize by Content-Length BEFORE we trust the buffered body (DoS guard)
+    try:
+        if int(request.headers.get("content-length", 0)) > 512 * 1024:
+            raise HTTPException(status_code=413, detail="chunk too large")
+    except (TypeError, ValueError):
+        pass
+    if store.assisted_claimant(job_id) != node_id:
+        raise HTTPException(status_code=403, detail="not the claiming operator for this job")
+    out = store.put_blob(job_id, blob_hash, data)
+    if not out.get("ok"):
+        raise HTTPException(status_code=400, detail=out.get("error", "rejected"))
+    return out
+
+
+@app.get("/jobs/{job_id}/blob/{blob_hash}")
+def get_blob(job_id: str, blob_hash: str, x_user_secret: str | None = Header(default=None)):
+    """The job's asker downloads a chunk to reassemble the deliverable (D22)."""
+    handle = _user_auth(x_user_secret)
+    if store.job_asker(job_id) != handle:
+        raise HTTPException(status_code=403, detail="not your job")
+    data = store.get_blob(job_id, blob_hash)
+    if data is None:
+        raise HTTPException(status_code=404, detail="no such blob")
+    return Response(content=data, media_type="application/octet-stream")
 
 
 @app.post("/users")

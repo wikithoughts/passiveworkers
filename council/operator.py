@@ -119,9 +119,31 @@ class Operator:
               f"  pw deliver {task_id} \"<your result>\"   (or @path/to/file)")
         return 0
 
-    def deliver(self, task_id: str, deliverable: str) -> int:
+    def deliver(self, task_id: str, deliverable: str, job_id: str = "") -> int:
+        # @path delivers a real FILE: chunk → upload content-addressed blobs → deliver a
+        # manifest the asker fetches+verifies+reassembles (D22). Plain text stays inline.
         if deliverable.startswith("@"):
-            deliverable = pathlib.Path(deliverable[1:]).expanduser().read_text()
+            from council import artifacts as A
+            path = deliverable[1:]
+            if not job_id:
+                print("✗ file delivery needs the job id: pw deliver <task_id> @file <job_id>")
+                return 2
+            manifest, blobs = A.chunk_file(path)
+            # raw binary chunks: octet-stream headers (NOT application/json, which 400s)
+            bh = {"X-PW-Token": self.token, "Content-Type": "application/octet-stream"}
+            if self.secret:
+                bh["X-Node-Secret"] = self.secret
+            for h, buf in blobs.items():
+                rb = requests.post(f"{self.base}/jobs/{job_id}/blobs/{h}", headers=bh,
+                                   data=buf, timeout=60)
+                if not rb.ok:
+                    print(f"✗ upload failed: {rb.json().get('detail', rb.text)}"); return 1
+            r = requests.post(f"{self.base}/tasks/{task_id}/deliver", headers=self._headers(),
+                              data=json.dumps({"deliverable": A.wrap_artifact(manifest)}), timeout=30)
+            if not r.ok:
+                print(f"✗ {r.json().get('detail', r.text)}"); return 1
+            print(f"✓ delivered file '{manifest['name']}' ({len(blobs)} chunks) — you've been paid.")
+            return 0
         r = requests.post(f"{self.base}/tasks/{task_id}/deliver",
                           headers=self._headers(),
                           data=json.dumps({"deliverable": deliverable[:200_000]}), timeout=30)
@@ -131,11 +153,36 @@ class Operator:
         return 0
 
 
+def fetch(job_id: str, out_dir: str) -> int:
+    """Asker side: download a delivered FILE artifact, verify every chunk, reassemble.
+    Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret)."""
+    from council import artifacts as A
+    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
+    sec = os.environ.get("PW_USER_SECRET", "")
+    if not base or not sec:
+        print("✗ set PW_COORDINATOR and PW_USER_SECRET (the asker's secret)"); return 2
+    uh = {"X-User-Secret": sec}
+    view = requests.get(f"{base}/jobs/{job_id}", timeout=15).json()
+    merged = view.get("merged") or ""
+    manifest = A.read_artifact(merged)
+    if not manifest:
+        print("This job's deliverable is text, not a file:\n")
+        print(merged[:2000]); return 0
+    def _chunk(h):
+        r = requests.get(f"{base}/jobs/{job_id}/blob/{h}", headers=uh, timeout=60)
+        return r.content if r.ok else None
+    dest = A.reassemble(manifest, _chunk, out_dir)
+    print(f"✓ verified + reassembled → {dest}")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args:
-        print("usage: pw tasks | pw accept <id> | pw deliver <id> <text|@file>")
+        print("usage: pw tasks | accept <id> | deliver <id> <text|@file <job>> | fetch <job> <dir>")
         return 2
+    if args[0] == "fetch" and len(args) >= 3:
+        return fetch(args[1], args[2])
     op = Operator()
     cmd, rest = args[0], args[1:]
     if cmd == "tasks":
@@ -143,8 +190,11 @@ def main() -> int:
     if cmd == "accept" and rest:
         return op.accept(rest[0])
     if cmd == "deliver" and len(rest) >= 2:
+        # file form: pw deliver <task_id> @path <job_id>   ·   text form: pw deliver <task_id> <text…>
+        if rest[1].startswith("@"):
+            return op.deliver(rest[0], rest[1], rest[2] if len(rest) > 2 else "")
         return op.deliver(rest[0], " ".join(rest[1:]))
-    print("usage: pw tasks | pw accept <id> | pw deliver <id> <text|@file>")
+    print("usage: pw tasks | pw accept <id> | pw deliver <id> <text | @file <job_id>>")
     return 2
 
 

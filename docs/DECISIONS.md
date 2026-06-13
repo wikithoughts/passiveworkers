@@ -330,3 +330,39 @@ was triple-counted (settle_job worker+judge same account + a manual ++) → escr
 and `settle_job` no longer double-counts when judge is also a payee. (low) capability re-checked at
 accept, not just in the offer filter. Escrow account hidden from `/status`. +6 regression tests
 (42 total green); HTTP e2e + reload conservation verified.
+
+## D22 — Content-addressed file delivery: operators return real files, integrity-verified
+**Decision:** Marketplace deliverables can now be FILES, not just text (FEDERATION_V2 step 3).
+`council/artifacts.py` (stdlib only) splits a file into 256 KiB chunks, hashes each (sha256 = the
+chunk's address), and records a manifest {name, size, chunks:[hashes], root} where root = sha256 of
+the ordered chunk hashes (a flat Merkle root). The coordinator stores chunks as opaque
+content-addressed blobs (`blobs` table; dedup by hash; per-job count cap; per-chunk size cap; the
+store re-verifies hash==content on upload). Auth: only the claiming operator may upload
+(`assisted_claimant` check), only the job's asker may download (job-scoped `get_blob` + asker check).
+The receiver verifies every chunk against its hash AND the manifest root before writing, reduces the
+filename to a basename inside the output dir (no traversal), and aborts on any mismatch — a
+corrupted/swapped/missing chunk never reaches disk. Operator: `pw deliver <task> @file <job>`;
+asker: `pw fetch <job> <dir>`.
+**Why:** "Continue" down FEDERATION_V2 — an operator who renders an image or processes a dataset
+could previously only return a path string. This is the founder's "split files / share files between
+computers" idea, done with integrity by construction. Encryption (asker-held key) + producer
+signatures are the clean follow-on (the [crypto] extra, FEDERATION_V2 step 2) — content-addressing
+already gives tamper-evidence.
+**Status:** Settled & implemented. Verified end-to-end through the real HTTP API: chunk upload (auth +
+hash-checked) → manifest delivery → asker fetch → verify → reassemble (bytes identical); cross-asker
+and non-claimant access blocked; tamper/doctored-manifest/path-traversal rejected. 49 tests green.
+
+### D22 addendum — adversarial review pass (file delivery)
+A workflow review (3 dimensions × adversarial verify) surfaced 16 findings; the real ones fixed
+before commit: (CRITICAL) operator uploaded binary chunks with `Content-Type: application/json` →
+FastAPI 400; now sends `application/octet-stream`. (HIGH) content-addressed dedup with a hash-only
+PK + job-scoped reads silently stranded a second asker → composite `PRIMARY KEY(hash, job_id)` so
+each job keeps its own copy; put_blob now confirms the row is stored (no false success). (HIGH)
+full request body buffered before the size cap → Content-Length 413 guard before trusting the body.
+(HIGH) blobs never reclaimed → reaper deletes blobs of terminal jobs past a retention window
+(PW_BLOB_RETAIN_S, default 7d). (MED) operator could be paid before all chunks uploaded →
+deliver_assisted verifies `blobs_present` for every manifest chunk before settling. (MED) per-job
+byte cap (200 MB) replaces the count cap. (MED) path-escape guard now segment-aware. (LOW) explicit
+tagged artifact discriminator (no confusing JSON text for a file); manifest validates size + hex
+chunk hashes; empty file valid. Verified end-to-end (octet-stream upload, payment gate, 413,
+conservation). 52 tests green.

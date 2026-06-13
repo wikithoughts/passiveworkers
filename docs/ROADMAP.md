@@ -90,6 +90,13 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R10 — FILE DELIVERY (D22, 2026-06-13)
+Content-addressed, chunked, integrity-verified file artifacts (council/artifacts.py, stdlib):
+operators deliver real files (`pw deliver <task> @file <job>`), askers fetch+verify+reassemble
+(`pw fetch <job> <dir>`). Coordinator blob store (dedup, size/count caps, claimant-upload +
+asker-download auth). FEDERATION_V2 step 3 done. Next: encryption (asker-held key) + producer
+signatures — the [crypto] extra (step 2); then PyPI publish + recruit operators.
+
 ## R9 — ASSISTED MARKETPLACE + PyPI-READY (D21, 2026-06-13)
 The federation centerpiece: `assisted` human-in-the-loop job type — open offer → operator consent
 (`pw tasks`/`accept`) → work done by the human with their own AI → owned deliverable (`pw deliver`)

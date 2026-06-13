@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import secrets as _secrets
 import sqlite3
 import threading
@@ -81,6 +82,11 @@ class Store:
             CREATE TABLE IF NOT EXISTS ledger(id INTEGER PRIMARY KEY, data TEXT);
             """
         )
+        # one row per (hash, job_id): content-addressed within a job, but each job keeps its
+        # own copy so cross-job content collisions never strand a second asker (D22 review).
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS blobs("
+            "hash TEXT, job_id TEXT, data BLOB, created REAL, PRIMARY KEY(hash, job_id))")
         # migrations (ALTER TABLE on boot — re-installs must never wipe the DB)
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
         if "baseline" not in cols:   # independent single-model baseline (council/net/baseline.py)
@@ -429,6 +435,12 @@ class Store:
             if job is None or job["status"] != "assisting":
                 return {"ok": False,
                         "error": f"offer no longer open for delivery ({job and job['status']})"}
+            # if it's a file artifact, refuse to pay unless every chunk was actually uploaded
+            from council.artifacts import read_artifact, verify_manifest
+            manifest = read_artifact(deliverable)
+            if manifest is not None:
+                if not verify_manifest(manifest) or not self.blobs_present(t["job_id"], manifest["chunks"]):
+                    return {"ok": False, "error": "file incomplete — upload all chunks before delivering"}
             result = {"text": deliverable}
             result["_digest"] = self.result_digest(result)
             pool = job["pool"] or 0.0
@@ -446,6 +458,62 @@ class Store:
                               (deliverable, json.dumps(receipt), t["job_id"]))
             self._save_ledger(); self.conn.commit()
             return {"ok": True, "job_id": t["job_id"]}
+
+    # ------------------------------------------------------------------ blobs (D22)
+    def put_blob(self, job_id: str, blob_hash: str, data: bytes) -> dict:
+        """Store a content-addressed chunk for a job. Verifies the hash (content IS the
+        address), enforces per-chunk + per-job-total caps. Operators upload here before
+        delivering a manifest that references these blobs."""
+        import hashlib as _hl
+        if len(data) > 512 * 1024:   # chunk cap (codec uses 256 KiB; allow headroom)
+            return {"ok": False, "error": "chunk too large"}
+        if _hl.sha256(data).hexdigest() != blob_hash:
+            return {"ok": False, "error": "hash does not match content"}
+        with self.lock:
+            # per-job total-bytes cap bounds a hostile operator filling the store (aligned to
+            # the codec's per-file cap, with headroom for a few files per job).
+            total = self.conn.execute(
+                "SELECT COALESCE(SUM(LENGTH(data)),0) s FROM blobs WHERE job_id=?",
+                (job_id,)).fetchone()["s"]
+            if total + len(data) > 200 * 1024 * 1024:
+                return {"ok": False, "error": "per-job storage cap reached"}
+            self.conn.execute(
+                "INSERT OR IGNORE INTO blobs(hash,job_id,data,created) VALUES(?,?,?,?)",
+                (blob_hash, job_id, data, _now()))
+            self.conn.commit()
+            # confirm it's actually stored for THIS job (don't report false success)
+            ok = self.conn.execute("SELECT 1 FROM blobs WHERE hash=? AND job_id=?",
+                                   (blob_hash, job_id)).fetchone() is not None
+            return {"ok": ok, "hash": blob_hash} if ok else {"ok": False, "error": "not stored"}
+
+    def blobs_present(self, job_id: str, hashes: list) -> bool:
+        """True iff every hash is stored for this job (used to gate payment on full upload)."""
+        with self.lock:
+            for h in hashes:
+                if not self.conn.execute("SELECT 1 FROM blobs WHERE hash=? AND job_id=?",
+                                         (h, job_id)).fetchone():
+                    return False
+            return True
+
+    def get_blob(self, job_id: str, blob_hash: str) -> Optional[bytes]:
+        """Fetch a chunk that belongs to this job (job-scoped so one asker can't read
+        another job's blobs)."""
+        with self.lock:
+            row = self.conn.execute("SELECT data FROM blobs WHERE hash=? AND job_id=?",
+                                    (blob_hash, job_id)).fetchone()
+            return bytes(row["data"]) if row else None
+
+    def job_asker(self, job_id: str) -> Optional[str]:
+        with self.lock:
+            row = self.conn.execute("SELECT asker FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            return row["asker"] if row else None
+
+    def assisted_claimant(self, job_id: str) -> Optional[str]:
+        """node_id of the operator who claimed this job's assisted task (for blob-upload auth)."""
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT node_id FROM tasks WHERE job_id=? AND type='assisted'", (job_id,)).fetchone()
+            return row["node_id"] if row else None
 
     def job_status(self, job_id: str) -> Optional[str]:
         with self.lock:
@@ -644,6 +712,13 @@ class Store:
     def _reap_once(self) -> None:
         with self.lock:
             now = _now()
+            # reclaim blobs of long-finished jobs (retention window gives the asker time to
+            # fetch); bounds unbounded SQLite growth from delivered files.
+            retain = float(os.environ.get("PW_BLOB_RETAIN_S", str(7 * 86400)))
+            self.conn.execute(
+                "DELETE FROM blobs WHERE job_id IN ("
+                "  SELECT job_id FROM jobs WHERE status IN ('done','failed') AND created < ?)",
+                (now - retain,))
             # assisted jobs are human-paced: only expire them on their (long) deadline,
             # never on node-liveness (no node is assigned until a human accepts).
             for job in list(self.conn.execute(
