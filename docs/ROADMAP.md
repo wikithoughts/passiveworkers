@@ -90,6 +90,22 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R16 — CURRENCY-GAP EVAL (D28, 2026-06-13) — measure the claimed edge
+Track B instrument #2, completing the eval pair ("do it all"). `scripts/eval_currency_gap.py` measures
+the product's *real* advantage — currency, not raw capability — as an accuracy matrix by currency-window
+(static/recent/breaking) × category: council (live web, FREE) vs a BYOK frontier model (parametric, NO
+web, PAID via OpenRouter), graded blind 0-10 vs a curated reference; gap is a **paired** mean with
+`static` as a fairness control. **Spends nothing by default** — bare run = $0 dry run (validates refs,
+estimates cost, prints the command); a paid run needs `--run` + `OPENROUTER_API_KEY` (env only), refuses
+all-placeholder refs, caps at 40 questions without `--max`. Pure logic unit-tested; references are a
+living human input (static set ships ready, recent/breaking are `VERIFY` placeholders the founder fills).
+Pre-commit review (3 lenses × verify, 27 agents): 8 findings were *confirmations the design is correct*,
+10 actionable, all fixed — HIGH unbounded-cost foot-gun (→40-question ceiling, aborts pre-network), HIGH
+grader self-grading conflict (→loud warning, local grader default), + 8 honesty/clarity (paired column,
+small-n ⚠, WITH-web/WITHOUT-web framing, stale-reference disclosure). 133 tests (9 new). **The actual
+paid run stays founder-gated — script complete, the spend is his call.** NEXT R17+: the audit's
+performance backlog (dynamic source routing, Ollama keep-alive, dense rerank, merge anti-garble).
+
 ## R15 — HONEST CITATION-FIDELITY EVAL (D27, 2026-06-13) — measure the core promise
 Track B of the D26 audit, instrument #1: does each cited claim actually appear in its source? New
 `council/fidelity.py` (pure, dependency-free lexical **grounding floor**, reuses `retrieval.tokenize`)

@@ -607,3 +607,51 @@ Regression tests added (5): federation suppression, format-drift/code number fil
 refusal, size-cap, and URL-cap. Lesson: an eval that *measures* honesty is held to the same bar — its
 own caveats are part of the deliverable, and its untrusted-input path (a report file) is a real trust
 boundary, not just test data.
+
+## D28 — Currency-gap eval: where live-web research beats a frontier model's memory
+**Decision:** Ship Track B instrument #2 — the measurement of the product's *claimed* edge. The audit
+(D26) and our own trial showed the council's advantage is **currency, not raw capability** (a frontier
+model wins on static knowledge; the council wins when the answer changed after the model's training
+cutoff). `scripts/eval_currency_gap.py` makes that legible as an accuracy matrix by **currency-window
+(static / recent / breaking) × category**: the local council (live web, FREE) vs a BYOK frontier model
+(parametric, NO web, PAID via OpenRouter), each answer graded blind 0-10 against a curated **reference**.
+The gap is a **paired** mean (council − frontier over questions both answered), with `static` as a
+fairness control (currency irrelevant → expect ~0). Pure logic (validation / matrix / grade-parse /
+summary-extract) is unit-tested; the council/frontier/grader I/O reuses existing plumbing
+(`local.run`, `_ApiEditor`, `Judge`, `_extract_json`).
+**Why:** It is the most honest possible self-assessment: it names *where the frontier wins* (static) and
+only claims an edge where live grounding earns it. It completes the Track-B pair (D27 fidelity =
+"are the citations real"; D28 currency = "is the freshness edge real"), the two instruments the audit
+ranked most decision-guiding. Ground truth is treated as a **living, human-maintained input** — the
+static control set ships ready; recent/breaking references are `VERIFY` placeholders the human fills
+(my knowledge cutoff is pre-run-date, so fabricating post-cutoff "truth" would be dishonest; the
+founder's research loop is exactly the right source).
+**Why it spends money — and the guardrails:** this is the ONE instrument with a paid dependency (no
+free frontier exists; that's the whole comparison). So it does **nothing paid by default** — bare
+invocation is a `$0` dry run that validates references, estimates cost, and prints the exact command.
+A paid run needs `--run` **and** `OPENROUTER_API_KEY` in the env (read from nowhere else), refuses if
+all references are placeholders, and is capped at 40 questions unless `--max` is passed. The actual
+paid run stays **founder-gated** — the script is complete and ready; the spend is his to authorize.
+**Status:** Settled & implemented (dry run verified `$0`). 133 tests green (9 new). No new dependency.
+
+### D28 addendum — adversarial review pass (currency-gap eval)
+A workflow review (3 lenses — spend-safety / correctness / honesty — × adversarial verify, 27 agents)
+returned 24 findings; **8 were verifications that the design is correct** (dry-run spends nothing; the
+paired-gap math is honest; the summary regex, placeholder gate, and key-from-env-only all hold), and
+**10 were actionable**, all fixed before commit:
+- **(HIGH) Unbounded paid-run cost.** `--questions bigfile.json --run` with no `--max` would fan out
+  one paid call per question. Added a 40-question ceiling that aborts a paid run pending an explicit
+  `--max` (verified to abort *before any network call*).
+- **(HIGH) Grader conflict-of-interest.** `--grader api` defaulted the judge to the *same* frontier
+  model that wrote the baseline — it graded its own answer. Now a loud warning at run time + in the
+  `--grader` help + the HOW-TO-READ notes; the free local grader remains the default.
+- **(MED/LOW × 8) Honesty & clarity.** Surfaced the frontier model + cost in the dry run; added a
+  `paired` column and a `⚠` flag on small samples (paired n < 3 = noise, not signal); retitled the
+  matrix to emphasise the **WITH-web vs WITHOUT-web asymmetry** (it measures live grounding, not that
+  the frontier is weak); reworded the argparse description so it can't be quoted as a general
+  "council beats frontier"; disclosed that each reference is a single curated answer and that a stale
+  reference silently corrupts the gap; made skipped-placeholder questions print prominently on `--run`.
+Lesson: a *paid* instrument's spec is mostly its guardrails — the review's highest-value catches were
+the cost foot-gun and the self-grading bias, neither a logic bug, both real ways to mislead or
+overspend. NEXT (R17+, lower priority): the audit's performance/quality backlog (dynamic source
+routing, Ollama keep-alive, dense-cosine rerank, merge anti-garble).

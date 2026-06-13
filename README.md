@@ -109,6 +109,20 @@ numbers — the common, damaging failures — but a GROUNDED verdict means "not 
 *not* "verified true" (it can't detect subtle misrepresentation). The "grounded rate" is of
 *verifiable* claims; unreachable sources are reported separately, never counted as failures.
 
+### Currency gap (where live web beats a frontier model's memory)
+
+This tool's real edge isn't raw model size — it's *currency*. `scripts/eval_currency_gap.py` measures
+exactly that: the local council (live web) vs a frontier model answering from its frozen training
+knowledge, scored against curated references, as a matrix by *currency window × category*. A `static`
+control set keeps it fair (where currency is irrelevant, the frontier should win). It **spends nothing
+by default** — a bare run is a `$0` dry run that validates the question set and estimates cost; only
+`--run` (with `OPENROUTER_API_KEY` in your env) makes the paid frontier calls:
+
+```bash
+python scripts/eval_currency_gap.py            # dry run — validate + estimate, $0
+python scripts/eval_currency_gap.py --run      # paid: council (free) vs frontier (your API key)
+```
+
 ## Security model (designed in, not bolted on)
 
 - **No browser automation, no computer use, no sessions, no cookies — ever.** Search API +
