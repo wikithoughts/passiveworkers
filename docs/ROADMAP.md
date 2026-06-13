@@ -90,6 +90,23 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R17 — PERFORMANCE & QUALITY BACKLOG (D29, 2026-06-13) — work the audit's cheap wins
+With the eval pair able to measure quality, worked the D26 performance backlog ("do it all and do
+anything pending"). Four reversible changes: (1) **dynamic source routing** — `research.route_engines()`
+activates the previously-dead arXiv/Wikipedia engines, augmenting (never replacing) the egress-localized
+web for academic/definitional queries; env `PW_SOURCE_ROUTING=off`. (2) **Ollama keep-alive** on every
+model call (`PW_OLLAMA_KEEP_ALIVE`, default 30m) — kills the 5-30s reload stalls between sequential
+calls. (3) **citation-safe merge** — synthesis prompts preserve `[S#]/[L#]` verbatim AND a hard
+`_drop_invented_markers` guard strips any fabricated marker (extends D27's honesty to the merge path).
+(4) **CI bump** checkout@v5/setup-python@v6/setup-node@v5/Node 24 (ahead of the 2026-06-16 deprecation).
+Pre-commit review (2 lenses × verify, 28 agents): most findings confirmed the changes correct, 4
+actionable all fixed — **2 missed model-call sites** (`batch.py`, `net/baseline.py` — enumerate EVERY
+site, again), the **invented-citation guard**, and encyclopedic over-routing/docs. 149 tests (16 new).
+**Deliberately NOT done:** dense-rerank-default over hybrid RRF — contradicts D20's measured choice;
+flipping a measured default needs a measured reason. NEXT: founder's call — PyPI publish + recruit
+operators (his levers), the founder-gated currency-gap paid run (fill references → `--run`), or more
+quality work (merge-prompt density tuning, real benchmark runs).
+
 ## R16 — CURRENCY-GAP EVAL (D28, 2026-06-13) — measure the claimed edge
 Track B instrument #2, completing the eval pair ("do it all"). `scripts/eval_currency_gap.py` measures
 the product's *real* advantage — currency, not raw capability — as an accuracy matrix by currency-window

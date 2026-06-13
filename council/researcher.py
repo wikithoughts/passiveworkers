@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import requests
 
 from council.judge import _extract_json
-from council.research import fetch_extract, search_structured
+from council.research import fetch_extract, route_engines, search_structured
 
 OLLAMA_BASE = "http://localhost:11434"
 _GEN_TIMEOUT = float(os.environ.get("PW_RESEARCH_GEN_TIMEOUT",
@@ -51,7 +51,9 @@ class ResearchWorker:
         r = requests.post(
             f"{self.ollama_base}/api/generate",
             json={"model": self.model, "prompt": prompt, "stream": False,
-                  "options": {"temperature": self.temperature, "num_predict": num_predict}},
+                  "options": {"temperature": self.temperature, "num_predict": num_predict},
+                  # keep this analyst warm across its plan→refine→draft rounds (R17)
+                  "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
             timeout=_GEN_TIMEOUT,
         )
         r.raise_for_status()
@@ -149,11 +151,16 @@ class ResearchWorker:
 
         def _collect(queries: list[str], per_query: int) -> None:
             for q in queries:
-                for row in search_structured(q, max_results=per_query):
-                    if row["url"] in seen_urls:
-                        continue
-                    seen_urls.add(row["url"])
-                    evidence.append(row)
+                # dynamic source routing (R17/D29): always the egress-localized web (the moat),
+                # plus arXiv/Wikipedia when the query signals academic/encyclopedic intent. The
+                # extras are queried shallower so they augment rather than crowd out web results.
+                for engine in route_engines(q):
+                    n = per_query if engine == "web" else max(2, per_query - 1)
+                    for row in search_structured(q, max_results=n, engine=engine):
+                        if row["url"] in seen_urls:
+                            continue
+                        seen_urls.add(row["url"])
+                        evidence.append(row)
 
         if self.scope in ("both", "web"):
             _collect(self._plan_queries(brief), per_query=4)

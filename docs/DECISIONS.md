@@ -655,3 +655,50 @@ Lesson: a *paid* instrument's spec is mostly its guardrails — the review's hig
 the cost foot-gun and the self-grading bias, neither a logic bug, both real ways to mislead or
 overspend. NEXT (R17+, lower priority): the audit's performance/quality backlog (dynamic source
 routing, Ollama keep-alive, dense-cosine rerank, merge anti-garble).
+
+## D29 — Performance & quality backlog: source routing, warm models, citation-safe merge
+**Decision:** Work the audit's performance/quality backlog now that the eval pair (D27/D28) can
+measure it. Four changes, each small and reversible:
+- **Dynamic source routing (activate dead code).** `research.search_structured` already supported
+  `engine=academic` (arXiv) / `engine=encyclopedic` (Wikipedia), but `researcher.py` only ever called
+  `web` — the other engines were unreachable. New pure `research.route_engines(query)` returns
+  `['web', …]` — always the egress-localized web (the moat) **plus** arXiv when a query signals
+  academic intent and/or Wikipedia when it signals definitional intent. `researcher._collect` now
+  queries the routed set (extras shallower so they augment, never crowd out web) and dedups by URL.
+  Env `PW_SOURCE_ROUTING=off` pins it to web only. arXiv/Wikipedia are central APIs (no geo-moat) and
+  are sanitized + spotlighted exactly like web content.
+- **Ollama keep-alive (kill reload stalls).** Every local model call now sends a top-level
+  `keep_alive` (env `PW_OLLAMA_KEEP_ALIVE`, default `30m`) so a model stays warm across a worker's
+  multi-round pipeline and across a session — removing the 5–30s reload stalls between calls. Default
+  is deliberately longer than Ollama's implicit 5m for a research session; set `PW_OLLAMA_KEEP_ALIVE=0`
+  (or `5m`) to unload sooner on a memory-constrained machine.
+- **Citation-safe merge.** The synthesis prompts (`merge`, `deliberate`) now instruct the model to
+  preserve `[S#]/[L#]` markers verbatim — AND, as a hard guarantee, `_drop_invented_markers` strips any
+  marker in the merged output that wasn't in a source answer, so a merge can never *fabricate* a
+  citation even if it ignores the instruction.
+- **CI currency.** Bumped `checkout@v5` / `setup-python@v6` / `setup-node@v5` / Node 24 ahead of the
+  2026-06-16 Node-20 action deprecation.
+**Why:** These are the cheap, high-leverage wins the D26 audit flagged: routing unlocks better sources
+for the queries that need them without weakening the egress moat; keep-alive removes pure dead latency;
+the merge guard extends D27's citation-honesty guarantee to the synthesis path. **Deliberately NOT
+done — dense-cosine rerank as the default over hybrid RRF:** the audit suggested it, but D20's own
+`bench_rag` measurement chose hybrid as robustness insurance; flipping a measured default needs a
+measured reason, not a suggestion. Left as-is.
+**Status:** Settled & implemented. 149 tests green (16 new). No new dependency.
+
+### D29 addendum — adversarial review pass (performance backlog)
+A workflow review (2 lenses — correctness / integration-safety — × adversarial verify, 28 agents)
+returned 26 findings; most were verifications the changes are correct (keep-alive is top-level not
+nested; the deliberate JSON template is intact; routing keeps web first and dedups; env read at call
+time), and **4 were actionable**, all fixed:
+- **(HIGH) Two missed model-call sites.** The first cut added keep-alive to 7 sites but missed
+  `batch.py._generate` (per-item batch loop — the worst case for reload stalls) and
+  `net/baseline.py._via_ollama` (the demand-metric baseline, whose timing would be unfairly skewed by
+  reloads vs the warm council). Both fixed + regression-tested. *Same lesson as R13/R14: enumerate
+  EVERY call site — a grep for `api/generate` would have caught it; I trusted my mental list.*
+- **(HIGH) Merge could still invent a citation.** A prompt rule can't bind a small model, so added the
+  `_drop_invented_markers` hard guard described above.
+- **(LOW) Encyclopedic over-routing + docs.** Anchored `who/what is` to query start (a mid-sentence
+  "what is it like" no longer triggers Wikipedia); documented the `0`/`false` off-values and the
+  central-API nature of arXiv/Wikipedia.
+Net: 16 tests across the round (incl. the 2 missed-site regressions + the invented-marker guard).

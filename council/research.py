@@ -220,6 +220,40 @@ def search(question: str) -> str:
         return ""
 
 
+# ---- dynamic source routing (R17/D29): pick which keyless engines a query should hit ----
+# academic signals → also query arXiv; definitional/background signals → also query Wikipedia.
+# 'web' (egress-localized meta-search — the moat) is ALWAYS included; the extras AUGMENT it,
+# they never replace it. Pure + env-gated (PW_SOURCE_ROUTING=off → web only).
+_ACADEMIC_RE = re.compile(
+    r"\b(arxiv|preprint|peer.?reviewed|research papers?|journal article|study|studies|"
+    r"meta.?analysis|clinical trial|systematic review|algorithm|theorem|equation|dataset|"
+    r"benchmark|state.of.the.art|sota|neural network|machine learning|deep learning|"
+    r"reinforcement learning|transformer|quantum|genomic|proteomic|astrophysics)\b", re.I)
+# 'who/what is/are' only counts at the start (or after sentence punctuation) so a mid-sentence
+# 'what is it like' in prose doesn't over-route; the explicit phrases match anywhere.
+_ENCYCLOPEDIC_RE = re.compile(
+    r"(?:^|[.!?]\s+)(?:who|what)\s+(?:is|are|was|were)\b"
+    r"|\b(?:definition of|meaning of|history of|biography of|overview of|background on|"
+    r"capital of|where is)\b", re.I)
+
+
+def route_engines(query: str) -> list[str]:
+    """Ordered keyless engines for a query. Always starts with 'web' (the egress-localized
+    moat); the extras AUGMENT it, never replace it. Appends 'academic' (arXiv) and/or
+    'encyclopedic' (Wikipedia) when the query clearly calls for them. NOTE: arXiv/Wikipedia are
+    CENTRAL APIs — they do not geo-localize (no egress moat) and are not deanonymizing beyond an
+    ordinary HTTP request. PW_SOURCE_ROUTING=off|0|false (case-insensitive) pins it to web only."""
+    if os.environ.get("PW_SOURCE_ROUTING", "on").lower() in ("off", "0", "false"):
+        return ["web"]
+    q = query or ""
+    engines = ["web"]
+    if _ACADEMIC_RE.search(q):
+        engines.append("academic")
+    if _ENCYCLOPEDIC_RE.search(q):
+        engines.append("encyclopedic")
+    return engines
+
+
 def search_structured(query: str, max_results: int = 5, engine: str = "web") -> list[dict]:
     """Structured variant for the researcher: [{title, url, host, snippet}], SSRF-guarded,
     deduped by host. Best-effort; [] on any failure. Same egress-localization as search().

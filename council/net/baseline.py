@@ -19,6 +19,7 @@ job row. Failures are silent by design — the baseline must never block or fail
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Optional
 
@@ -70,7 +71,9 @@ def _via_ollama(question: str) -> Optional[dict]:
               "prompt": f"{_PROMPT}\n\nQuestion:\n{question}",
               "stream": False,
               "think": False,  # qwen3-style models reason by default; older Ollama ignores this
-              "options": {"temperature": 0.4, "num_predict": 300}},
+              "options": {"temperature": 0.4, "num_predict": 300},
+              # warm the baseline model too (R17) so its timing isn't skewed by reloads vs the council
+              "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
         timeout=CONFIG.baseline_timeout_s,
     )
     r.raise_for_status()

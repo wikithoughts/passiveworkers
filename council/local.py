@@ -112,7 +112,8 @@ def plan_angles(brief: str, planner_model: str, k: int) -> list[str]:
                        "practitioner experience, recent developments — pick what fits THIS "
                        'brief). Reply STRICT JSON only: ["angle one","angle two",…]\n\n'
                        f"BRIEF:\n{brief}\n\nJSON:"),
-            "stream": False, "options": {"temperature": 0.3, "num_predict": 160}},
+            "stream": False, "options": {"temperature": 0.3, "num_predict": 160},
+            "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},  # warm the planner (R17)
             timeout=float(os.environ.get("PW_OLLAMA_TIMEOUT", "300")))
         r.raise_for_status()
         parsed = _extract_json((r.json().get("response") or "").strip())

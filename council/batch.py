@@ -43,7 +43,9 @@ class BatchWorker:
         r = requests.post(
             f"{self.ollama_base}/api/generate",
             json={"model": self.model, "prompt": prompt, "stream": False,
-                  "options": {"temperature": self.temperature, "num_predict": num_predict}},
+                  "options": {"temperature": self.temperature, "num_predict": num_predict},
+                  # keep the model warm across this shard's items (R17) — batch loops _generate per item
+                  "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
             timeout=_GEN_TIMEOUT,
         )
         r.raise_for_status()

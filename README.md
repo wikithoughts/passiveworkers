@@ -72,6 +72,10 @@ docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
   drafts from **full page extracts**, and a blind editor **preserves disagreement**
   (agree / differ / unique sections — never a forced consensus). Question diversity × model
   diversity catches what any single model hallucinates.
+- **Right source for the query.** Beyond live web, academic-looking queries also hit **arXiv** and
+  definitional ones **Wikipedia** (`PW_SOURCE_ROUTING=off` to disable). Models stay warm between
+  steps (`PW_OLLAMA_KEEP_ALIVE`, default `30m`; set `0` to unload immediately) so there are no
+  reload stalls mid-run.
 - **Free forever.** It's your hardware.
 
 ## Honesty section (when NOT to use this)

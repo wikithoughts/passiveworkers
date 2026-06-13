@@ -60,6 +60,31 @@ def _extract_json(text: str):
     return None
 
 
+_CITE_TOKEN = re.compile(r"[SL]\d+")
+_CITE_SPAN = re.compile(r"\[[SL]\d+(?:\s*,\s*[SL]\d+)*\]")
+
+
+def _known_markers(answers) -> set[str]:
+    """Every [S#]/[L#] marker that appears in the source answers — the only citations a
+    synthesis is allowed to keep."""
+    return set(_CITE_TOKEN.findall(" ".join(getattr(a, "text", "") or "" for a in answers)))
+
+
+def _drop_invented_markers(text: str, known: set[str]) -> str:
+    """Remove any citation marker the synthesis INVENTED (not present in any source answer),
+    so a merge can't fabricate a citation even if it ignores the prompt rule (review
+    CITATION_MERGE_001). It may still drop/renumber — that the prompt discourages — but it can
+    never point at a source that was never cited."""
+    if "[" not in text:
+        return text
+
+    def _repl(m: re.Match) -> str:
+        kept = [t for t in _CITE_TOKEN.findall(m.group(0)) if t in known]
+        return ("[" + ", ".join(kept) + "]") if kept else ""
+
+    return _CITE_SPAN.sub(_repl, text)
+
+
 @dataclass
 class ScoredCandidate:
     worker_id: str
@@ -81,6 +106,7 @@ class Judge:
                 "prompt": prompt,
                 "stream": False,
                 "options": {"temperature": 0.0, "num_predict": num_predict or self.num_predict},
+                "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m"),  # warm judge (R17)
             },
             # CPU-only/busy machines need headroom (measured: a 4B judge can exceed 400s
             # under contention); configurable like the worker/researcher timeouts.
@@ -146,6 +172,8 @@ class Judge:
             "  • Include the strongest points and any correct insight only one perspective found.\n"
             "  • If they disagree, state the resolution in ONE line.\n"
             "  • Cut filler, repetition, hedging, and preamble. Lead with the answer.\n"
+            "  • Preserve any [S#]/[L#] citation markers EXACTLY as written next to the claims "
+            "they support; never renumber, merge, or invent a marker (R17).\n"
             "  • Write ONE direct answer to the asker — never mention 'Perspective N' or that "
             "multiple answers exist.\n"
             f"  • Length target: {max(60, int(longest * 0.8))}–{longest} words — as substantive as the "
@@ -155,8 +183,10 @@ class Judge:
             f"PERSPECTIVES:\n{joined}\n\n"
             "Write the tight merged answer now."
         )
-        # the synthesized text is the last untrusted-output hop before the report → strip hidden chars
-        return strip_invisible(self._generate(prompt, num_predict=min(900, max(300, longest * 2))))
+        # the synthesized text is the last untrusted-output hop before the report → strip hidden
+        # chars, then drop any citation marker the synthesis invented (keep merges honest, R17)
+        out = strip_invisible(self._generate(prompt, num_predict=min(900, max(300, longest * 2))))
+        return _drop_invented_markers(out, _known_markers(answers))
 
     # ------------------------------------------------------------------ DELIBERATE (one blind call)
     def deliberate(self, question: str, answers: list) -> dict:
@@ -184,7 +214,8 @@ class Judge:
             '"unique":[{"answer":N,"point":"a valuable point only answer N made"}],'
             f'"merge":"a TIGHT synthesis of {max(60, int(longest * 0.8))}-{longest} words — as substantive '
             'as the best candidate, never padded, never a stub; integrated not appended, '
-            'leading with the answer. Write it as ONE direct answer to the asker — never mention '
+            'leading with the answer. Preserve any [S#]/[L#] citation markers exactly as written; '
+            'never renumber or invent one. Write it as ONE direct answer to the asker — never mention '
             'Answer 1/2/3, candidates, or that multiple answers exist"}\n'
             "Judge on merit only; you do not know who wrote them.\n\n"
             f"QUESTION:\n{question}\n\nCANDIDATES:\n{joined}\n\nJSON:"
@@ -232,8 +263,9 @@ class Judge:
              "sides": strip_invisible(_sides(d.get("sides")))}
             for d in (parsed.get("disagreements") or []) if isinstance(d, dict) and d.get("point")
         ][:6]
-        merged = strip_invisible(str(parsed.get("merge", "")).strip())
-        if not merged:   # fall back to the dedicated merge prompt if JSON merge was empty (already stripped)
+        merged = _drop_invented_markers(strip_invisible(str(parsed.get("merge", "")).strip()),
+                                        _known_markers(answers))
+        if not merged:   # fall back to the dedicated merge prompt if JSON merge was empty (already guarded)
             merged = self.merge(question, answers)
         return {"scores": scores, "merged": merged,
                 "council": {"consensus": consensus, "disagreements": disagreements, "unique": unique}}

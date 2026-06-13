@@ -136,8 +136,9 @@ def _capture_run(monkeypatch, env_on: bool):
     monkeypatch.setattr(RW.ResearchWorker, "_generate",
                         lambda self, prompt, num_predict: ('["q1","q2","q3"]', 3))
     # 3 results, but quick depth only fetches the top 2 pages → the 3rd must fall back to its snippet
+    # (accepts engine= because researcher now routes web/academic/encyclopedic — R17)
     monkeypatch.setattr(RW, "search_structured",
-                        lambda q, max_results=4: [
+                        lambda q, max_results=4, engine="web": [
                             {"title": "T1", "url": "https://a.test/1", "host": "a.test",
                              "snippet": "snippet one about the topic"},
                             {"title": "T2", "url": "https://b.test/2", "host": "b.test",

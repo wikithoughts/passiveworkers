@@ -95,6 +95,9 @@ class PerspectiveWorker:
                 "prompt": prompt,
                 "stream": False,
                 "options": {"temperature": self.temperature, "num_predict": self.num_predict},
+                # keep the model warm across a worker's calls / the session (R17): kills the
+                # 5-30s reload stalls; PW_OLLAMA_KEEP_ALIVE="0" to unload immediately.
+                "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m"),
             },
             # On a shared CPU host a concurrent heavy generation (e.g. another job's
             # baseline) can starve this one; a hard 300s turned brief contention into

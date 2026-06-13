@@ -154,7 +154,9 @@ def embed(texts: list[str]) -> list[list[float]]:
     vecs = []
     for t in texts:
         r = requests.post(f"{OLLAMA}/api/embeddings",
-                          json={"model": EMBED_MODEL, "prompt": t}, timeout=120)
+                          json={"model": EMBED_MODEL, "prompt": t,
+                                "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},  # warm embedder (R17)
+                          timeout=120)
         r.raise_for_status()
         vecs.append(r.json()["embedding"])
     return vecs
@@ -189,7 +191,8 @@ def _situate(doc_text: str, chunk: str, model: str) -> str:
                   "context, nothing else.")
         r = requests.post(f"{OLLAMA}/api/generate",
                           json={"model": model, "prompt": prompt, "stream": False,
-                                "options": {"temperature": 0.0, "num_predict": 120}},
+                                "options": {"temperature": 0.0, "num_predict": 120},
+                                "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
                           timeout=120)
         r.raise_for_status()
         return (r.json().get("response") or "").strip()[:400]
@@ -364,7 +367,9 @@ class Library:
                       f'{{"order":[indices best-first]}}.\n\nQUERY: {query}\n\nPASSAGES:\n{cand}\n\nJSON:')
             r = requests.post(f"{OLLAMA}/api/generate",
                               json={"model": model, "prompt": prompt, "stream": False,
-                                    "options": {"temperature": 0.0, "num_predict": 120}}, timeout=120)
+                                    "options": {"temperature": 0.0, "num_predict": 120},
+                                    "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
+                              timeout=120)
             r.raise_for_status()
             parsed = _extract_json((r.json().get("response") or "").strip())
             order = parsed.get("order") if isinstance(parsed, dict) else None
