@@ -112,3 +112,26 @@ flag that FOMC "Oct–Nov 2023" as misattributed.
 
 _Cost: 10 `gpt-5-chat` completions (grading was local/free) — on the order of a few cents._
 
+### Follow-up: the two breaking failures, fixed (R18 + R19, free re-runs)
+
+The currency-gap run above surfaced two `breaking` failures. Both are now fixed, each confirmed by a
+**free** local re-run (Ollama + live web, no paid API):
+
+- **EU AI Act milestone** ("2027" → **2026-08-02**), **Python**, **iPhone** — fixed by **R18**
+  (freshness-biased ranking: lead with the freshest-dated sources, date-aware drafter). 3 of the 4
+  re-run questions passed; only FOMC remained.
+- **Most-recent FOMC** ("Oct–Nov 2023" → ✅) — fixed by **R19** (current-year query injection). A
+  fresh `pw research`-style run on *"the most recent completed FOMC meeting and its interest-rate
+  decision"* (`qwen2.5:14b`, quick depth, today=2026-06-13) now returns: queries pinned to **June
+  2026**, sources **2026-dated and freshest-first** (federalreserve.gov 2026-06-12, Forbes
+  2026-06-08, …), and a draft reporting *"held on June 16–17, 2026 … maintained interest rates …
+  federal funds rate remained at 3.62%"* with real `[S#]` citations — the SEO-dominant 2023 page no
+  longer wins. The fix is the retrieval lever D30 said ranking alone couldn't supply: you can't
+  reorder a fresh source search never returned.
+
+_Honest note: in the confirming run the planner model itself emitted the year, so the win came from
+the date-aware prompt + R18 ranking; R19's `inject_recency` is the **deterministic backstop** that
+guarantees the year is present even when the planner omits or hallucinates it (unit-tested in
+`tests/test_recency.py`). The combined system — prompt + injection backstop + recency ranking +
+breaking auto-deepen — is what makes the current answer reliable rather than lucky._
+
