@@ -110,6 +110,7 @@ class JobBody(BaseModel):
     items: list[str] | None = Field(default=None, max_length=200)  # shard_map: the work items
     requires: dict | None = None    # capability gate, e.g. {"model": "qwen3:14b", "min_ram_gb": 16}
     fetch: bool = False             # shard_map: items are PUBLIC URLs to fetch+process (D15 rules)
+    context: str = Field(default="", max_length=4000)   # assisted: bounded context for the operator
 
 
 class FeedbackBody(BaseModel):
@@ -157,6 +158,50 @@ def task_result(task_id: str, result: dict, x_pw_token: str | None = Header(defa
     if not accepted:
         raise HTTPException(status_code=409, detail="task not yours, unknown, or already done")
     return {"accepted": True}
+
+
+@app.get("/tasks/offers")
+def assisted_offers(x_pw_token: str | None = Header(default=None),
+                    x_node_secret: str | None = Header(default=None)):
+    """Open assisted offers this operator may consent to (D21). Returns brief + bounded context."""
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    node = store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="unknown node")
+    return {"offers": store.assisted_offers(dict(node))}
+
+
+@app.post("/tasks/{task_id}/accept")
+def accept_assisted(task_id: str, x_pw_token: str | None = Header(default=None),
+                    x_node_secret: str | None = Header(default=None)):
+    """Operator gives informed consent to + claims an assisted offer (D21)."""
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    node = store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="unknown node")
+    out = store.accept_assisted(task_id, node_id, node["owner"])
+    if not out.get("ok"):
+        raise HTTPException(status_code=409, detail=out.get("error", "cannot accept"))
+    return out
+
+
+class DeliverBody(BaseModel):
+    deliverable: str = Field(..., max_length=200_000)
+
+
+@app.post("/tasks/{task_id}/deliver")
+def deliver_assisted(task_id: str, body: DeliverBody,
+                     x_pw_token: str | None = Header(default=None),
+                     x_node_secret: str | None = Header(default=None)):
+    """Operator returns the owned deliverable; the ledger settles (D21)."""
+    _auth(x_pw_token)
+    node_id = _node_auth(x_node_secret)
+    out = store.deliver_assisted(task_id, node_id, body.deliverable)
+    if not out.get("ok"):
+        raise HTTPException(status_code=409, detail=out.get("error", "cannot deliver"))
+    return out
 
 
 @app.post("/users")
@@ -215,7 +260,7 @@ def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,
-                           requires=body.requires, fetch=body.fetch)
+                           requires=body.requires, fetch=body.fetch, context=body.context)
     out["balance"] = store.user_balance(handle)
     if out.get("status") == "pending_answers" and (body.type or "chat") != "shard_map":
         # the honest single-model compare only makes sense for answer/report jobs —

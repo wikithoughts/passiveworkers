@@ -296,3 +296,37 @@ the situating-blurb document are untrusted → both now `spotlight()`-wrapped be
 (helps the 3-analysts/run and serve/MCP loop). (low) mixed pre/post-contextual embedding spaces →
 one-line re-index hint. (verified safe) the context blurb never leaks into `[L#]` quotes — locked
 with a test. 34 unit tests green.
+
+## D21 — The assisted task class: human-in-the-loop marketplace ("computers work for each other")
+**Decision:** Ship the federation centerpiece (FEDERATION_V2 step 0) — a new job type **`assisted`**.
+It is an OPEN offer (not pre-assigned): an asker posts a brief + **bounded context**; any consenting,
+capability-matched operator sees it (`pw tasks`), gives **informed consent** by claiming it
+(`pw accept`), does the work **themselves** — with their own agentic AI (Claude, Codex) or by hand —
+and delivers the **owned** result (`pw deliver`). Our software NEVER automates the operator's
+computer; the human is always the agent (D18). Settlement: asker debited the pool, operator credited
+the pool, **no judge, conserved** — money only at the edges (D1). Endpoints `GET /tasks/offers`,
+`POST /tasks/{id}/accept|deliver` (per-node-secret auth, atomic claim under the store lock); the
+agent daemon never auto-claims assisted tasks; the reaper expires unclaimed offers after a long
+(24h) human-paced deadline with no ledger impact (debit happens only at delivery).
+**Why:** This is the founder's own resolution of "computer-use" (human-mediated handoff) and the
+heart of "Upwork for computers" — legally clean (no autonomous automation, no proxied traffic,
+consented + transparent), and it makes the network a marketplace, not just a local tool. The
+single-player engine (D16) remains the adoption engine that brings the operators.
+**Status:** Settled & implemented (store assisted lifecycle, coordinator endpoints, `council/operator.py`
+CLI, JOB_TYPES["assisted"]). Verified end-to-end through the real HTTP API: offer→consent→accept→
+deliver→settle, conserved, with hijack/double-accept protection; 39 unit tests green; package
+PyPI-ready (wheel + sdist, twine check passed).
+
+### D21 addendum — adversarial review pass (assisted)
+A workflow review (3 dimensions × adversarial verify) surfaced 10 findings, clustering into 4 real
+fixes, all applied before commit: (HIGH) a reaped/expired offer could still be settled on a late
+delivery (asker charged for a lapsed offer) → `deliver_assisted` now requires job status
+`assisting`. (the big one) **credit escrow**: the asker's reward is HELD in an internal non-granted
+escrow account at offer creation (`ledger.hold`), released to the operator on delivery
+(`ledger.release`), and refunded by the reaper on expiry (`ledger.refund`) — so an operator who did
+the work can't be left unpaid by the asker spending elsewhere, and conservation is exact across
+save/reload. (med) self-deal blocked — an asker can't accept their own offer. (low) `jobs_helped`
+was triple-counted (settle_job worker+judge same account + a manual ++) → escrow path counts once,
+and `settle_job` no longer double-counts when judge is also a payee. (low) capability re-checked at
+accept, not just in the offer filter. Escrow account hidden from `/status`. +6 regression tests
+(42 total green); HTTP e2e + reload conservation verified.

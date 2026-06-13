@@ -161,6 +161,10 @@ class Store:
                 q += " AND can_judge = 1"
             return list(self.conn.execute(q + " ORDER BY last_seen DESC", (cutoff,)))
 
+    def get_node(self, node_id: str) -> Optional[sqlite3.Row]:
+        with self.lock:
+            return self.conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
+
     # ------------------------------------------------------------------ users (askers)
     def register_user(self, handle: str) -> dict:
         handle = _clip(handle).strip() or "anon"
@@ -239,11 +243,17 @@ class Store:
 
     def create_job(self, asker: str, question: str, minds: int | None = None,
                    job_type: str = "chat", items: Optional[list] = None,
-                   requires: Optional[dict] = None, fetch: bool = False) -> dict:
+                   requires: Optional[dict] = None, fetch: bool = False,
+                   context: str = "") -> dict:
         with self.lock:
             asker = _clip(asker)
             if job_type not in JOB_TYPES:
                 job_type = "chat"
+            # assisted (D21): human-in-the-loop work. NOT pre-assigned — it's an OPEN offer
+            # any consenting, capable operator may claim, do (with their own AI or by hand),
+            # and deliver. No autonomous computer-use by us; the human is the agent.
+            if job_type == "assisted":
+                return self._create_assisted(asker, question, context, requires)
             # Answer-workers = online nodes that declare a model AND meet the job's
             # capability requirements; prefer higher reputation.
             candidates = [n for n in self.online_nodes()
@@ -322,6 +332,120 @@ class Store:
             self.conn.commit()
             return {"job_id": job_id, "status": "pending_answers",
                     "assigned": [n["node_id"] for n in workers]}
+
+    # ------------------------------------------------------------------ assisted (D21)
+    def _create_assisted(self, asker: str, question: str, context: str,
+                         requires: Optional[dict]) -> dict:
+        """Create an OPEN assisted offer (called under self.lock from create_job)."""
+        job_id = str(uuid.uuid4())
+        pool = round(CONFIG.worker_pool / CONFIG.fleet_size * JOB_TYPES["assisted"]["pool_mult"], 4)
+        self.ledger.open_account(asker)
+        # HOLD the reward in escrow now so it can't be spent before the operator delivers.
+        try:
+            self.ledger.hold(asker, pool)
+        except InsufficientCredit:
+            self.conn.execute(
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                " VALUES(?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "failed", _now(), None, None,
+                 "insufficient credit — help on a job first", None))
+            self._save_ledger(); self.conn.commit()
+            return {"job_id": job_id, "status": "failed",
+                    "error": "insufficient credit — help on a job first"}
+        self.conn.execute(
+            "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (job_id, asker, question, "pending_assist", _now(), None, None, None, None, pool, "assisted"))
+        # ONE open task, no node_id — any consenting capable operator may claim it.
+        payload = {"question": question, "job_type": "assisted",
+                   "context": (context or "")[:4000], "requires": requires or {}, "price": pool}
+        self.conn.execute(
+            "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (str(uuid.uuid4()), job_id, "assisted", None, "open",
+             json.dumps(payload), None, None, None, "", "", "", _now(), None, None))
+        self._save_ledger(); self.conn.commit()
+        return {"job_id": job_id, "status": "pending_assist", "price": pool}
+
+    def assisted_offers(self, node: dict) -> list:
+        """Open assisted offers this operator's node is eligible for (capability-matched).
+        Returns the brief + BOUNDED context + price so the operator can give informed consent."""
+        with self.lock:
+            out = []
+            for t in self.conn.execute(
+                    "SELECT * FROM tasks WHERE type='assisted' AND status='open' ORDER BY created"):
+                payload = json.loads(t["payload"]) if t["payload"] else {}
+                if not self._meets(node, payload.get("requires") or None):
+                    continue
+                out.append({"task_id": t["task_id"], "job_id": t["job_id"],
+                            "brief": payload.get("question", ""),
+                            "context": payload.get("context", ""),
+                            "requires": payload.get("requires") or {},
+                            "price": payload.get("price"),
+                            "age_s": round(_now() - t["created"], 1)})
+            return out
+
+    def accept_assisted(self, task_id: str, node_id: str, owner: str) -> dict:
+        """Operator consents to + claims an open offer (atomic, under the lock). Returns the
+        full brief+context. Guards: not your own offer (no self-deal), capability still met."""
+        with self.lock:
+            t = self.conn.execute(
+                "SELECT * FROM tasks WHERE task_id=? AND type='assisted'", (task_id,)).fetchone()
+            if not t:
+                return {"ok": False, "error": "no such assisted task"}
+            if t["status"] != "open":
+                return {"ok": False, "error": f"already {t['status']}"}
+            owner = _clip(owner)
+            job = self.conn.execute("SELECT asker FROM jobs WHERE job_id=?", (t["job_id"],)).fetchone()
+            if job and owner == job["asker"]:
+                return {"ok": False, "error": "cannot accept your own assisted offer"}
+            payload = json.loads(t["payload"]) if t["payload"] else {}
+            node = self.get_node(node_id)
+            if node is not None and not self._meets(dict(node), payload.get("requires") or None):
+                return {"ok": False, "error": "your node does not meet this offer's requirements"}
+            self.ledger.open_account(owner)   # operator must have an account to be paid
+            self.conn.execute(
+                "UPDATE tasks SET status='claimed', node_id=?, owner=?, claimed_at=? WHERE task_id=?",
+                (node_id, owner, _now(), task_id))
+            self.conn.execute("UPDATE jobs SET status='assisting' WHERE job_id=?", (t["job_id"],))
+            self._save_ledger()
+            self.conn.commit()
+            return {"ok": True, "task_id": task_id, "job_id": t["job_id"],
+                    "brief": payload.get("question", ""), "context": payload.get("context", "")}
+
+    def deliver_assisted(self, task_id: str, node_id: str, deliverable: str) -> dict:
+        """Operator returns the owned deliverable; settle (operator paid the pool, conserved)."""
+        with self.lock:
+            t = self.conn.execute(
+                "SELECT * FROM tasks WHERE task_id=? AND type='assisted'", (task_id,)).fetchone()
+            if not t:
+                return {"ok": False, "error": "no such assisted task"}
+            if t["node_id"] != node_id:
+                return {"ok": False, "error": "not your task"}
+            if t["status"] == "done":
+                return {"ok": False, "error": "already delivered"}
+            job = self.conn.execute("SELECT * FROM jobs WHERE job_id=?", (t["job_id"],)).fetchone()
+            # guard against settling a job the reaper already expired/failed (no double-pay,
+            # no charging an asker for an offer they were told had lapsed).
+            if job is None or job["status"] != "assisting":
+                return {"ok": False,
+                        "error": f"offer no longer open for delivery ({job and job['status']})"}
+            result = {"text": deliverable}
+            result["_digest"] = self.result_digest(result)
+            pool = job["pool"] or 0.0
+            # release the escrow hold to the operator (asker was already debited at offer
+            # creation, so this can't fail on asker balance and pays exactly once).
+            self.ledger.release(t["owner"], pool)
+            acct = self.ledger.accounts.get(t["owner"])
+            if acct:
+                acct.jobs_helped += 1
+            receipt = {"job_id": t["job_id"], "asker_id": job["asker"], "total_cost": pool,
+                       "payouts": {t["owner"]: pool}, "judge_fee": 0.0}
+            self.conn.execute("UPDATE tasks SET status='done', result=?, score=? WHERE task_id=?",
+                              (json.dumps(result), 10.0, task_id))
+            self.conn.execute("UPDATE jobs SET status='done', merged=?, receipt=? WHERE job_id=?",
+                              (deliverable, json.dumps(receipt), t["job_id"]))
+            self._save_ledger(); self.conn.commit()
+            return {"ok": True, "job_id": t["job_id"]}
 
     def job_status(self, job_id: str) -> Optional[str]:
         with self.lock:
@@ -520,6 +644,21 @@ class Store:
     def _reap_once(self) -> None:
         with self.lock:
             now = _now()
+            # assisted jobs are human-paced: only expire them on their (long) deadline,
+            # never on node-liveness (no node is assigned until a human accepts).
+            for job in list(self.conn.execute(
+                    "SELECT * FROM jobs WHERE status IN ('pending_assist','assisting')")):
+                deadline = JOB_TYPES["assisted"]["deadline_s"]
+                if now - job["created"] > deadline:
+                    # refund the held reward to the asker before failing (escrow → asker)
+                    try:
+                        if job["pool"]:
+                            self.ledger.refund(job["asker"], job["pool"])
+                    except Exception:
+                        pass
+                    self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
+                                      (f"assisted offer expired ({int(deadline)}s)", job["job_id"]))
+                    self._save_ledger()
             stuck = list(self.conn.execute(
                 "SELECT * FROM jobs WHERE status IN ('pending_answers','judging')"))
             for job in stuck:
@@ -608,7 +747,9 @@ class Store:
                 })
             jobs = [dict(j) for j in self.conn.execute(
                 "SELECT job_id, asker, status, created FROM jobs ORDER BY created DESC LIMIT 10")]
-            accounts = list(self.ledger.accounts.items())  # snapshot inside the lock
+            from council.ledger import ESCROW_ID
+            accounts = [(u, a) for u, a in self.ledger.accounts.items()
+                        if u != ESCROW_ID]   # hide the internal escrow holding account
             return {
                 "online_nodes": nodes,
                 "machines": len(machines),          # distinct physical computers online

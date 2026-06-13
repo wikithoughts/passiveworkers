@@ -128,7 +128,9 @@ different windows on the web — each node researches from its own egress and re
 cited findings** (never proxied traffic), an editor merges with per-country sections, and a
 non-tradeable mutual-aid credit accounts for who helped whom. It already powers a live
 two-country deployment, plus typed marketplace jobs (deep research, sharded batch work with
-capability matching). Two principles are absolute: **operators always see and consent to the
+capability matching, and **assisted** human-in-the-loop tasks — `pw tasks` / `pw accept` /
+`pw deliver`: an operator consents to a bounded brief and does it with their own AI or by hand,
+never our autonomous code). Two principles are absolute: **operators always see and consent to the
 work their machine does** (never hidden tasks), and when a job needs a real computer driven, it
 is **handed to the human operator** to do with their own AI under approval — our code never
 automates anyone's machine. The long game is a commons of computers doing real work for each

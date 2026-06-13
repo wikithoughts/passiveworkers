@@ -7,6 +7,8 @@ council/cli.py — the `pw` command
     pw library add <path|dir>      # index your own documents (private, local RAG)
     pw library list|remove|clear
     pw mcp                         # run as an MCP server (Claude Desktop, Codex, …)
+    pw tasks                       # list open assisted offers you can do (federation)
+    pw accept <id> | deliver <id> <text|@file>
 """
 
 from __future__ import annotations
@@ -36,6 +38,10 @@ def main() -> int:
         from council.mcp_server import main as mcp_main
         mcp_main()
         return 0
+    if cmd in ("tasks", "accept", "deliver"):
+        sys.argv = ["pw", cmd] + rest   # operator.main dispatches on argv[1] (the verb)
+        from council.operator import main as operator_main
+        return operator_main()
     print(f"unknown command: {cmd}\n\n{__doc__.strip()}")
     return 2
 

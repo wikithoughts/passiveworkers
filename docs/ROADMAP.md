@@ -90,6 +90,14 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R9 — ASSISTED MARKETPLACE + PyPI-READY (D21, 2026-06-13)
+The federation centerpiece: `assisted` human-in-the-loop job type — open offer → operator consent
+(`pw tasks`/`accept`) → work done by the human with their own AI → owned deliverable (`pw deliver`)
+→ conserved settle. Our code never automates anyone's computer. Endpoints + operator CLI + 39 tests
+(ledger conservation, hijack/double-accept guards). Package is PyPI-ready (wheel+sdist, twine PASSED).
+Next: founder publishes to PyPI (`twine upload dist/*`); recruit first operators; signed/encrypted
+delivery + chunked artifacts (FEDERATION_V2 steps 2-3, security-review gated).
+
 ## R8 — BEST-IN-CLASS LOCAL RAG (D20, 2026-06-11)
 Hybrid retrieval (dense ⊕ BM25 ⊕ RRF, council/retrieval.py), structure-aware chunking,
 parent-window (small-to-big), Anthropic Contextual Retrieval (PW_CONTEXTUAL_CHUNKS), incremental

@@ -25,6 +25,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+ESCROW_ID = "__escrow__"   # internal assisted-offer holding account (no starter grant)
+
 # Credits granted on account creation (the bootstrap grant). Operator-tunable:
 # 100 ≈ 2–3 council asks before you must contribute — right for production give/take,
 # too tight for trials/demos (the first 10-question trial died at question 3 on this).
@@ -152,7 +154,8 @@ class Ledger:
         jacct = self.accounts[judge_id]
         jacct.balance = round(jacct.balance + judge_fee, 4)
         jacct.lifetime_earned = round(jacct.lifetime_earned + judge_fee, 4)
-        jacct.jobs_helped += 1
+        if judge_id not in payouts:   # don't double-count help if judge is also a payee
+            jacct.jobs_helped += 1
 
         self._job_count += 1
         return Receipt(
@@ -164,6 +167,46 @@ class Ledger:
             judge_fee=judge_fee,
             asker_balance_after=asker.balance,
         )
+
+    # ------------------------------------------------------------------ escrow (assisted, D21)
+    # Internal holding account for assisted offers: the asker's reward is HELD at offer
+    # creation so it can't be spent elsewhere before the operator delivers, and is released
+    # to the operator on delivery (or refunded on expiry). Opened WITHOUT a starter grant —
+    # it only ever holds credit moved from real accounts, so conservation is preserved.
+    def _escrow(self) -> "Account":
+        if ESCROW_ID not in self.accounts:
+            # balance 0 (NOT the starter grant) and not counted in _granted_total — it only
+            # ever holds credit moved from real accounts, so conservation is preserved.
+            self.accounts[ESCROW_ID] = Account(user_id=ESCROW_ID, balance=0.0)
+        return self.accounts[ESCROW_ID]
+
+    def hold(self, asker_id: str, amount: float) -> None:
+        """Move `amount` from the asker into escrow (raises if they can't afford it)."""
+        a = self.accounts[asker_id]
+        amount = round(amount, 4)
+        if a.balance < amount:
+            raise InsufficientCredit(
+                f"{asker_id} has {a.balance:.1f} but the offer holds {amount:.1f}. "
+                "Help on a job first.")
+        a.balance = round(a.balance - amount, 4)
+        a.lifetime_spent = round(a.lifetime_spent + amount, 4)
+        self._escrow().balance = round(self._escrow().balance + amount, 4)
+
+    def release(self, to_id: str, amount: float) -> None:
+        """Pay an escrow hold out to the operator (on delivery)."""
+        amount = round(amount, 4)
+        self._escrow().balance = round(self._escrow().balance - amount, 4)
+        o = self.accounts[to_id]
+        o.balance = round(o.balance + amount, 4)
+        o.lifetime_earned = round(o.lifetime_earned + amount, 4)
+
+    def refund(self, asker_id: str, amount: float) -> None:
+        """Return an escrow hold to the asker (on offer expiry / failure)."""
+        amount = round(amount, 4)
+        self._escrow().balance = round(self._escrow().balance - amount, 4)
+        a = self.accounts[asker_id]
+        a.balance = round(a.balance + amount, 4)
+        a.lifetime_spent = round(a.lifetime_spent - amount, 4)
 
     # ------------------------------------------------------------------ integrity
     def total_credit(self) -> float:

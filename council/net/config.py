@@ -70,4 +70,10 @@ JOB_TYPES: dict = {
         "pool_mult": 2.0,
         "deadline_s": float(os.environ.get("PW_BATCH_MAX_RUN", "3600")),
     },
+    "assisted": {
+        "label": "Assisted task — a person does it on their computer (with consent)",
+        "eta": "minutes to hours (human-paced)",
+        "pool_mult": 5.0,   # real human-mediated work; priced above automated jobs
+        "deadline_s": float(os.environ.get("PW_ASSIST_MAX_RUN", "86400")),  # 24h to be claimed+done
+    },
 }
