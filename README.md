@@ -195,6 +195,8 @@ other — **no token, no secondary market, money only ever at the edges.** See
 | [docs/ECONOMICS.md](docs/ECONOMICS.md) | Credit, give/take, score-weighted payouts, legal posture. |
 | [docs/TRIAL_RESULTS.md](docs/TRIAL_RESULTS.md) | Our blind trial vs a frontier model — losses included. |
 | [docs/GLOSSARY.md](docs/GLOSSARY.md) | Terms (Council, analyst, judge, lens, credit…). |
+| [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md) | Plug a machine into the federation — what it does, earns, and why it's safe. |
+| [docs/RELEASING.md](docs/RELEASING.md) | How to publish to PyPI (verified build; needs your token). |
 
 ## Status
 

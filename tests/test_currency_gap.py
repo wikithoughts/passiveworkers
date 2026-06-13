@@ -26,12 +26,12 @@ def test_validate_splits_ready_from_placeholders_and_missing():
     assert any("missing" in p for p in problems)
 
 
-def test_default_questions_static_ready_recent_are_placeholders():
+def test_default_questions_all_ready_with_real_references():
     ready, problems = CG.validate_questions(CG.DEFAULT_QUESTIONS)
-    # the static control set ships ready; the recent/breaking set needs references filled
-    assert ready and all(q["window"] == "static" for q in ready)
-    assert all(p for p in problems)                        # every non-static default needs attention
-    assert len(problems) >= 4
+    # references were curated from the live web (2026-06-13) — the shipped set is fully runnable,
+    # no placeholders remain, and it spans all three currency windows for a meaningful matrix
+    assert not problems and len(ready) == len(CG.DEFAULT_QUESTIONS)
+    assert {q["window"] for q in ready} == {"static", "recent", "breaking"}
 
 
 # ----------------------------------------------------------------------------- parse_grade

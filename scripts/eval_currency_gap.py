@@ -54,26 +54,35 @@ DEFAULT_QUESTIONS = [
      "window": "static", "category": "geography", "reference": "Canberra."},
     {"question": "At standard sea-level pressure, what is the boiling point of water in Celsius?",
      "window": "static", "category": "science", "reference": "100 °C (at 1 atm)."},
-    # ── recent: changes over months; FILL the reference before --run ──
+    # ── recent: changes over months; references curated from the LIVE WEB on 2026-06-13 (re-verify
+    #    before re-running — these go stale; sources noted inline) ──
     {"question": "What is the latest stable Python version, and when was it released?",
      "window": "recent", "category": "tech",
-     "reference": "VERIFY before run — confirm the current stable Python version and release date."},
+     "reference": "Python 3.14 is the current series (3.14.0 released Oct 2025); the latest patch is "
+                  "3.14.6, released 2026-06-10. (python.org, as of 2026-06-13)"},
     {"question": "What is the current US federal funds rate target range?",
      "window": "recent", "category": "finance",
-     "reference": "VERIFY before run — confirm the current FOMC target range as of the run date."},
+     "reference": "3.50%-3.75%, held since the April 2026 FOMC meeting. (fedprimerate/FRED, as of 2026-06-13)"},
     {"question": "Who is the current Secretary-General of the United Nations?",
      "window": "recent", "category": "policy",
-     "reference": "VERIFY before run — confirm who currently holds the post."},
-    {"question": "What is the most recently released flagship iPhone model and its US starting price?",
+     "reference": "Antonio Guterres (in office since 2017-01-01; second term ends 2026-12-31). "
+                  "(un.org, as of 2026-06-13)"},
+    {"question": "What is the most recently released iPhone model and its US starting price?",
      "window": "recent", "category": "tech",
-     "reference": "VERIFY before run — confirm the latest model and starting price."},
-    # ── breaking: changes within weeks; FILL the reference before --run ──
-    {"question": "What is the most recent development in the EU AI Act's enforcement timeline?",
+     "reference": "The most recently released model is the budget iPhone 17e at $599 (256GB, early 2026); "
+                  "the current flagship is the iPhone 17 Pro at $1,099 (Sept 2025); the iPhone 18 Pro is "
+                  "expected Sept 2026. (MacRumors/PhoneArena, as of 2026-06-13)"},
+    # ── breaking: changes within weeks; references curated from the LIVE WEB on 2026-06-13 ──
+    {"question": "What is the next major enforcement milestone in the EU AI Act timeline, and its date?",
      "window": "breaking", "category": "policy",
-     "reference": "VERIFY before run — confirm the latest enforcement milestone and date."},
-    {"question": "What was the outcome of the most recent US FOMC meeting?",
+     "reference": "2026-08-02: the Commission's supervision/enforcement powers over general-purpose AI "
+                  "(GPAI) providers take effect (one year after GPAI obligations began 2025-08-02), and "
+                  "high-risk (Annex III) + Article 50 transparency rules begin to apply. "
+                  "(artificialintelligenceact.eu, as of 2026-06-13)"},
+    {"question": "What was the outcome of the most recent completed US FOMC meeting?",
      "window": "breaking", "category": "finance",
-     "reference": "VERIFY before run — confirm the date and the rate decision."},
+     "reference": "The most recent completed meeting (April 2026; the next is June 16-17, 2026) held the "
+                  "federal funds target range at 3.50%-3.75%. (fedprimerate, as of 2026-06-13)"},
 ]
 
 
