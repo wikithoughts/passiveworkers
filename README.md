@@ -65,6 +65,10 @@ docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
 - **Currency beats memory.** Frontier chatbots answer from training data that is months or
   years old. This engine reads the web *now* and cites what it found. In our own blind trial,
   live-web research was the only thing that beat a frontier model — both times currency mattered.
+  For time-sensitive questions it leads with the **freshest-dated** sources (so they survive the
+  cap and get read first), pins the **current year into the search query** so the engine returns
+  *this year's* results instead of an SEO-dominant old page, and **researches deeper on breaking
+  topics** — while leaving stable-fact questions in plain relevance order.
 - **Private by construction.** No account, no server, no telemetry. The only thing that leaves
   your machine is the web searches themselves. Reports are files on your disk.
 - **Plural by design.** Different model families make *different* mistakes. A planner discovers

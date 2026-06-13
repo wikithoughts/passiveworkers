@@ -28,8 +28,9 @@ from dataclasses import dataclass
 import requests
 
 from council.judge import _extract_json
-from council.research import (extract_date_hint, fetch_extract, is_time_sensitive,
-                              order_by_recency, route_engines, search_structured)
+from council.research import (extract_date_hint, fetch_extract, inject_recency, is_breaking,
+                              is_time_sensitive, order_by_recency, route_engines,
+                              search_structured)
 
 OLLAMA_BASE = "http://localhost:11434"
 _GEN_TIMEOUT = float(os.environ.get("PW_RESEARCH_GEN_TIMEOUT",
@@ -52,6 +53,24 @@ class ResearchWorker:
 
     def _today(self) -> str:
         return self.today or _dt.date.today().isoformat()
+
+    def _bumped_depth(self, brief: str) -> str:
+        """Breaking briefs earn one extra depth notch — more refine queries, a bigger evidence
+        cap, and more page fetches — to outrun SEO-stale pages on fast-moving topics (R19/D31).
+        Bounded at 'deep'; non-breaking briefs keep the configured depth unchanged.
+        Gated on time-sensitivity TOO (review R19, finding 4): _BREAKING_RE has triggers like
+        'developing story', 'live updates', 'this morning' that also fire on stable briefs — so a
+        'quick' caller isn't silently pushed into a two-refine-round deep run by an incidental
+        word. We only deepen when the brief is genuinely time-sensitive AND breaking."""
+        t = f"{brief} {self.angle}"
+        order = ("quick", "standard", "deep")
+        if not (is_time_sensitive(t) and is_breaking(t)):
+            return self.depth
+        try:
+            i = order.index(self.depth)
+        except ValueError:
+            i = 1   # an unknown depth already behaves like 'standard' in the .get() defaults
+        return order[min(i + 1, len(order) - 1)]
 
     def _generate(self, prompt: str, num_predict: int) -> tuple[str, int]:
         r = requests.post(
@@ -143,13 +162,19 @@ class ResearchWorker:
         t0 = time.monotonic()
         evidence: list[dict] = []
         seen_urls: set[str] = set()
+        today = self._today()
+        # Does the brief want CURRENT info? Drives both year-injection (R19) and the
+        # freshness reordering (R18). Computed once up front so _collect can close over it.
+        fresh = is_time_sensitive(f"{brief} {self.angle}")
+        # Breaking briefs research deeper (R19/D31); everything below keys off this, not self.depth.
+        depth = self._bumped_depth(brief)
 
         # Local-documents retrieval (D19): draw on the private library alongside the web.
         local: list[dict] = []
         if self.scope in ("both", "local"):
             try:
                 from council.library import Library
-                k = {"quick": 4, "deep": 8}.get(self.depth, 6)
+                k = {"quick": 4, "deep": 8}.get(depth, 6)
                 hits = Library().search(brief + (" " + self.angle if self.angle else ""), k=k)
                 # collapse chunks to ONE entry per document so [L#] numbering is identical
                 # in the draft prompt and the source listing (no dangling local citations)
@@ -170,7 +195,11 @@ class ResearchWorker:
                 # extras are queried shallower so they augment rather than crowd out web results.
                 for engine in route_engines(q):
                     n = per_query if engine == "web" else max(2, per_query - 1)
-                    for row in search_structured(q, max_results=n, engine=engine):
+                    # R19/D31: pin the current year into time-sensitive WEB queries so search
+                    # returns CURRENT results (not the SEO-dominant historical page) — the fix
+                    # R18's recency RANKING can't make. Web only: arXiv/Wikipedia don't SEO-stale.
+                    eq = inject_recency(q, today, fresh) if engine == "web" else q
+                    for row in search_structured(eq, max_results=n, engine=engine):
                         if row["url"] in seen_urls:
                             continue
                         seen_urls.add(row["url"])
@@ -178,27 +207,26 @@ class ResearchWorker:
 
         if self.scope in ("both", "web"):
             _collect(self._plan_queries(brief), per_query=4)
-        if evidence and self.scope in ("both", "web") and self.depth != "quick":
+        if evidence and self.scope in ("both", "web") and depth != "quick":
             _collect(self._refine_queries(brief, evidence), per_query=3)
-            if self.depth == "deep":
+            if depth == "deep":
                 _collect(self._refine_queries(brief, evidence), per_query=3)
         # Freshness-biased ordering (R18/D30): the council's edge is CURRENCY, so sniff a date
-        # hint for each source and — ONLY when the brief actually cares about recency — lead with
-        # the most-recently-dated ones (they then survive the cap AND get page-fetched first).
-        # For stable-fact briefs we leave relevance order alone, so an authoritative older source
-        # isn't buried under a recent repost (review R18). Undated sources always sort behind.
+        # hint for each source and — ONLY when the brief actually cares about recency (fresh,
+        # computed up front) — lead with the most-recently-dated ones (they then survive the cap
+        # AND get page-fetched first). For stable-fact briefs we leave relevance order alone, so an
+        # authoritative older source isn't buried under a recent repost (review R18). Undated last.
         for e in evidence:
             e["date_hint"] = extract_date_hint(e.get("url", ""), e.get("snippet", ""))
-        fresh = is_time_sensitive(f"{brief} {self.angle}")
         if fresh:
             evidence[:] = order_by_recency(evidence)
-        cap = {"quick": 8, "deep": 16}.get(self.depth, 12)
+        cap = {"quick": 8, "deep": 16}.get(depth, 12)
         evidence[:] = evidence[:cap]   # keep the prompt within small-model context
 
         # Full-page evidence (D17): fetch the top result pages and draft from extracts —
         # the single biggest quality lever the ecosystem leaders proved. Best-effort.
         if self.page_evidence and evidence:
-            n_pages = {"quick": 2, "deep": 4}.get(self.depth, 3)
+            n_pages = {"quick": 2, "deep": 4}.get(depth, 3)
             for e in evidence[:n_pages]:
                 try:
                     e["page"], e["date"] = fetch_extract(e["url"], max_chars=1500, with_date=True)

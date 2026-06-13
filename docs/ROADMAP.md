@@ -90,6 +90,21 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R19 — CURRENT-YEAR QUERY INJECTION + BREAKING AUTO-DEEPEN (D31, 2026-06-13) — fix what ranking can't
+R18 left one honest residual: "most recent FOMC meeting" still returned the SEO-dominant 2023 page —
+recency *ranking* can't lift a fresh source search never returned. R19 fixes it at the **query**:
+`research.inject_recency()` pins the current year into time-sensitive **web** queries (web only —
+arXiv/Wikipedia don't SEO-stale), wired into `researcher._collect`; and `is_breaking()` +
+`_bumped_depth()` give a genuinely breaking brief one extra depth notch (strict subset of
+time-sensitive, so plain "latest"/"current" use the *cheap* year injection, not a compute bump).
+Review (3 lenses × adversarial verify, 18 agents) → 15 findings, **9 confirmed, 4 real bugs fixed**:
+(HIGH) "already-pinned" over-detected a price/count as a year and *suppressed* injection → only a
+standalone plausible year counts; (HIGH) a hallucinated stale year ("rate 2023") recurred → append the
+current year alongside it, never replace; (HIGH) historical sub-queries poisoned → per-query
+`_HISTORICAL_RE` suppressor (excludes "what is"); (HIGH) `is_breaking` over-fired on stable briefs
+("developing story", "live updates") → depth bump gated on time-sensitive AND breaking. Two MEDIUMs
+(fused-year double-pin; literal-AND soft ranking) accepted as documented trade-offs. **184 tests (22 new).**
+
 ## R18 — FRESHNESS-BIASED RESEARCH (D30, 2026-06-13) — act on the currency-gap finding
 The R16 run showed the council had live web but produced stale dates (EU AI Act "2027", FOMC "2023").
 R18: `research.extract_date_hint()` + `order_by_recency()` lead the research with the freshest-dated
@@ -101,8 +116,8 @@ failed questions: 3/4 fixed** — Python ✅ (3.14.6), EU AI Act ✅ (2026-08-02
 ranking can't rescue what search didn't return (a retrieval problem → R19). Review (3 lenses × verify,
 17 agents) found 3 real bugs, all fixed: impossible-date regex (datetime-validated now), body-text
 topic-year false positives (URL-only bare years), over-recency on static (gated). 162 tests (13 new).
-**NEXT R19:** code-level current-year query injection + auto-deeper depth for breaking queries (the
-FOMC residual).
+**→ R19 (above)** delivered the FOMC residual fix: code-level current-year query injection + breaking
+auto-deepen.
 
 ## R17 — PERFORMANCE & QUALITY BACKLOG (D29, 2026-06-13) — work the audit's cheap wins
 With the eval pair able to measure quality, worked the D26 performance backlog ("do it all and do

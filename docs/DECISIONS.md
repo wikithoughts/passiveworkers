@@ -740,3 +740,57 @@ A review (3 lenses — correctness / integration-regression / methodology — ×
   (recency keywords) so stable-fact briefs keep relevance order — protecting the eval's static control.
 Lesson: a ranking heuristic's failure modes are mostly bad *inputs* (malformed/ambiguous dates) and
 mis-*scoping* (applying it where recency is irrelevant) — the review caught both.
+
+## D31 — Current-year query injection + breaking auto-deepen: fix what RANKING can't
+**Decision:** Close the FOMC residual D30 surfaced. R18 reorders evidence by date, but *you cannot
+reorder a fresh source that search never returned* — and the FOMC query ("most recent completed FOMC
+meeting") returns the SEO-dominant June-2023 page, so recency ranking has nothing current to lift.
+That is a **retrieval** problem; R19 fixes it at the query, deterministically (not relying on the small
+planner model to comply with a "use the current year" instruction):
+- **`research.inject_recency(query, today, time_sensitive)`** pins the current year into a
+  time-sensitive **web** query so the engine surfaces *this year's* results, which R18 then orders
+  freshest-first. Web only — arXiv (relevance) and Wikipedia (full-text) don't SEO-stale, and a bare
+  year pollutes them. Wired into `researcher._collect` for the `web` engine on both plan and refine
+  queries; gated on the brief-level `fresh` flag.
+- **`research.is_breaking(text)` + `researcher._bumped_depth(brief)`** give a genuinely *breaking*
+  brief one extra depth notch (more refine rounds + a bigger cap + more page fetches) to outrun
+  SEO-stale pages. `is_breaking` is a strict subset of `is_time_sensitive` — plain "latest"/"current"
+  are handled by the *cheap* year injection, so we don't double the local compute on every dated query.
+**Why:** Currency is the product's one measured edge (D28). Live retrieval + freshest-first ranking
+(D30) are necessary but not sufficient when search itself returns only stale pages — the fix has to
+act *before* ranking, on what the engine is asked.
+**Status:** Settled & implemented. 184 tests green (22 new). No new dependency.
+
+### D31 addendum — adversarial review pass (currency injection)
+A workflow review (3 lenses — correctness / retrieval-efficacy / regression-consistency — × adversarial
+verify, 18 agents) returned 15 findings, **9 confirmed** (no critical). Four real defects, all fixed
+before commit; two MEDIUMs accepted as documented trade-offs:
+- **(HIGH) "Already pinned" over-detected.** The first cut skipped injection whenever `\b20\d{2}\b`
+  matched — so a *price* (`$2000`), a *count* (`2048`), or any non-year 20NN **silently suppressed**
+  the fix on exactly the concrete current-fact queries it targets. Fixed: only a *standalone, plausible*
+  year (1990‥current+1, not currency/word-fused) counts as pinned.
+- **(HIGH) Stale planner year recurred.** The same weak model that omits the year also *hallucinates*
+  a stale one ("rate **2023**"); the old guard no-op'd → the 2023 page returned again, reproducing the
+  exact bug R19 exists to kill. Fixed: a *recently*-stale year (within `_STALE_WINDOW=4`) gets the
+  current year **appended alongside** it (never string-*replaced* — so a deliberately historical query
+  is never corrupted), and the engine sees the fresh signal for R18 to lift. A deep-historical year
+  (e.g. "the 2008 crisis") is respected.
+- **(HIGH) Historical sub-queries poisoned.** `fresh` is brief-level, so on a mixed-intent brief
+  ("history *and current state* of X") a historical sub-/refine-query ("…1970s") got "2026" appended.
+  Fixed: a per-query historical/timeless suppressor (`_HISTORICAL_RE`) skips injection on history/
+  definition/decade queries — deliberately **excluding** "what is/are" (too common in legitimate
+  current questions, incl. the FOMC brief itself).
+- **(HIGH) Stable briefs over-deepened.** `is_breaking` fires on "developing **story**", "**live
+  updates** plugin", "this **morning** yoga" — none time-sensitive — so a `quick` caller was silently
+  pushed into an extra refine round. Fixed: the depth bump is gated on `is_time_sensitive(brief) AND
+  is_breaking(brief)`, restoring the intended breaking ⊂ time-sensitive invariant.
+- **(also fixed, robustness)** `_year_of` switched from an anchored `re.match` to `.search`, so a
+  non-ISO `today` ("June 13, 2026") still yields the year instead of silently disabling the lever.
+- **Accepted trade-offs (documented, not fixed):** a year *fused* to a word (`fy2025`) can still get a
+  second year appended (rare; the bare intent is preserved, and fixing it conflicts with the higher-sev
+  price case); and a literal year is a soft-AND term, so an evergreen page that omits the year string
+  can rank lower — the page-fetch + `order_by_recency` + the 12-16 evidence cap keep it in play and
+  re-rank it by real date.
+Lesson: a query-rewrite heuristic's failure modes are *over-trusting a token's meaning* (is "2000" a
+year or a price?) and *brief-vs-query scoping* (a fresh brief still has historical sub-queries) — and
+the safe move on ambiguity is to **append, never replace**, so a wrong guess never corrupts the query.

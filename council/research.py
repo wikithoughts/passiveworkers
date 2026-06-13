@@ -397,6 +397,93 @@ def is_time_sensitive(text: str) -> bool:
     return bool(_TEMPORAL_RE.search(text or ""))
 
 
+# ---- current-year query injection (R19/D31): the fix recency RANKING can't make ----
+# R18 reorders evidence by date, but you cannot reorder a fresh source that search never
+# returned. On a time-sensitive query a small planner model often OMITS the year (or hallucinates
+# a STALE one), so a meta-search returns the SEO-dominant HISTORICAL page (e.g. the famous 2023
+# FOMC meeting for "current federal funds rate"). Pinning the current year INTO the web query
+# forces the engine to surface this year's results, which R18 then orders freshest-first. WEB
+# ONLY — arXiv sorts by relevance and Wikipedia is full-text, where a bare year pollutes instead.
+#
+# Review R19 hardening:
+#  • "Already pinned" must mean a *standalone, plausible* year — never a price ($2000), a fused
+#    token (fy2025), or a bare large count (2048); else injection is silently suppressed on
+#    exactly the concrete current-fact queries it targets (finding 1).
+#  • A RECENTLY-stale year (hallucinated "2023") gets the current year APPENDED alongside it, not
+#    no-op'd — so the engine still sees the fresh signal and R18 picks it (finding 2). We APPEND,
+#    never string-replace, so a deliberately historical query is never corrupted into nonsense.
+#  • Historical / timeless queries are skipped per-query, so a historical sub-query of a
+#    time-sensitive brief isn't poisoned with the current year (findings 3/7/9).
+#  • Accepted trade-offs (documented, not fixed): a year fused to a word (fy2025) can still get a
+#    second year appended (rare; original intent preserved) [finding 5]; a literal year is a
+#    soft-AND term, so an evergreen page that omits the year string can rank lower — the page
+#    fetch + order_by_recency + the 12-16 evidence cap keep it in play and re-rank by real date
+#    [finding 6].
+_QUERY_CAP = 300   # search_structured/search truncate to this; never let the year be the cut tail
+# A *standalone* calendar year — not fused to a word (fy2025), not a currency amount ($2000).
+_STANDALONE_YEAR_RE = re.compile(r"(?<![\w$£€¥])((?:19|20)\d{2})(?![\w%])")
+_STALE_WINDOW = 4   # a past year within N years of today reads as "recently stale" (refresh it);
+                    # an older standalone year reads as a deliberate historical reference (respect).
+# Query-level historical / timeless intent — pinning the current year would mis-steer it. Keyword
+# based, not exhaustive; deliberately EXCLUDES "what is/are" (too common in legitimate current Qs).
+_HISTORICAL_RE = re.compile(
+    r"(?i)(\b(history|historical|historically|origins?|originally|founded|inception|evolution|"
+    r"timeline|etymology|biography|retrospective|definition|defined\s+as)\b"
+    r"|\bmeaning\s+of\b|\bover\s+the\s+years\b|\bback\s+in\b|\bsince\s+\d{4}\b|\b\d{2,4}0s\b)")
+
+
+def _year_of(today: str) -> str:
+    # search (not anchored match): robust to whatever _today() emits — '2026-06-13' OR
+    # 'June 13, 2026' both yield '2026' (review R19, finding 8). '' when no plausible year.
+    m = _STANDALONE_YEAR_RE.search(today or "")
+    return m.group(1) if m else ""
+
+
+def inject_recency(query: str, today: str, time_sensitive: bool = True) -> str:
+    """Pin the current year into a time-sensitive WEB query so search returns CURRENT results
+    instead of the SEO-dominant historical page (R19/D31) — the fix R18's recency RANKING can't
+    make. No-op when: not time-sensitive (brief-level), query empty, the query shows historical/
+    timeless intent, the current (or a near-future forecast) year is already present, a deliberate
+    deep-historical year is present, `today` has no parseable year, or appending would exceed the
+    300-char cap. A RECENTLY-stale year is kept and the current year APPENDED alongside it (never
+    replaced) so the fresh signal reaches search without corrupting a historical query."""
+    q = (query or "").strip()
+    if not time_sensitive or not q or _HISTORICAL_RE.search(q):
+        return q
+    year = _year_of(today)
+    if not year:
+        return q
+    cur = int(year)
+    # plausible standalone year tokens already in the query (ignore prices / fused / out-of-range)
+    years = [int(m.group(1)) for m in _STANDALONE_YEAR_RE.finditer(q)
+             if 1990 <= int(m.group(1)) <= cur + 1]
+    if any(y >= cur for y in years):
+        return q   # current year already pinned, or a deliberate near-future (forecast) year
+    if any(y < cur - _STALE_WINDOW for y in years):
+        return q   # a deliberate, deep-historical year — respect it, don't append a second year
+    # else: no year, or only a RECENTLY-stale year (e.g. a hallucinated "2023") → append current
+    if len(q) + 1 + len(year) > _QUERY_CAP:
+        return q
+    return f"{q} {year}"
+
+
+# ---- breaking-news auto-deepen (R19/D31): heavier retrieval for fast-moving topics ----
+# A STRICTER subset of recency intent: "happening now" signals where the answer is volatile and
+# SEO favors stale pages, so more queries + more page fetches earn their keep. Deliberately
+# excludes plain "latest"/"current"/"recent" (those are handled by year injection above, which
+# is cheap) so we don't over-deepen — and double the local compute on — every dated query.
+_BREAKING_RE = re.compile(
+    r"(?i)\b(breaking|just\s+(announced|released|happened|reported|now)|right\s+now|"
+    r"as\s+of\s+(today|now)|today'?s|developing\s+(story|news|situation)|live\s+updates?|"
+    r"happening\s+now|this\s+(morning|afternoon|evening))\b")
+
+
+def is_breaking(text: str) -> bool:
+    """True for the strongest 'happening now' signals — warrants a depth bump (R19). A strict
+    subset of is_time_sensitive(): every breaking brief is time-sensitive, but not vice-versa."""
+    return bool(_BREAKING_RE.search(text or ""))
+
+
 def _pad_date(d: str) -> str:
     """'2026' -> '2026-00-00', '2026-06' -> '2026-06-00' so ISO strings compare chronologically."""
     parts = (d or "").split("-")
