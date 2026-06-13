@@ -1,8 +1,10 @@
 # Contribute your compute
 
-Passive Workers has a second mode beyond the single-player `pw research` tool: an opt-in
-**federation** where your computer's idle time does real, owned work and earns non-transferable
-credit. This page is for people who want to plug a machine in.
+The single-player `pw research` tool is one half of Passive Workers. This is the other half — and
+the reason for the name: an opt-in **network** where your computer's idle time does real, owned
+work for other people's computers (and theirs for yours) and earns non-transferable credit.
+Research is the first job type the network runs; more are on the roadmap. This page is for people
+who want to plug a machine in.
 
 > Status: **early access.** The coordinator is invite-only today — there is no open public
 > endpoint yet. You join a specific coordinator with a URL + token the maintainer gives you.
@@ -37,7 +39,7 @@ ordinary, defensible work — and it is the single most important design rule of
 
 - **No inbound, no open ports.** The agent only dials out.
 - **No computer-use, ever.** The agent runs model inference and returns text/files. It does not
-  drive a browser, click, or touch your sessions/cookies — by design, permanently (D16/D18).
+  drive a browser, click, or touch your sessions/cookies — by design, permanently (D18).
 - **You stay in control.** Stop the agent any time (Ctrl-C / stop the service). A CPU-ceiling
   pause gate keeps it from hogging the machine.
 - **Untrusted content is treated as data.** Web pages and job inputs are sanitized and

@@ -340,7 +340,8 @@ def get_job(job_id: str):
 def feedback(job_id: str, body: FeedbackBody, x_user_secret: str | None = Header(default=None)):
     who = _user_auth(x_user_secret)
     if not store.record_feedback(job_id, body.verdict, who):
-        raise HTTPException(status_code=400, detail="bad verdict or unknown job")
+        raise HTTPException(status_code=400,
+                            detail="bad verdict, unknown job, or not the job's asker")
     return {"ok": True}
 
 

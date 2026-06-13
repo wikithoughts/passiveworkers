@@ -18,6 +18,7 @@ judging is steady while the workers diverge.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,19 @@ import requests
 from council.sanitize import strip_invisible
 
 OLLAMA_BASE = "http://localhost:11434"
+
+
+def _blind_order(n: int, seed: str) -> list[int]:
+    """A deterministic, CONTENT-derived rotation of range(n) so the judge sees answers in an order
+    that neither tracks worker identity NOR is a fixed positional pattern it could learn. Stable
+    across processes (sha256, not the PYTHONHASHSEED-salted builtin hash) so judging is reproducible
+    and testable. Replaces the prior `len % max(1,len)` rotation, which was ALWAYS 0 — a silent
+    no-op that left position-bias unmitigated despite the docstrings (review)."""
+    order = list(range(n))
+    if n <= 1:
+        return order
+    rot = int(hashlib.sha256((seed or "").encode("utf-8", "replace")).hexdigest(), 16) % n
+    return order[rot:] + order[:rot]
 
 
 def _extract_json(text: str):
@@ -119,10 +133,9 @@ class Judge:
     # ------------------------------------------------------------------ 1. SCORE
     def score(self, question: str, answers: list) -> list[ScoredCandidate]:
         """answers: list[council.worker.Answer]. Blind, shuffled, deterministic mapping."""
-        # Deterministic shuffle (rotate by length) so the judge can't learn an ordering.
-        order = list(range(len(answers)))
-        rot = len(answers) % max(1, len(answers))
-        order = order[rot:] + order[:rot]
+        # Deterministic, content-derived rotation so neither identity nor a fixed position pattern
+        # can bias the judge — and it actually rotates (the old `len % len` was always 0).
+        order = _blind_order(len(answers), question)
 
         blocks = []
         for display_idx, real_idx in enumerate(order, start=1):
@@ -198,8 +211,7 @@ class Judge:
                              "unique": [{"worker_id","point"}]}}.
         Answers are anonymized + rotated so identity/position can't bias the read.
         """
-        order = list(range(len(answers)))
-        order = order[len(answers) % max(1, len(answers)):] + order[:len(answers) % max(1, len(answers))]
+        order = _blind_order(len(answers), question)
         blocks = []
         for disp, real in enumerate(order, start=1):
             blocks.append(f"--- Answer {disp} ---\n{answers[real].text}")
@@ -341,8 +353,7 @@ class Judge:
         its (item, output) pairs. One blind call scores instruction-compliance per node
         0–10 (anonymized as Worker N). Returns {"scores": {worker_id: float}}.
         """
-        order = list(range(len(answers)))
-        order = order[len(answers) % max(1, len(answers)):] + order[:len(answers) % max(1, len(answers))]
+        order = _blind_order(len(answers), instruction)
         blocks = []
         for disp, real in enumerate(order, start=1):
             sample = answers[real].get("sample") or []

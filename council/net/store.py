@@ -209,7 +209,13 @@ class Store:
         if verdict not in ("council", "single", "tie"):
             return False
         with self.lock:
-            if not self.conn.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,)).fetchone():
+            row = self.conn.execute("SELECT asker FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if not row:
+                return False
+            # Only the job's ASKER may vote on its council-vs-single outcome. This is the project's
+            # headline demand metric, so it must not be ballot-stuffable (or re-votable) by any other
+            # signed-in handle — mirror rate_assisted's asker-only rule (review).
+            if not who or who != row["asker"]:
                 return False
             self.conn.execute(
                 "INSERT INTO feedback(job_id, verdict, who, created) VALUES(?,?,?,?) "
@@ -882,7 +888,12 @@ class Store:
                             "status": a["status"], "status_label": label.get(a["status"], a["status"]),
                             "score": a["score"], "text": res.get("text", ""),
                             "tokens": res.get("tokens"), "elapsed_s": res.get("elapsed_s"),
-                            "digest": res.get("_digest"),   # tamper-evidence (FEDERATION_V2)
+                            # COORDINATOR-computed content hash of this result. It detects later
+                            # alteration of the STORED answer; it is NOT a node signature and does
+                            # NOT prove authorship (council answers are unsigned — verification is
+                            # by quality, D5/D10). The real cryptographic guarantee is the operator
+                            # Ed25519 signature on `assisted` deliverables (D23, the `sig` field).
+                            "digest": res.get("_digest"),
                             "is_baseline": False})
             baseline = json.loads(job["baseline"]) if job["baseline"] else None
             done = [x for x in ans if x["status"] == "done" and x["score"] is not None]

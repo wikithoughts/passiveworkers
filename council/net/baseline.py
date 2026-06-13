@@ -56,7 +56,13 @@ def _via_api(question: str) -> Optional[dict]:
         timeout=120,
     )
     r.raise_for_status()
-    text = (r.json()["choices"][0]["message"]["content"] or "").strip()
+    data = r.json()
+    try:
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError) as e:
+        # A provider error/rate-limit body has no choices[] — surface WHY (the outer handler logs
+        # it) instead of letting a raw KeyError masquerade as a plain "no baseline" (review).
+        raise RuntimeError(f"unexpected baseline API response shape: {str(data)[:200]}") from e
     if not text:
         return None
     return {"text": text, "model": CONFIG.baseline_model, "source": "api",

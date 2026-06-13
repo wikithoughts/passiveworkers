@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "passiveworkers"
 version = "0.1.0"
-description = "Local-first deep research: your models, your connection, your disk. Multiple local LLMs research the live web as independent analysts; a blind editor compiles a cited report."
+description = "Make your computer work for you and others: a local-first compute network where machines do typed jobs for each other. Flagship task — deep research: local LLMs research the live web as independent analysts and a blind editor compiles one cited report."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-keywords = ["deep-research", "ollama", "local-first", "llm", "rag", "privacy", "mcp"]
+keywords = ["deep-research", "ollama", "local-first", "llm", "rag", "privacy", "mcp", "distributed", "federation", "compute-network", "marketplace"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

@@ -2,8 +2,9 @@
 """
 council/mcp_server.py — Passive Workers as an MCP tool (D19)
 ============================================================
-Exposes the local research engine over the Model Context Protocol (stdio), so your OWN
-agentic AI — Claude Desktop, Codex, any MCP client — can call it as a tool. This is the
+Exposes Passive Workers' flagship task — local deep research — over the Model Context Protocol
+(stdio), so your OWN agentic AI — Claude Desktop, Codex, any MCP client — can call it as a tool
+(more task types will follow as the network grows). This is the
 project's interop play and the founder's worldview made real: the human's assistant
 orchestrates; our multi-model, live-web + private-library research engine is the capability
 it reaches for. Everything still runs locally; nothing leaves the machine but web searches.

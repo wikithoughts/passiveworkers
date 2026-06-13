@@ -1,9 +1,12 @@
-# Passive Workers — local-first deep research
+# Passive Workers — make your computer work for you, and for others
 
-**Your models. Your connection. Your disk.** One command turns any computer with
-[Ollama](https://ollama.com) into a deep-research engine: multiple local models research the
-**live web** as independent analysts, and a blind editor compiles one **cited markdown report**
-into `./reports/`.
+**Your models. Your connection. Your disk.** Passive Workers turns any computer with
+[Ollama](https://ollama.com) into a worker that does real jobs locally — for *you* today, and
+(opt-in) for *other people's computers* tomorrow. The flagship job, working now, is **deep
+research**: multiple local models research the **live web** as independent analysts, and a blind
+editor compiles one **cited markdown report** into `./reports/`. That's the single-player half. The
+other half is a **network where computers do work for each other** — research is just the first
+task type ([see "The network", below](#the-network--computers-doing-real-work-for-each-other)).
 
 ```bash
 pip install 'passiveworkers[all]'   # core + extraction + private-docs + MCP
@@ -83,8 +86,13 @@ docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
   steps (`PW_OLLAMA_KEEP_ALIVE`, default `30m`; set `0` to unload immediately) so there are no
   reload stalls mid-run.
 - **Free forever.** It's your hardware.
+- **Made to share (opt-in).** Idle compute is wasted compute. The same engine is built to be a
+  **network where computers do bounded jobs for each other** — yours for you, and (only if you
+  switch it on) yours for others. A commons of machines, not a data-harvesting cloud: you always
+  see and consent to what your machine does, and it returns work it produced — never proxied
+  traffic. Deep research is the first task type; more are on the roadmap. See *The network*, below.
 
-## Honesty section (when NOT to use this)
+## Honesty section (when the research task is NOT the right tool)
 
 A frontier chatbot is better when the answer lives in stable knowledge — math, code,
 explanations, anything where being current doesn't matter. We measured this bluntly: local
@@ -165,13 +173,18 @@ one that spills).
 Page evidence uses [trafilatura](https://github.com/adbar/trafilatura) for clean main-content
 extraction (with a regex fallback); full credits in [docs/PRIOR_ART.md](docs/PRIOR_ART.md).
 
-## Federation (experimental) — the multiplayer mode
+## The network — computers doing real work for each other
 
-Everything above runs on one machine. The same repo contains the network layer
-(`council/net/`): connect machines in **different countries** and reports gain genuinely
-different windows on the web — each node researches from its own egress and returns its **own
-cited findings** (never proxied traffic), an editor merges with per-country sections, and a
-non-tradeable mutual-aid credit accounts for who helped whom. It already powers a live
+This is the other half of Passive Workers — and the reason for the name. Everything above runs on
+one machine; the same repo contains the network layer (`council/net/`) where machines do **typed
+jobs** for one another. It's the **next track** — working but still maturing (it already powers a
+live two-country deployment), not a toy and not a separate product. The vision: send a job, the
+network **splits it across available computers**, each does its chunk locally, the parts are
+**reassembled and delivered back**, with progress reporting and failover so load can move between
+machines — research is simply the first job type. Connect machines in **different countries** and
+reports gain genuinely different windows on the web — each node researches from its own egress and
+returns its **own cited findings** (never proxied traffic), an editor merges with per-country
+sections, and a non-tradeable mutual-aid credit accounts for who helped whom. It already powers a live
 two-country deployment, plus typed marketplace jobs (deep research, sharded batch work with
 capability matching, and **assisted** human-in-the-loop tasks — `pw tasks` / `pw accept` /
 `pw deliver`: an operator consents to a bounded brief and does it with their own AI or by hand,
@@ -197,7 +210,7 @@ other — **no token, no secondary market, money only ever at the edges.** See
 | [docs/CONTEXT.md](docs/CONTEXT.md) | The why, the history, the layered vision. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones + pivots (living tracker). |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Roles, local vs networked shape, trust/security. |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Settled decisions + rationale (ADR-style, D1–D16). |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Settled decisions + rationale (ADR-style, the full log). |
 | [docs/ECONOMICS.md](docs/ECONOMICS.md) | Credit, give/take, score-weighted payouts, legal posture. |
 | [docs/TRIAL_RESULTS.md](docs/TRIAL_RESULTS.md) | Our blind trial vs a frontier model — losses included. |
 | [docs/GLOSSARY.md](docs/GLOSSARY.md) | Terms (Council, analyst, judge, lens, credit…). |
@@ -206,6 +219,7 @@ other — **no token, no secondary market, money only ever at the edges.** See
 
 ## Status
 
-Young software, honestly labeled: the single-player engine works and is verified end-to-end;
-the federation layer is experimental. We publish our methodology and our losses, not just wins.
+Young software, honestly labeled: the single-player engine (the flagship research task) works and
+is verified end-to-end; the network layer is the maturing next track. We publish our methodology
+and our losses, not just wins.
 Issues and PRs welcome. MIT.

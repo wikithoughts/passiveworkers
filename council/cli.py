@@ -2,15 +2,20 @@
 """
 council/cli.py — the `pw` command
 ==================================
+Make your computer work for you (and, opt-in, for others). Research is the flagship task.
+
+  Single-player — run jobs on your own machine:
     pw research "your brief" [--quick|--deep] [--editor api] [--analysts N] [--local|--web]
     pw serve                       # local research desk at http://127.0.0.1:8770
     pw library add <path|dir>      # index your own documents (private, local RAG)
     pw library list|remove|clear
     pw mcp                         # run as an MCP server (Claude Desktop, Codex, …)
-    pw tasks                       # list open assisted offers you can do (federation)
+
+  The network — do work for / with other computers (opt-in):
+    pw tasks                       # list open offers your machine can take on
     pw accept <id> | deliver <id> <text|@file>
     pw fetch <job> <dir>           # download + verify a delivered file (asker)
-    pw rate <job> <0-10>           # rate an assisted deliverable → operator reputation (asker)
+    pw rate <job> <0-10>           # rate a deliverable → operator reputation (asker)
     pw fingerprint                 # print your signing key + fingerprint to share (operator)
     pw trust add <op> <key> | list | remove <op>   # pin operator keys out of band (asker)
 """

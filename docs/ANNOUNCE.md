@@ -1,8 +1,10 @@
 # Announcement drafts (ready to post — maintainer posts these)
 
 These are drafts for you to publish when you choose. Nothing here has been posted. Adjust the
-voice, fill the bracketed links, and ship. Lead with the single-player product (the adoption
-engine); the federation is the P.S.
+voice, fill the bracketed links, and ship. Lead with the single-player product (it's the adoption
+engine — what brings people in), but frame it as the **flagship task of a bigger idea**: make your
+computer work for you and others — a network where computers do real work for each other. The
+network is the other half of the project, not a throwaway P.S.
 
 ---
 
@@ -40,9 +42,11 @@ pw research "your question"
 
 Repo: [github.com/wikithoughts/passiveworkers](https://github.com/wikithoughts/passiveworkers)
 
-P.S. — there's an opt-in **federation**: contribute your computer's idle time to do owned research
-work and earn non-transferable credit (no token, no proxying anyone's traffic — your machine does
-the work and returns what it produced). Early access; see docs/CONTRIBUTE_COMPUTE.md.
+The other half — the **network**: this is *why it's called Passive Workers*. Opt in and your
+computer does owned jobs for other people's computers (and theirs for yours), earning
+non-transferable credit — no token, no proxying anyone's traffic; your machine does the work and
+returns what it produced. Research is the first job type; the network is built to split a job
+across machines and reassemble it. Early access; see docs/CONTRIBUTE_COMPUTE.md.
 
 ---
 
