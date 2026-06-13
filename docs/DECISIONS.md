@@ -859,3 +859,46 @@ returned 5 findings, **4 confirmed**, all fixed before commit:
 Lesson: the dangerous inputs in a scheduler are the ones that *look valid* — `inf` passes `> 0`, and a
 "progress" signal can be weaponized both ways (to dodge failover, or to spam) unless it must represent
 *real forward motion*. The conservation invariant held throughout (reassignment is pre-settle).
+
+## D33 — Task-type dispatch registry + the download-extract & code-generation types (D32 Phase-2)
+**Decision:** Make "research is just one task type" structurally true, and add the two task types the
+founder named. A single **`TASK_BEHAVIORS` registry** (`council/net/config.py`) is now the source of
+truth for how each job type is orchestrated — `TaskBehavior(executor, sharded, fetch, judge, assemble,
+framing)` — replacing the ~5 scattered `if job_type == "shard_map"/"research_report"` conditionals
+(coordinator split/assemble/judge-sample in `store.py`; worker executor/judge dispatch in `agent.py`;
+the baseline-skip in `coordinator_app.py`). The refactor is **behavior-preserving** for chat /
+research_report / shard_map; unknown/None → chat (never accidental sharding); `assisted` stays its own
+human-mediated early-return lifecycle.
+Two new types, both reusing the (D32-hardened) shard scatter/gather:
+- **`download_extract`** — sharded, **forces `fetch=True`** (items are PUBLIC URLs). Each node
+  `fetch_extract`s and returns the model's **extraction**, never raw bytes — *compute-over-fetched-
+  data* (D4: the node fetches a page it could lawfully fetch alone; it is NOT a proxy). Inherits the
+  existing SSRF host guard (redirect/TOCTOU hardening is Phase-3).
+- **`code_generation`** — sharded; each node generates ONE self-contained code unit per spec. A
+  trusted per-type `framing` ("output only code; do NOT run or install anything") is prepended to the
+  sanitized instruction at the worker. **Generation only** — running/linking the code is the gated
+  track (D15/D18) and routes through `assisted`; nothing here ever executes generated code.
+Both settle via the existing in-order shard assembly (the judge `spot_check`s quality), so ledger
+conservation and input-order reassembly are unchanged.
+**Why:** D13/D16/D21 always framed the product as a typed-job marketplace with research as the
+flagship; the registry removes the architectural debt that made adding a type a 5-site edit, and the
+two types realize the founder's "tasks needing downloading" and "coding parts" inside the settled
+legal envelope (D4/D15/D18) with zero new exposure.
+**Status:** Settled & implemented. 217 tests green (7 new). No new dependency. **Still roadmap (Phase-3):**
+multi-producer file reassembly; a 2-stage pipeline/DAG (generalize `_maybe_start_judging`) so a
+code_generation batch can hand to an `assisted` integrate/build step; security hardening (rate limiting,
+SSRF redirect/TOCTOU pinning, per-operator enrollment tokens).
+
+### D33 addendum — adversarial review pass (registry + new types)
+A workflow review (3 lenses — regression / constraints / security — × adversarial verify, 6 agents)
+returned 3 findings, **2 confirmed (same root cause), fixed before commit:**
+- **(HIGH) A user-supplied `fetch=True` could turn `code_generation` (or any non-download sharded
+  type) into a fetcher.** My first cut wrote `payload["fetch"] = beh.fetch or fetch`, so the asker's
+  flag could make a code-spec batch try to `fetch_extract` each "spec" as a URL — semantic confusion
+  and a D15 violation (code_generation must never fetch). Fixed: fetch is now **type-driven, not
+  user-overridable** — added `allow_user_fetch` to the registry; `download_extract` always fetches,
+  `shard_map` honors the asker's opt-in (its original D15 behavior), `code_generation` NEVER fetches
+  regardless of input. Regression-tested across all three types × the flag.
+Lesson: a per-type capability flag must not be silently widened by a shared user input — "who decides
+whether this fetches?" is the type's contract, not the caller's. The registry made the right answer a
+one-line per-type declaration.

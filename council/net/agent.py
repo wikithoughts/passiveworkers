@@ -32,6 +32,7 @@ import time
 import requests
 
 from council.judge import Judge
+from council.net.config import task_behavior
 from council.sanitize import sanitize_brief
 from council.worker import Answer, PerspectiveWorker
 
@@ -130,11 +131,14 @@ class Agent:
         # defense-in-depth (D26): the coordinator is not fully trusted (cf. D25) — re-scrub the
         # brief/instruction here so a hostile coordinator can't slip a hidden payload into a prompt.
         question = sanitize_brief(payload.get("question", ""))
-        if payload.get("job_type") == "shard_map":
-            # D13: batch shard — apply the instruction to THIS node's slice of the items.
+        beh = task_behavior(payload.get("job_type"))   # D33: registry-driven executor dispatch
+        if beh.executor == "batch":
+            # D13/D33: batch shard — apply the instruction to THIS node's slice. A trusted per-type
+            # framing (download_extract / code_generation) is prepended AFTER sanitization.
             from council.batch import BatchWorker
             bw = BatchWorker(self.node_id, self.answer_model,
                              country=task.get("country", self.country))
+            instruction = f"{beh.framing}\n\n{question}".strip() if beh.framing else question
             # D32: report progress as items complete (throttled) so the coordinator can show a job
             # completion % and the reaper sees a live, advancing claim instead of guessing.
             last = [0.0]
@@ -145,9 +149,9 @@ class Agent:
                     last[0] = t
                     self._report_progress(task.get("task_id", ""), done, total)
 
-            return bw.process(question, payload.get("shard") or [],
+            return bw.process(instruction, payload.get("shard") or [],
                               fetch=bool(payload.get("fetch")), on_progress=_on_progress)
-        if payload.get("job_type") == "research_report" \
+        if beh.executor == "research" \
                 and os.environ.get("PW_WEB_BACKEND", "off") != "off":
             # D13: async deep-research job — this node's own multi-round, egress-localized
             # research with citations (council/researcher.py).
@@ -179,12 +183,13 @@ class Agent:
             for x in payload["answers"]
         ]
         judge = Judge(model=self.judge_model or self.answer_model)
-        if payload.get("job_type") == "shard_map":
+        beh = task_behavior(payload.get("job_type"))   # D33: registry-driven judge dispatch
+        if beh.judge == "spot_check":
             # Batch QA: spot-check sampled outputs per node; the store assembles the merged
             # deliverable from the shards itself.
             return judge.spot_check(question, payload["answers"])
         out = judge.deliberate(question, answers)   # scores + merge + council read
-        if payload.get("job_type") == "research_report":
+        if beh.judge == "compile_report":
             # Editor pass: merged becomes the full cited multi-country report.
             out["merged"] = judge.compile_report(question, payload["answers"], out)
         return out

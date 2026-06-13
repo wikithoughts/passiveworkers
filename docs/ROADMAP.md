@@ -90,6 +90,23 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R21 — TASK-TYPE REGISTRY + download-extract & code-generation (D33, 2026-06-13) — "research is one type"
+Made "research is just one task type" structurally true. A single `TASK_BEHAVIORS` registry
+(`council/net/config.py`: executor / sharded / fetch / judge / assemble / framing) replaces the ~5
+scattered `if job_type == "shard_map"/"research_report"` conditionals across store/agent/coordinator —
+behavior-preserving for chat/research_report/shard_map; unknown→chat. Two new types, both reusing the
+D32 shard scatter/gather: **download_extract** (sharded, forces fetch=True; each node fetch_extracts a
+PUBLIC URL and returns the EXTRACTION, never raw bytes — D4 compute-over-fetched-data, not a proxy) and
+**code_generation** (sharded; generates one code unit per spec; GENERATION ONLY — execution/linking
+routes through `assisted` per D15/D18, never auto-run). A trusted per-type framing is prepended to the
+sanitized instruction at the worker. Settle via the existing in-order shard assembly → conservation +
+ordering unchanged. **217 tests (+7)**: `test_tasktypes` (registry mapping, fetch-forcing, code
+assembly+order, worker framing dispatch). Review (3 lenses × verify, 6 agents) → 1 fixed: fetch is now
+**type-driven, not user-overridable** (a user `fetch=True` can't make code_generation fetch its specs).
+**Phase-3 (next):** multi-producer file reassembly; 2-stage
+pipeline/DAG (code_generation → assisted integrate/build); security hardening (rate limiting, SSRF
+redirect/TOCTOU pinning, per-operator enrollment tokens).
+
 ## R20 — DISTRIBUTED TASK ORCHESTRATION, Phase-1 (D32, 2026-06-13) — "work for you AND others"
 Reframed the product (README/pyproject/cli/MCP/ANNOUNCE/CONTRIBUTE): Passive Workers = *make your
 computer work for you and others*, a compute network where **deep research is the flagship task, not

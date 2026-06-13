@@ -76,4 +76,60 @@ JOB_TYPES: dict = {
         "pool_mult": 5.0,   # real human-mediated work; priced above automated jobs
         "deadline_s": float(os.environ.get("PW_ASSIST_MAX_RUN", "86400")),  # 24h to be claimed+done
     },
+    # D33: a batch of PUBLIC URLs split across computers; each node fetches+extracts (D4: returns the
+    # model's extraction, never raw bytes — compute-over-fetched-data, never a proxy).
+    "download_extract": {
+        "label": "Download + extract — split a list of URLs across computers",
+        "eta": "scales with URLs ÷ computers",
+        "pool_mult": 2.0,
+        "deadline_s": float(os.environ.get("PW_BATCH_MAX_RUN", "3600")),
+    },
+    # D33: generate code units from specs, split across computers. GENERATION only — running/linking
+    # the code is the gated track (D15/D18 → routes through `assisted`), never auto-executed here.
+    "code_generation": {
+        "label": "Code generation — split specs across computers (generation only)",
+        "eta": "scales with specs ÷ computers",
+        "pool_mult": 2.0,
+        "deadline_s": float(os.environ.get("PW_BATCH_MAX_RUN", "3600")),
+    },
 }
+
+
+# ---- task-type behavior registry (D33) ----------------------------------------------------------
+# One source of truth for how each job type is orchestrated, so adding a type no longer means editing
+# five scattered `if job_type == ...` sites (coordinator split/assemble/judge-sample + worker
+# executor/judge dispatch). `JOB_TYPES` above is the economics catalog; this is the behavior.
+@dataclass(frozen=True)
+class TaskBehavior:
+    executor: str = "perspective"   # which worker runs it: perspective | research | batch
+    sharded: bool = False           # items split across workers (scatter), assembled in order (gather)
+    fetch: bool = False             # ALWAYS fetch+extract each item as a PUBLIC URL (D4 compute-over-data)
+    allow_user_fetch: bool = False  # may the asker's `fetch` flag turn fetching on for this type?
+    judge: str = "deliberate"       # judge stage: deliberate | compile_report | spot_check
+    assemble: str = "merge"         # how _settle builds the deliverable: merge | shards
+    framing: str = ""               # trusted instruction prefix applied by the worker for this type
+
+
+TASK_BEHAVIORS: dict[str, TaskBehavior] = {
+    "chat": TaskBehavior(executor="perspective", judge="deliberate", assemble="merge"),
+    "research_report": TaskBehavior(executor="research", judge="compile_report", assemble="merge"),
+    # shard_map MAY fetch if the asker opts in (the original D15 fetch:true batch); the two typed
+    # batch types below are NOT user-overridable — download always fetches, code never does (review).
+    "shard_map": TaskBehavior(executor="batch", sharded=True, allow_user_fetch=True,
+                              judge="spot_check", assemble="shards"),
+    "download_extract": TaskBehavior(
+        executor="batch", sharded=True, fetch=True, judge="spot_check", assemble="shards",
+        framing=("For each SOURCE URL, read the page and extract ONLY what the task asks for. "
+                 "Return the extracted facts in your own words — never the raw page, never code to "
+                 "fetch it.")),
+    "code_generation": TaskBehavior(
+        executor="batch", sharded=True, judge="spot_check", assemble="shards",
+        framing=("You are generating code. For each SPEC, output ONE self-contained, correct code "
+                 "unit and nothing else — no prose, no explanation. Do NOT run or install anything.")),
+}
+
+
+def task_behavior(job_type: str | None) -> TaskBehavior:
+    """The orchestration behavior for a job type (unknown/None → chat). `assisted` is a separate
+    human-mediated lifecycle and never flows through this dispatch."""
+    return TASK_BEHAVIORS.get(job_type or "chat", TASK_BEHAVIORS["chat"])

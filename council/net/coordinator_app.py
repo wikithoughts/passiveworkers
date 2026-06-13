@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from council.net.app import APP_HTML
 from council.net.baseline import generate_baseline
-from council.net.config import CONFIG, JOB_TYPES
+from council.net.config import CONFIG, JOB_TYPES, task_behavior
 from council.net.dashboard import DASHBOARD_HTML
 from council.net.store import Store
 
@@ -331,9 +331,9 @@ def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
                            requires=body.requires, fetch=body.fetch, context=body.context,
                            encrypt_to=body.encrypt_to, split=body.split)
     out["balance"] = store.user_balance(handle)
-    if out.get("status") == "pending_answers" and (body.type or "chat") != "shard_map":
+    if out.get("status") == "pending_answers" and not task_behavior(body.type).sharded:
         # the honest single-model compare only makes sense for answer/report jobs —
-        # a one-shot model can't process a sharded item batch
+        # a one-shot model can't process a sharded item batch (shard_map/download_extract/code_generation)
         threading.Thread(target=_baseline_async, args=(out["job_id"], body.question),
                          daemon=True, name="pw-baseline").start()
     return out

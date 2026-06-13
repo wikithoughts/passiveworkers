@@ -33,7 +33,7 @@ import uuid
 from typing import Any, Optional
 
 from council.ledger import Account, InsufficientCredit, Ledger
-from council.net.config import CONFIG, JOB_TYPES
+from council.net.config import CONFIG, JOB_TYPES, task_behavior
 from council.sanitize import sanitize_brief
 
 _now = time.time  # server runtime (not a workflow script)
@@ -361,7 +361,7 @@ class Store:
             # merged output preserves input order (D32). Never select more workers than items, so
             # no node sits idle and the asker isn't charged for an empty shard.
             shards: dict = {}
-            if job_type == "shard_map":
+            if task_behavior(job_type).sharded:
                 clean = [str(x).strip()[:2000] for x in (items or []) if str(x).strip()][:200]
                 if not clean:
                     self.conn.execute(
@@ -410,15 +410,20 @@ class Store:
                 "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
                 " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, asker, question, "pending_answers", _now(), None, None, None, None, pool, job_type))
+            beh = task_behavior(job_type)
             for n in workers:
                 payload = {"question": question, "job_type": job_type}
-                if job_type == "shard_map":
+                if beh.sharded:
                     payload["shard"] = shards.get(n["node_id"], [])
-                    payload["fetch"] = bool(fetch)
+                    # Type drives fetching, not the asker (review): download_extract ALWAYS fetches
+                    # (beh.fetch); shard_map fetches only if the asker opted in (allow_user_fetch);
+                    # code_generation NEVER fetches — its items are specs, not URLs (D15), so a
+                    # user-supplied fetch=True can't turn it into a fetcher/proxy.
+                    payload["fetch"] = bool(beh.fetch or (fetch and beh.allow_user_fetch))
                 self.conn.execute(
                     "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
-                "owner,lens,country,model,created,score,claimed_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "owner,lens,country,model,created,score,claimed_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(uuid.uuid4()), job_id, "answer", n["node_id"], "queued",
                      json.dumps(payload), None,
                      n["node_id"], n["owner"],
@@ -822,7 +827,7 @@ class Store:
                      "model": a["model"], "lens": a["lens"], "country": a["country"],
                      # structured research contribution (findings + sources) for the editor pass
                      "research": res.get("research")}
-            if (job["type"] or "") == "shard_map":
+            if task_behavior(job["type"]).sharded:
                 # deterministic per-node sample for the judge's QA spot-check
                 rows = res.get("results") or []
                 seed = int(hashlib.sha256(f"{job_id}:{a['worker_id']}".encode()).hexdigest(), 16)
@@ -894,9 +899,10 @@ class Store:
             self.conn.commit()
             return
 
-        # shard_map: the deliverable is the ASSEMBLED shards in input order (the judge only
-        # spot-checks quality); overwrite merged with the full results array (JSON).
-        if (job["type"] or "") == "shard_map":
+        # sharded types (shard_map/download_extract/code_generation): the deliverable is the
+        # ASSEMBLED shards in input order (the judge only spot-checks quality); overwrite merged
+        # with the full results array (JSON).
+        if task_behavior(job["type"]).assemble == "shards":
             allr = []
             for a in answers:
                 res = json.loads(a["result"]) if a["result"] else {}
