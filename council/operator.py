@@ -256,6 +256,25 @@ def _asker_keys_path():
                                        str(pathlib.Path.home() / ".passiveworkers"))) / "asker_keys.json"
 
 
+def rate(job_id: str, score: str) -> int:
+    """Asker side: rate a completed assisted job (0-10) → the operator's reputation.
+    Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret)."""
+    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
+    sec = os.environ.get("PW_USER_SECRET", "")
+    if not base or not sec:
+        print("✗ set PW_COORDINATOR and PW_USER_SECRET (the asker's secret)"); return 2
+    try:
+        s = float(score)
+    except ValueError:
+        print("✗ score must be a number 0-10"); return 2
+    r = requests.post(f"{base}/jobs/{job_id}/rate", headers={"X-User-Secret": sec},
+                      data=json.dumps({"score": s}), timeout=15)
+    if not r.ok:
+        print(f"✗ {r.json().get('detail', r.text)}"); return 1
+    print(f"✓ rated — operator reputation now {r.json().get('operator_reputation')}")
+    return 0
+
+
 def keygen() -> int:
     """Asker: create/reveal your encryption PUBLIC key. Include it as `encrypt_to` when posting
     an assisted job so operators encrypt the deliverable so only you can open it."""
@@ -277,6 +296,8 @@ def main() -> int:
         return fetch(args[1], args[2])
     if args[0] == "keygen":
         return keygen()
+    if args[0] == "rate" and len(args) >= 3:
+        return rate(args[1], args[2])
     op = Operator()
     cmd, rest = args[0], args[1:]
     if cmd == "tasks":

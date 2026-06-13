@@ -229,6 +229,20 @@ def put_blob(job_id: str, blob_hash: str, request: Request, data: bytes = Body(d
     return out
 
 
+class RateBody(BaseModel):
+    score: float = Field(..., ge=0, le=10)
+
+
+@app.post("/jobs/{job_id}/rate")
+def rate_assisted(job_id: str, body: RateBody, x_user_secret: str | None = Header(default=None)):
+    """The asker rates a completed assisted deliverable (0-10) → operator reputation (D24)."""
+    handle = _user_auth(x_user_secret)
+    out = store.rate_assisted(job_id, handle, body.score)
+    if not out.get("ok"):
+        raise HTTPException(status_code=409, detail=out.get("error", "cannot rate"))
+    return out
+
+
 @app.get("/jobs/{job_id}/blob/{blob_hash}")
 def get_blob(job_id: str, blob_hash: str, x_user_secret: str | None = Header(default=None)):
     """The job's asker downloads a chunk to reassemble the deliverable (D22)."""

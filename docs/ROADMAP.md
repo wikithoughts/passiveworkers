@@ -90,6 +90,14 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R12 — OPERATOR REPUTATION (D24, 2026-06-13)
+Asker ratings for assisted work (`pw rate <job> <score>`, POST /jobs/{id}/rate) feed operator
+reputation (unified with council judge-score reputation); `requires.min_reputation` gates offers to
+proven operators while newcomers keep ungated offers (cold-start preserved); gate enforced at
+offer-listing AND accept; job_view exposes operator + reputation. FEDERATION_V2 trust signal in
+place. Next: out-of-band key trust / light PKI (closes the D23 signing limitation); web UI for the
+marketplace; PyPI publish + recruit operators.
+
 ## R11 — CRYPTOGRAPHIC DELIVERY (D23, 2026-06-13)
 Signed deliverables (Ed25519: operator signs, asker verifies) + end-to-end encrypted files (X25519
 SealedBox: asker `pw keygen` → encrypt_to → operator seals → coordinator relays ciphertext-only →

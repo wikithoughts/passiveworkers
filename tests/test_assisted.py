@@ -8,8 +8,11 @@ import pytest
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "a.db"))
-    # fresh import of config/store bound to this DB
+    monkeypatch.setenv("PW_STARTER_CREDITS", "100")   # balance asserts below assume 100
+    # fresh import of ledger/config/store bound to this env (STARTER_ALLOWANCE is read at import)
     import importlib
+    import council.ledger as led
+    importlib.reload(led)
     import council.net.config as cfg
     importlib.reload(cfg)
     import council.net.store as st

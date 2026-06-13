@@ -404,3 +404,45 @@ required. (MED) `operator.json` (a bearer node-secret) now chmod 0600; D23 prose
 the (now-real) binding. (LOW) strict base64 (`validate=True`); crypto funcs raise a clear error /
 verify() returns False when PyNaCl is absent; key files created owner-only (no TOCTOU window). 60
 tests green; large-text parity + registered-key binding verified end-to-end.
+
+## D24 — Operator reputation from asker ratings; reputation-gated offers
+**Decision:** Close the assisted quality loop — the marketplace's trust signal. After an assisted
+job is delivered, the **asker rates it 0-10** (`POST /jobs/{id}/rate`, `pw rate <job> <score>`); the
+rating feeds the operator account's `quality_sum/quality_n` — the SAME reputation signal council
+nodes earn from blind judge scores (`avg_quality`). One rating per job (idempotent: the assisted
+task's `score` stays NULL until rated). A job may set `requires.min_reputation`; offers and accept
+then admit only **proven** operators (`quality_n>0` AND `avg_quality>=min`), while newcomers keep
+taking ungated offers so cold-start isn't blocked. `job_view` exposes the claiming operator + their
+reputation + ratings count; the gate is enforced at BOTH offer-listing and accept (no bypass).
+**Why:** "Continue" — a marketplace of strangers' computers needs a way to know who does good work.
+Previously an assisted operator who delivered garbage still got paid with no signal; now bad work
+lowers reputation and good work unlocks higher-trust (gated) offers. Unifies council + assisted
+reputation on one account metric.
+**Status:** Settled & implemented. Verified end-to-end (rate → reputation; idempotent; non-asker
+blocked; min_reputation hides offers from under-rep AND unrated operators; newcomers still see
+ungated; conserved). 70 tests green.
+
+### D24 addendum — adversarial review pass (operator reputation)
+A parallel-reviewer workflow (each finding independently re-verified) surfaced four real issues;
+all fixed before commit, each with a regression test:
+- **Reputation farming (high).** Anyone could mint throwaway asker handles, give an operator a
+  fresh 50-credit starter balance's worth of nothing, and rate them 10 repeatedly to fabricate
+  reputation. Fix: a rating now moves the operator's *reputation metric* only if the rater has
+  **independent earned standing** (`lifetime_earned > 0` — they've actually helped someone, the
+  give/take principle) **and** at most **once per `(asker, operator)` pair** (new `rater_pairs`
+  table). The rating is always *recorded* on the task; this only governs whether it counts toward
+  the gate. (`test_unearned_rater_does_not_move_reputation`, `test_per_pair_rating_counts_once`.)
+- **Gate fail-open on a malformed threshold (high).** A non-numeric / NaN `min_reputation` made the
+  capability comparison throw or compare falsely, which could silently *admit* unqualified
+  operators. Fix: `_meets_reputation` **fails closed** — a non-numeric or non-finite threshold
+  admits no one; a genuinely absent gate still opens to everyone (cold-start preserved).
+  (`test_gate_fails_closed_on_bad_value`.)
+- **Malformed gate accepted at creation (medium).** A fat-fingered `min_reputation` (string, NaN,
+  out of 0–10) used to create a permanently un-takeable offer that still escrowed the asker's
+  credit. Fix: `_create_assisted` validates the threshold up front and fails the job with a clear
+  error *before* holding escrow. (`test_malformed_min_reputation_rejected_at_creation`.)
+- **Unknown node could bypass the capability gate at accept (medium).** `accept_assisted` only
+  checked `_meets` when the node was registered, so an *unregistered* node slipped past a
+  capability requirement. Fix: when an offer sets requirements, an unknown node is ineligible
+  (cannot prove capability); a no-requirement task is still acceptable by any node. (Covered by the
+  existing capability-gate + accept lifecycle tests.)

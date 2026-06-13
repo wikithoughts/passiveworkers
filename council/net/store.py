@@ -87,6 +87,10 @@ class Store:
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS blobs("
             "hash TEXT, job_id TEXT, data BLOB, created REAL, PRIMARY KEY(hash, job_id))")
+        # which (asker, operator) pairs have ALREADY moved reputation — anti-farming (D24 review):
+        # one rater can lift a given operator's gate-average at most once.
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS rater_pairs(asker TEXT, operator TEXT, PRIMARY KEY(asker, operator))")
         # migrations (ALTER TABLE on boot — re-installs must never wipe the DB)
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
         if "baseline" not in cols:   # independent single-model baseline (council/net/baseline.py)
@@ -340,10 +344,37 @@ class Store:
                     "assigned": [n["node_id"] for n in workers]}
 
     # ------------------------------------------------------------------ assisted (D21)
+    def _meets_reputation(self, owner: str, requires: Optional[dict]) -> bool:
+        """Reputation gate (D24): when an offer sets `min_reputation`, only operators whose
+        rating average meets it AND who have at least one rating qualify (newcomers take the
+        ungated offers — cold-start isn't blocked). FAIL CLOSED on a malformed threshold
+        (matches the capability gate _meets), so a fat-fingered gate never silently admits
+        unqualified operators."""
+        if not requires or "min_reputation" not in requires:
+            return True            # genuinely ungated → open to everyone (incl. newcomers)
+        try:
+            need = float(requires["min_reputation"])
+        except (TypeError, ValueError):
+            return False           # malformed gate → admit no one (fail closed)
+        if not math.isfinite(need):
+            return False
+        a = self.ledger.accounts.get(_clip(owner))
+        return bool(a and a.quality_n > 0 and a.avg_quality >= need)
+
     def _create_assisted(self, asker: str, question: str, context: str,
                          requires: Optional[dict], encrypt_to: str = "") -> dict:
         """Create an OPEN assisted offer (called under self.lock from create_job)."""
         job_id = str(uuid.uuid4())
+        # validate a reputation gate up front so a fat-fingered value surfaces to the asker
+        if requires and "min_reputation" in requires:
+            try:
+                mr = float(requires["min_reputation"])
+                bad = not math.isfinite(mr) or not (0 <= mr <= 10)
+            except (TypeError, ValueError):
+                bad = True
+            if bad:
+                return {"job_id": job_id, "status": "failed",
+                        "error": "min_reputation must be a number 0-10"}
         pool = round(CONFIG.worker_pool / CONFIG.fleet_size * JOB_TYPES["assisted"]["pool_mult"], 4)
         self.ledger.open_account(asker)
         # HOLD the reward in escrow now so it can't be spent before the operator delivers.
@@ -381,7 +412,8 @@ class Store:
             for t in self.conn.execute(
                     "SELECT * FROM tasks WHERE type='assisted' AND status='open' ORDER BY created"):
                 payload = json.loads(t["payload"]) if t["payload"] else {}
-                if not self._meets(node, payload.get("requires") or None):
+                req = payload.get("requires") or None
+                if not self._meets(node, req) or not self._meets_reputation(node["owner"], req):
                     continue
                 out.append({"task_id": t["task_id"], "job_id": t["job_id"],
                             "brief": payload.get("question", ""),
@@ -407,9 +439,15 @@ class Store:
             if job and owner == job["asker"]:
                 return {"ok": False, "error": "cannot accept your own assisted offer"}
             payload = json.loads(t["payload"]) if t["payload"] else {}
+            req = payload.get("requires") or None
             node = self.get_node(node_id)
-            if node is not None and not self._meets(dict(node), payload.get("requires") or None):
+            # Capability gate: only enforced when the offer actually sets requirements. An
+            # unregistered node can take a no-requirement task, but it can NEVER bypass a
+            # capability requirement (unknown node → cannot prove capability → ineligible).
+            if req and (node is None or not self._meets(dict(node), req)):
                 return {"ok": False, "error": "your node does not meet this offer's requirements"}
+            if not self._meets_reputation(owner, req):
+                return {"ok": False, "error": "this offer requires a higher operator reputation"}
             self.ledger.open_account(owner)   # operator must have an account to be paid
             self.conn.execute(
                 "UPDATE tasks SET status='claimed', node_id=?, owner=?, claimed_at=? WHERE task_id=?",
@@ -459,8 +497,9 @@ class Store:
                 acct.jobs_helped += 1
             receipt = {"job_id": t["job_id"], "asker_id": job["asker"], "total_cost": pool,
                        "payouts": {t["owner"]: pool}, "judge_fee": 0.0}
-            self.conn.execute("UPDATE tasks SET status='done', result=?, score=? WHERE task_id=?",
-                              (json.dumps(result), 10.0, task_id))
+            # score stays NULL — it's the asker's rating slot (set by rate_assisted, D24)
+            self.conn.execute("UPDATE tasks SET status='done', result=? WHERE task_id=?",
+                              (json.dumps(result), task_id))
             self.conn.execute("UPDATE jobs SET status='done', merged=?, receipt=? WHERE job_id=?",
                               (deliverable, json.dumps(receipt), t["job_id"]))
             self._save_ledger(); self.conn.commit()
@@ -521,6 +560,52 @@ class Store:
             row = self.conn.execute(
                 "SELECT node_id FROM tasks WHERE job_id=? AND type='assisted'", (job_id,)).fetchone()
             return row["node_id"] if row else None
+
+    def rate_assisted(self, job_id: str, asker: str, score: float) -> dict:
+        """The asker rates a completed assisted deliverable (0-10). Feeds the operator's
+        reputation (the same quality signal as council judge scores). One rating per job."""
+        with self.lock:
+            job = self.conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if not job or (job["type"] or "") != "assisted":
+                return {"ok": False, "error": "not an assisted job"}
+            if _clip(asker) != job["asker"]:
+                return {"ok": False, "error": "only the asker can rate this job"}
+            if job["status"] != "done":
+                return {"ok": False, "error": "job not delivered yet"}
+            t = self.conn.execute(
+                "SELECT task_id, owner, score FROM tasks WHERE job_id=? AND type='assisted' LIMIT 1",
+                (job_id,)).fetchone()
+            if not t or not t["owner"]:
+                return {"ok": False, "error": "no operator to rate"}
+            if t["score"] is not None:          # score stays NULL until rated → idempotent
+                return {"ok": False, "error": "already rated"}
+            s = self._sane_score(score)
+            self.conn.execute("UPDATE tasks SET score=? WHERE task_id=?", (s, t["task_id"]))
+            # Anti-farming (D24 review): a rating moves the operator's REPUTATION only if the
+            # rater has independent earned standing (give/take — not a throwaway starter handle),
+            # and at most once per (asker, operator) pair. The rating is always recorded above;
+            # this only governs whether it counts toward the gate metric.
+            acct = self.ledger.accounts.get(t["owner"])
+            asker_acct = self.ledger.accounts.get(_clip(asker))
+            counted = False
+            if acct and asker_acct and asker_acct.lifetime_earned > 0:
+                dup = self.conn.execute(
+                    "SELECT 1 FROM rater_pairs WHERE asker=? AND operator=?",
+                    (_clip(asker), t["owner"])).fetchone()
+                if not dup:
+                    acct.quality_sum = round(acct.quality_sum + s, 4)
+                    acct.quality_n += 1
+                    self.conn.execute("INSERT OR IGNORE INTO rater_pairs(asker,operator) VALUES(?,?)",
+                                      (_clip(asker), t["owner"]))
+                    counted = True
+            self._save_ledger(); self.conn.commit()
+            return {"ok": True, "counted_toward_reputation": counted,
+                    "operator_reputation": acct.avg_quality if acct else 0.0}
+
+    def operator_reputation(self, owner: str):
+        """(avg_quality, num_ratings) for an owner — the marketplace trust signal."""
+        a = self.ledger.accounts.get(_clip(owner))
+        return (a.avg_quality, a.quality_n) if a else (0.0, 0)
 
     def job_status(self, job_id: str) -> Optional[str]:
         with self.lock:
@@ -799,10 +884,16 @@ class Store:
             sig = signer = None
             encrypt_to = ""
             registered_sign_pub = None
+            operator = op_rep = op_ratings = None
+            rated = False
             at = self.conn.execute(
-                "SELECT result, payload, node_id FROM tasks WHERE job_id=? AND type='assisted' LIMIT 1",
-                (job_id,)).fetchone()
+                "SELECT result, payload, node_id, owner, score FROM tasks"
+                " WHERE job_id=? AND type='assisted' LIMIT 1", (job_id,)).fetchone()
             if at:
+                operator = at["owner"]
+                rated = at["score"] is not None
+                if operator:
+                    op_rep, op_ratings = self.operator_reputation(operator)
                 if at["result"]:
                     ares = json.loads(at["result"])
                     sig, signer = ares.get("signature"), ares.get("signer_pub")
@@ -830,6 +921,8 @@ class Store:
                 "baseline": baseline,
                 "signature": sig, "signer_pub": signer, "encrypt_to": encrypt_to,
                 "registered_sign_pub": registered_sign_pub,
+                "operator": operator, "operator_reputation": op_rep,
+                "operator_ratings": op_ratings, "rated": rated,
                 "answers": ans,
             }
 

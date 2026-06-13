@@ -130,7 +130,8 @@ non-tradeable mutual-aid credit accounts for who helped whom. It already powers 
 two-country deployment, plus typed marketplace jobs (deep research, sharded batch work with
 capability matching, and **assisted** human-in-the-loop tasks — `pw tasks` / `pw accept` /
 `pw deliver`: an operator consents to a bounded brief and does it with their own AI or by hand,
-never our autonomous code). Deliverables can be **real files**, moved as content-addressed,
+never our autonomous code). The asker **rates** the result (`pw rate`), building operator
+**reputation** that gates higher-trust offers — while newcomers can still take ungated work. Deliverables can be **real files**, moved as content-addressed,
 integrity-verified chunks (`pw deliver <task> @file <job>` → `pw fetch <job> <dir>`) — a
 corrupted or swapped chunk is detected, never written. With the `[crypto]` extra, deliverables are
 **signed** (the asker verifies which operator produced them) and files can be **end-to-end
