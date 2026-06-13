@@ -74,3 +74,41 @@ scaling or recruitment." Specifically:
    mistral-small:22b on capable machines) so merges have a quality anchor.
 4. **Fix observed merge defects** (leak fixed; factual-error rate needs the stronger anchor mind).
 5. Privacy/commons/sovereignty remain real differentiators the trial did not measure.
+
+---
+
+# Currency-gap run — first results (2026-06-13, R16 instrument)
+
+First real run of `scripts/eval_currency_gap.py` (D28): the local council (live web) vs `gpt-5-chat`
+(parametric, **no web**), graded 0-10 by a local `qwen2.5:14b` against references curated from the live
+web that day. **Config: `--depth quick --analysts 2`, 10 questions — so this is a quick-depth FLOOR,
+not the council's best.**
+
+```
+window         n  paired   council  frontier      gap
+static         4       4      9.75     10.00    -0.25      ← fairness control: both ~perfect ✓
+recent         4       4      3.25      2.50    +0.75      ← the moat, modestly
+breaking       2       2      0.00      0.50    -0.50 ⚠    ← both fail (n=2, noisy)
+OVERALL       10      10      5.20      5.10    +0.10
+```
+
+**What it shows (honestly):**
+- **The control validates the eval.** On static knowledge both score ~10 — the comparison is fair;
+  a council win elsewhere isn't an artifact of an easy grader.
+- **The frontier reliably whiffs on post-cutoff facts** (latest Python version: 0; latest iPhone: 0)
+  — exactly the opening the product is built for.
+- **But the council under-realizes the moat.** It edges the frontier on `recent` (+0.75) yet scores
+  low in absolute terms, and on `breaking` it produced *plausible-but-wrong* specifics: it dated the
+  EU AI Act milestone to **2027** (reference: 2026-08-02 GPAI enforcement) and the most-recent FOMC to
+  **Oct–Nov 2023** (it got the 3.50–3.75% rate right but hallucinated the meeting date). Live web
+  access is necessary but not sufficient — quick-depth retrieval surfaces stale/adjacent dates and the
+  editor doesn't pin the *freshest* figure.
+
+**Actionable (next quality round):** freshness-biased retrieval/ranking (prefer recent-dated
+sources), an editor instruction to privilege the most recent figure, and deeper depth for
+`breaking` queries. Re-run at `--deep` to see the ceiling. This is precisely the weakness the
+instrument was built to surface — and it pairs with the citation-fidelity eval (R15), which would
+flag that FOMC "Oct–Nov 2023" as misattributed.
+
+_Cost: 10 `gpt-5-chat` completions (grading was local/free) — on the order of a few cents._
+
