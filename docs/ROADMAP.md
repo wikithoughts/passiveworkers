@@ -90,6 +90,22 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R25 — PER-OPERATOR ENROLLMENT TOKENS (D37, 2026-06-14) — public-launch auth, part 2 (closes the Sybil CRITICAL)
+Closes the D36-review Sybil starter-grant CRITICAL: the **starter grant now requires an admin-minted
+enrollment token** (opt-in `PW_ENROLL`; default off = unchanged). `ledger.open_account(grant_amount=
+None→STARTER / 0→none / custom)`; store `enroll_tokens` (hashed) + `mint_enrollment`/`redeem_enrollment`
+(atomic, limited-use, kind-scoped). When on: `/admin/enroll` mints (shared PW_TOKEN = admin);
+`/nodes/register` requires a valid `X-Enroll-Token` (per-operator, replaces the shared token); `/users`
+stays open but grants **zero** without a token (sign up + earn, but no free credits → Sybil pointless).
+Closure verified: in enroll mode no `open_account` path grants a fresh identity without a token (asker
+paths need a gated `/users` signup; operator paths need a token-gated node registration). **249 tests
+(+12)**: `test_enrollment` (mint/redeem/exhaust/kind, grant-amount conservation, zero-grant Sybil
+closure, HTTP enroll flow, backward-compat off, + review-fix tests). Review (3 lenses × verify, 16
+agents) → fixed: non-finite/negative grant clamped at the ledger chokepoint + rejected at `EnrollBody`
+(would've broken conservation), and `open_account`'s DEFAULT grant is now enrollment-aware (0 when on)
+so no missed call site can mint a fresh grant. **Roadmap (Phase-3 tail, pure infra):** generic
+automated→automated multi-stage DAG; multi-producer file reassembly.
+
 ## R24 — PER-IDENTITY RATE LIMITING (D36, 2026-06-14) — public-launch auth, part 1
 A tiny in-process sliding-window `RateLimiter` (`council/net/ratelimit.py`) caps the coordinator's
 creation/mint endpoints: `/nodes/register`, **`/users`** (unauthenticated → prime ledger-inflation

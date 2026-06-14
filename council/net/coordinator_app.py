@@ -96,6 +96,12 @@ def _ratelimit(key: str, env: str, default: str) -> None:
         raise HTTPException(status_code=429, detail="rate limit exceeded — slow down")
 
 
+def _enroll_enabled() -> bool:
+    """D37: when on, the starter grant (and node registration) requires an enrollment token, so
+    Sybil identities can't mint free credits. Off by default → current open behavior is unchanged."""
+    return os.environ.get("PW_ENROLL", "0").lower() in ("1", "true", "yes")
+
+
 def _auth(token: str | None) -> None:
     if token != CONFIG.token:
         raise HTTPException(status_code=401, detail="bad or missing X-PW-Token")
@@ -157,17 +163,36 @@ class ProgressBody(BaseModel):
     total: int = Field(..., ge=1)
 
 
+class EnrollBody(BaseModel):
+    owner: str = Field(default="", max_length=80)
+    kind: str = Field(default="any", pattern="^(any|node|user)$")     # reject typo'd kinds (review)
+    # finite + non-negative: a non-finite/negative grant would corrupt ledger conservation (review)
+    grant: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    max_uses: int = Field(default=1, ge=1, le=10000)
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
 
 @app.post("/nodes/register")
-def register(body: RegisterBody, request: Request, x_pw_token: str | None = Header(default=None)):
+def register(body: RegisterBody, request: Request, x_pw_token: str | None = Header(default=None),
+             x_enroll_token: str | None = Header(default=None)):
     _ratelimit(f"reg:{_client_key(request)}", "PW_RL_REGISTER", "60")   # D36 (per client/global-behind-tunnel)
-    _auth(x_pw_token)
+    grant = None
+    if _enroll_enabled():
+        # D37: registration requires a per-operator enrollment token (the shared PW_TOKEN is now the
+        # ADMIN token, used only to mint these) — so one leaked token can't enroll for everyone, and
+        # the owner's starter grant comes from (and is bounded by) the redeemed token.
+        red = store.redeem_enrollment(x_enroll_token or "", kind="node")
+        if not red.get("ok"):
+            raise HTTPException(status_code=403, detail=red.get("error", "valid enrollment token required"))
+        grant = red.get("grant")
+    else:
+        _auth(x_pw_token)
     ip = request.client.host if request.client else ""
-    return store.register_node(body.model_dump(), ip=ip)   # {node_id, node_secret}
+    return store.register_node(body.model_dump(), ip=ip, grant_amount=grant)   # {node_id, node_secret}
 
 
 @app.post("/nodes/heartbeat")
@@ -314,13 +339,29 @@ def get_blob(job_id: str, blob_hash: str, x_user_secret: str | None = Header(def
 
 
 @app.post("/users")
-def make_user(body: UserBody, request: Request):
+def make_user(body: UserBody, request: Request, x_enroll_token: str | None = Header(default=None)):
     # unauthenticated mint → the prime flood/ledger-inflation target; bound it per client (D36)
     _ratelimit(f"usr:{_client_key(request)}", "PW_RL_USERS", "20")
-    res = store.register_user(body.handle)
+    grant = None
+    if _enroll_enabled():
+        # D37: signup stays open, but the STARTER GRANT requires a valid enrollment token — without
+        # one the account is created with ZERO credit (it can still earn), so minting many handles
+        # yields no free credits. This closes the Sybil starter-grant hole the D36 review surfaced.
+        red = store.redeem_enrollment(x_enroll_token or "", kind="user")
+        grant = red.get("grant") if red.get("ok") else 0.0
+    res = store.register_user(body.handle, grant_amount=grant)
     if res.get("error"):
         raise HTTPException(status_code=409, detail=res["error"])
     return res
+
+
+@app.post("/admin/enroll")
+def admin_enroll(body: EnrollBody, x_pw_token: str | None = Header(default=None)):
+    """Admin mints a per-operator enrollment token (D37). The shared PW_TOKEN is the ADMIN token.
+    Returns the plaintext token ONCE — hand it to the operator to register / claim their grant."""
+    _auth(x_pw_token)
+    return store.mint_enrollment(owner=body.owner, kind=body.kind,
+                                 grant=body.grant, max_uses=body.max_uses)
 
 
 @app.get("/me")

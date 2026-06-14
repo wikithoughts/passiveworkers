@@ -22,6 +22,7 @@ at the platform boundary, never as a tradeable instrument between users.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 
@@ -77,10 +78,24 @@ class Ledger:
     _job_count: int = 0
 
     # ------------------------------------------------------------------ accounts
-    def open_account(self, user_id: str) -> Account:
+    def open_account(self, user_id: str, grant_amount: float | None = None) -> Account:
+        """Open an account if new, with a starter grant. `grant_amount`:
+          • None → the DEFAULT grant, which is enrollment-aware (D37): STARTER_ALLOWANCE normally,
+            but **0 when PW_ENROLL is on** — so NO call site (create_job, _create_assisted,
+            accept_assisted, …) can mint a fresh grant without an explicit, token-authorized amount,
+            even on a ledger-desync edge. (Off → unchanged: every fresh account gets STARTER.)
+          • an explicit amount → used as-is, but sanitized to a FINITE, non-negative value (a non-
+            finite/negative grant — e.g. inf/nan from a crafted enrollment token — would corrupt
+            conservation, so it is clamped to 0). Conserved for every value (balance == grant)."""
         if user_id not in self.accounts:
-            self.accounts[user_id] = Account(user_id=user_id)
-            self._granted_total += STARTER_ALLOWANCE
+            if grant_amount is None:
+                amt = 0.0 if os.environ.get("PW_ENROLL", "0").lower() in ("1", "true", "yes") \
+                    else STARTER_ALLOWANCE
+            else:
+                f = float(grant_amount)
+                amt = f if (math.isfinite(f) and f >= 0.0) else 0.0
+            self.accounts[user_id] = Account(user_id=user_id, balance=amt)
+            self._granted_total += amt
         return self.accounts[user_id]
 
     def get(self, user_id: str) -> Account:

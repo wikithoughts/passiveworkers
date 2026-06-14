@@ -32,7 +32,7 @@ import time
 import uuid
 from typing import Any, Optional
 
-from council.ledger import Account, InsufficientCredit, Ledger
+from council.ledger import STARTER_ALLOWANCE, Account, InsufficientCredit, Ledger
 from council.net.config import CONFIG, JOB_TYPES, task_behavior
 from council.sanitize import sanitize_brief
 
@@ -97,6 +97,12 @@ class Store:
         # one rater can lift a given operator's gate-average at most once.
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS rater_pairs(asker TEXT, operator TEXT, PRIMARY KEY(asker, operator))")
+        # per-operator enrollment tokens (D37): when PW_ENROLL is on, the STARTER GRANT (and node
+        # registration) requires redeeming one of these — minted by the admin, so Sybil identities
+        # can't mint free credits. `uses`/`max_uses` bound redemptions; `grant_amount` is the credit.
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS enroll_tokens(token_hash TEXT PRIMARY KEY, owner TEXT, "
+            "kind TEXT, grant_amount REAL, max_uses INTEGER, uses INTEGER, created REAL)")
         # migrations (ALTER TABLE on boot — re-installs must never wipe the DB)
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
         if "baseline" not in cols:   # independent single-model baseline (council/net/baseline.py)
@@ -144,13 +150,56 @@ class Store:
             (json.dumps(d),),
         )
 
+    # ------------------------------------------------------------------ enrollment tokens (D37)
+    def mint_enrollment(self, owner: str = "", kind: str = "any",
+                        grant: float | None = None, max_uses: int = 1) -> dict:
+        """Admin-only: mint an enrollment token. Returns the plaintext ONCE (only its hash is
+        stored). `kind` ∈ any|node|user; `grant` is the starter credit a redemption confers
+        (default STARTER_ALLOWANCE); `max_uses` bounds redemptions."""
+        kind = kind if kind in ("any", "node", "user") else "any"
+        if grant is None:
+            amount = STARTER_ALLOWANCE
+        else:                                  # never store a non-finite/negative grant (review)
+            f = float(grant)
+            amount = f if (math.isfinite(f) and f >= 0.0) else 0.0
+        max_uses = max(1, int(max_uses))
+        token = _secrets.token_urlsafe(24)
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO enroll_tokens VALUES(?,?,?,?,?,?,?)",
+                (_hash(token), _clip(owner), kind, amount, max_uses, 0, _now()))
+            self.conn.commit()
+        return {"enroll_token": token, "owner": owner, "kind": kind,
+                "grant": amount, "max_uses": max_uses}
+
+    def redeem_enrollment(self, token: str, kind: str = "any") -> dict:
+        """Consume one use of an enrollment token (atomic). Returns {ok, owner, grant} on success,
+        else {ok:False, error}. Validates existence, remaining uses, and kind match."""
+        if not token:
+            return {"ok": False, "error": "missing enrollment token"}
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT * FROM enroll_tokens WHERE token_hash=?", (_hash(token),)).fetchone()
+            if not row:
+                return {"ok": False, "error": "invalid enrollment token"}
+            if (row["uses"] or 0) >= (row["max_uses"] or 1):
+                return {"ok": False, "error": "enrollment token exhausted"}
+            if row["kind"] not in ("any", kind):
+                return {"ok": False, "error": f"enrollment token is for '{row['kind']}', not '{kind}'"}
+            self.conn.execute("UPDATE enroll_tokens SET uses=uses+1 WHERE token_hash=?",
+                              (_hash(token),))
+            self.conn.commit()
+            return {"ok": True, "owner": row["owner"], "grant": row["grant_amount"]}
+
     # ------------------------------------------------------------------ nodes
-    def register_node(self, body: dict, ip: str = "") -> dict:
-        """Returns {node_id, node_secret}. The secret is shown ONCE; only its hash is stored."""
+    def register_node(self, body: dict, ip: str = "", grant_amount: float | None = None) -> dict:
+        """Returns {node_id, node_secret}. The secret is shown ONCE; only its hash is stored.
+        `grant_amount` (D37): the owner's starter credit — None → STARTER_ALLOWANCE (default), 0 →
+        none (enrollment-gated callers pass 0 / the token's amount)."""
         with self.lock:
             node_id = str(uuid.uuid4())
             secret = _secrets.token_urlsafe(24)
-            self.ledger.open_account(_clip(body["owner"]))
+            self.ledger.open_account(_clip(body["owner"]), grant_amount=grant_amount)
             self.conn.execute(
                 "INSERT INTO nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -195,7 +244,9 @@ class Store:
             return self.conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
 
     # ------------------------------------------------------------------ users (askers)
-    def register_user(self, handle: str) -> dict:
+    def register_user(self, handle: str, grant_amount: float | None = None) -> dict:
+        """`grant_amount` (D37): None → STARTER_ALLOWANCE (default); 0 → account with no starter
+        credit (an un-enrolled signup gets zero, so it can't be Sybil-farmed for free credits)."""
         handle = _clip(handle).strip() or "anon"
         with self.lock:
             if self.conn.execute("SELECT 1 FROM users WHERE handle=?", (handle,)).fetchone():
@@ -203,7 +254,7 @@ class Store:
             secret = _secrets.token_urlsafe(24)
             self.conn.execute("INSERT INTO users(handle, secret_hash, created) VALUES(?,?,?)",
                               (handle, _hash(secret), _now()))
-            self.ledger.open_account(handle)
+            self.ledger.open_account(handle, grant_amount=grant_amount)
             self._save_ledger()
             self.conn.commit()
             return {"handle": handle, "user_secret": secret, **self.user_balance(handle)}

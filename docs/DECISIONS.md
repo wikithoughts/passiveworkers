@@ -1035,3 +1035,50 @@ window math has no off-by-one, and the high-frequency polling paths are correctl
   and `register()` already backs off on any HTTP error, so this is moot for the current scope; noted.
 Lesson: rate limiting bounds the *rate* of an abuse but cannot fix an *economic* hole (free credits
 per identity) — that needs identity gating; the two are complementary, not substitutes.
+
+## D37 — Per-operator enrollment tokens: gate the starter grant (D32 Phase-3, public-launch auth part 2)
+**Decision:** Close the Sybil starter-grant CRITICAL the D36 review surfaced (each new owner/handle got
+free credits) by making the **starter grant require an admin-minted enrollment token** — the identity
+gate that rate limiting (D36) could only *slow*. Opt-in via `PW_ENROLL` (default off → unchanged).
+- `ledger.open_account(user_id, grant_amount=None)` — None → `STARTER_ALLOWANCE` (default, all existing
+  callers unchanged); `0` → an account with **zero** starter credit; a custom amount honors a token's
+  grant. Conserved for every value (`balance == grant`).
+- Store primitives: an `enroll_tokens` table (hashed at rest) + `mint_enrollment(owner, kind, grant,
+  max_uses)` and `redeem_enrollment(token, kind)` (atomic single/limited use under the lock; kind ∈
+  any|node|user).
+- Coordinator (`PW_ENROLL=on`): `/admin/enroll` mints (the shared `PW_TOKEN` is now the **admin**
+  token); `/nodes/register` **requires** a valid `X-Enroll-Token` (so a leaked shared token can't
+  enroll for everyone — per-operator accountability) and grants the token's amount; `/users` stays
+  **open** but grants **zero** without a valid token (so minting handles yields no free credits, while
+  anyone can still sign up and *earn*).
+**Why:** identity-creation can stay open; *free credit* cannot. This makes Sybil farming pointless
+(no token → no grant) and isolates operator registration, the two things the review flagged — while
+preserving the give/take bootstrap for invited operators and keeping signup frictionless. With D36's
+rate limits, the network is now safe to open beyond invite-only.
+**Closure check:** in enroll mode no `open_account` path mints a grant for a fresh identity without a
+token — the asker paths (`create_job`, `_create_assisted`) require a prior gated `/users` signup
+(`_user_auth`), and the operator paths (`accept_assisted`, `deliver`) require a token-gated node
+registration (`_node_auth`), so those accounts already exist (their `open_account` is a no-op).
+**Status:** Settled & implemented. 249 tests green (12 new). No new dependency. **Roadmap (Phase-3
+tail, pure infra):** generic automated→automated multi-stage DAG; multi-producer file reassembly.
+
+### D37 addendum — adversarial review pass (enrollment)
+A workflow review (3 lenses — sybil-closure / token-auth / conservation-compat — × adversarial verify,
+16 agents) returned 13 findings, **8 confirmed**, all fixed/handled:
+- **(CRITICAL ×3, same root) Non-finite grant corrupts the ledger.** `max(0.0, float(grant))` passes
+  `inf` (`max(0.0, inf) == inf`), so a crafted enrollment token / `/admin/enroll {grant: inf}` could
+  set `balance = _granted_total = inf` and break conservation forever. Fixed at the chokepoint:
+  `open_account` (and `mint_enrollment`) now clamp a non-finite/negative grant to 0, and
+  `EnrollBody.grant` is `Field(ge=0, allow_inf_nan=False)` (clean 422 at the boundary).
+- **(HIGH) A residual default-grant path (finding via `create_job`/`_create_assisted`/`accept_assisted`).**
+  The verifier confirmed the *normal* path is safe (those accounts already exist from the gated
+  signup/registration, so `open_account` no-ops) — the only residual was a ledger-desync edge. Fixed
+  robustly by making `open_account`'s **default (None) grant enrollment-aware**: when `PW_ENROLL` is
+  on, the default is **0**, so *no* call site can mint a fresh starter grant without an explicit,
+  token-authorized amount — even on a desync. (Off → unchanged: this is also why a per-call-site
+  `grant=0` would have broken off-mode backward compat, which the chokepoint approach avoids.)
+- **(MED/LOW) Negative grant silently clamped; `kind` typo silently widened to 'any'.** Now rejected
+  at `EnrollBody` (422) — `grant ge=0`, `kind` `pattern=^(any|node|user)$`.
+Lesson: a money-amount entering the ledger needs finitude+sign validation at the chokepoint (not just
+the API), and an "enrollment-gated grant" is only airtight if the *default* grant is gated too — one
+missed `open_account(None)` reopens the hole, so gate the default, not each call site.
