@@ -49,29 +49,41 @@ ordinary, defensible work — and it is the single most important design rule of
 
 ## Join a coordinator
 
-You'll receive two things from the maintainer: a **coordinator URL** and a **token**.
+You'll receive two things from the maintainer: a **coordinator URL** and an **enrollment token**.
+Then it's **one command**:
 
 ```bash
-# 1. Install (Python 3.12+ and a local Ollama with at least one model)
+# 1. Install (Python 3.10+ and a local Ollama with at least one model)
 pip install passiveworkers          # or: pip install -e '.[all]' from a clone
 ollama pull qwen2.5:14b             # any chat model works; bigger = better answers
 
-# 2. Point the agent at the coordinator and start it
-export PW_COORDINATOR="https://<coordinator-url>"
-export PW_TOKEN="<your-token>"
-export PW_OWNER="<the account that earns your credit>"
-export PW_ANSWER_MODEL="qwen2.5:14b"      # the model you contribute
-export PW_COUNTRY="DE"                      # optional: your locale (geo-diversity is the moat)
-export PW_CAN_JUDGE=0                       # set 1 (+ PW_JUDGE_MODEL) to also judge
-export PW_WEB_BACKEND=ddgs                  # optional: enable live web research from your egress
-
-python -m council.net.agent
+# 2. Join — registers, persists your identity, and starts taking jobs
+pw join https://<coordinator-url> <enrollment-token> \
+   --owner <account-that-earns-your-credit> --model qwen2.5:14b --country DE
 ```
 
-It registers, heartbeats, and starts taking jobs. Leave it running; stop it whenever you like.
+`pw join` saves your config + node identity to `~/.passiveworkers/join.json` (owner-only `0o600`),
+so next time you just run **`pw work`** (or `pw join` with no args) to resume — no token needed.
+Optional flags: `--lens`, `--judge` (also judge others' answers), `--judge-model`, `--web off` (web
+research is on by default so your node can take research jobs). Leave it running; stop it any time
+(Ctrl-C).
 
 - **Always-on (Linux):** `scripts/install_systemd.sh` installs a systemd unit that survives reboot.
 - **Mac trial:** `scripts/mac_join.sh` opens a tunnel and runs a couple of perspectives + a judge.
+
+<details><summary>Advanced: the explicit env-var flow (what <code>pw join</code> automates)</summary>
+
+```bash
+export PW_COORDINATOR="https://<coordinator-url>"
+export PW_ENROLL_TOKEN="<enrollment-token>"   # or PW_TOKEN for a non-enrollment coordinator
+export PW_OWNER="<the account that earns your credit>"
+export PW_ANSWER_MODEL="qwen2.5:14b"
+export PW_COUNTRY="DE"                          # geo-diversity is the moat
+export PW_CAN_JUDGE=0                           # set 1 (+ PW_JUDGE_MODEL) to also judge
+export PW_WEB_BACKEND=ddgs                      # live web research from your egress
+python -m council.net.agent
+```
+</details>
 
 ## For coordinator operators: rate limits (D36)
 

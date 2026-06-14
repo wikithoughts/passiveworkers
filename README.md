@@ -2,11 +2,13 @@
 
 **Your models. Your connection. Your disk.** Passive Workers turns any computer with
 [Ollama](https://ollama.com) into a worker that does real jobs locally — for *you* today, and
-(opt-in) for *other people's computers* tomorrow. The flagship job, working now, is **deep
-research**: multiple local models research the **live web** as independent analysts, and a blind
-editor compiles one **cited markdown report** into `./reports/`. That's the single-player half. The
-other half is a **network where computers do work for each other** — research is just the first
-task type ([see "The network", below](#the-network--computers-doing-real-work-for-each-other)).
+(opt-in) for *other people's computers* tomorrow. The flagship — the part you should judge it on — is
+**deep research**: multiple local models research the **live web** as independent analysts, and a blind
+editor compiles one **cited markdown report** into `./reports/`. That's the single-player half, and
+it's the product. The other half is an **opt-in network where computers do work for each other** —
+deep research is the first task type, with batch work, extraction, and code generation on the roadmap
+([see "The network", below](#the-network--computers-doing-real-work-for-each-other); it's invite-only
+while it matures).
 
 ```bash
 pip install 'passiveworkers[all]'   # core + extraction + private-docs + MCP
@@ -173,6 +175,7 @@ python scripts/eval_currency_gap.py --run      # paid: council (free) vs frontie
 
 | Your machine | Models that fit (4-bit) | Experience |
 |---|---|---|
+| CPU-only (no GPU) | 3–4B, `PW_MODEL_CAP_GB=3` | it works, but slow (~3–6 tok/s) — fine for testing |
 | 8 GB RAM/VRAM | 3–4B (llama3.2, qwen3:4b, gemma3:4b) | quick reports, lighter analysis |
 | 16 GB | 7–14B (qwen3:14b, gemma3:12b) | the sweet spot |
 | 24 GB+ | 14–32B (+ mistral-small:22b) | best local quality |
@@ -189,8 +192,17 @@ extraction (with a regex fallback); full credits in [docs/PRIOR_ART.md](docs/PRI
 
 This is the other half of Passive Workers — and the reason for the name. Everything above runs on
 one machine; the same repo contains the network layer (`council/net/`) where machines do **typed
-jobs** for one another. It's the **next track** — working but still maturing (it already powers a
-live two-country deployment), not a toy and not a separate product. The vision: send a job, the
+jobs** for one another. It's the **next track** — working but still maturing, **invite-only** while it
+hardens (you join a coordinator with an enrollment token), not a toy and not a separate product.
+
+Contributing a machine is **one command** — it dials out only (no inbound ports), and you always see
+and consent to the work it does:
+
+```bash
+pw join https://<coordinator-url> <enrollment-token>   # joins + starts earning credit; `pw work` resumes
+```
+
+The vision: send a job, the
 network **splits it across available computers**, each does its chunk locally, the parts are
 **reassembled and delivered back**, with progress reporting and failover so load can move between
 machines — research is simply the first job type. Connect machines in **different countries** and

@@ -1,8 +1,12 @@
 # Passive Workers — Design Notes (proposed, decided *with data*)
 
+> **Historical / exploratory (pre-R28).** This is an early brainstorming snapshot from the founder's
+> product feedback, kept for context. Several ideas here have since shipped — see `docs/ROADMAP.md`
+> (R1–R30) and `docs/DECISIONS.md` (D1–D44) for the current, authoritative state. Read those first.
+
 > Ideas from the founder's product feedback, captured with honest recommendations + open
 > questions, to prioritize **after the first real trial** (the council-vs-single win-rate).
-> Nothing here is built yet. Order will be set by what the trial shows.
+> Order was set by what the trial showed.
 
 ## 1. Judge placement
 **Proposal:** make merging optional and explicit, not automatic.
