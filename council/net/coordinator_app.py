@@ -152,6 +152,7 @@ class JobBody(BaseModel):
     encrypt_to: str = Field(default="", max_length=100)  # assisted: asker box pubkey for E2E file encryption (D23)
     split: list[float] | None = Field(default=None, max_length=16)  # shard_map: explicit per-worker weights (else capacity-weighted, D32)
     then: dict | None = None        # stage chaining (D35): {question, requires?} → an assisted follow-on at completion
+    as_file: bool = False           # D38: deliver the assembled sharded output as one downloadable file
 
 
 class FeedbackBody(BaseModel):
@@ -414,7 +415,8 @@ def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,
                            requires=body.requires, fetch=body.fetch, context=body.context,
-                           encrypt_to=body.encrypt_to, split=body.split, then=body.then)
+                           encrypt_to=body.encrypt_to, split=body.split, then=body.then,
+                           as_file=body.as_file)
     out["balance"] = store.user_balance(handle)
     if out.get("status") == "pending_answers" and not task_behavior(body.type).sharded:
         # the honest single-model compare only makes sense for answer/report jobs —

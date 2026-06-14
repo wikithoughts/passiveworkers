@@ -92,6 +92,47 @@ def test_assembled_deliverable_is_in_input_order(store):
     assert store.ledger.conservation_ok()
 
 
+# ---------------------------------------------------------------- multi-producer file reassembly (D38)
+def test_as_file_delivers_one_reassemblable_signed_file(store, tmp_path):
+    from council.artifacts import read_artifact, reassemble, verify_manifest
+    _reg(store, "opA")
+    _reg(store, "opB")
+    _reg(store, "judge", answer_model="", judge=True)
+    j = store.create_job("alice", "generate code", job_type="code_generation",
+                         items=[f"spec{i}" for i in range(4)], minds=2, as_file=True)
+    jid = j["job_id"]
+    for t in _answer_tasks(store, jid):
+        shard = json.loads(t["payload"])["shard"]
+        res = {"text": "done",
+               "results": [{"i": e["i"], "item": e["item"], "output": f"code_{e['i']}"} for e in shard]}
+        store.complete_task(t["task_id"], res, node_id=t["node_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
+    store.complete_task(jt["task_id"], {"scores": {}}, node_id=jt["node_id"])
+    view = store.job_view(jid)
+    assert view["status"] == "done"
+    manifest = read_artifact(view["merged"])              # the deliverable is a file artifact, not JSON
+    assert manifest is not None and verify_manifest(manifest)
+    # the asker reassembles it from the per-job blob store, integrity-verified, in input order
+    dest = reassemble(manifest, lambda h: store.get_blob(jid, h), str(tmp_path))
+    assert dest.read_text() == "\n\n".join(f"code_{i}" for i in range(4))
+    assert store.ledger.conservation_ok()
+
+
+def test_without_as_file_deliverable_stays_json(store):
+    _reg(store, "opA")
+    _reg(store, "judge", answer_model="", judge=True)
+    j = store.create_job("alice", "do", job_type="shard_map", items=["a", "b"], minds=1)  # no as_file
+    jid = j["job_id"]
+    for t in _answer_tasks(store, jid):
+        shard = json.loads(t["payload"])["shard"]
+        store.complete_task(t["task_id"], {"results": [{"i": e["i"], "item": e["item"], "output": "x"}
+                                                       for e in shard]}, node_id=t["node_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
+    store.complete_task(jt["task_id"], {"scores": {}}, node_id=jt["node_id"])
+    from council.artifacts import read_artifact
+    assert read_artifact(store.job_view(jid)["merged"]) is None   # plain JSON, not a file artifact
+
+
 # ---------------------------------------------------------------- malformed split (review: critical)
 def test_non_finite_split_does_not_crash_falls_back_to_capacity(store):
     _reg(store, "n1", cores=4)

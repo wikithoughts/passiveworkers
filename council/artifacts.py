@@ -57,6 +57,26 @@ def manifest_root(chunk_hashes: list[str]) -> str:
     return hashlib.sha256("".join(chunk_hashes).encode()).hexdigest()
 
 
+def chunk_bytes(data: bytes, name: str) -> tuple[dict, dict[str, bytes]]:
+    """(manifest, {hash: bytes}) for an IN-MEMORY deliverable — e.g. a multi-producer deliverable
+    the coordinator reassembled from several nodes' parts (D38). Same content-addressed/Merkle
+    format as chunk_file, so the existing fetch+reassemble+verify path handles it unchanged."""
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError(f"deliverable too large ({len(data) // 1_000_000} MB > "
+                         f"{MAX_FILE_BYTES // 1_000_000} MB)")
+    blobs: dict[str, bytes] = {}
+    order: list[str] = []
+    for i in range(0, len(data), CHUNK_SIZE):
+        buf = data[i:i + CHUNK_SIZE]
+        h = _h(buf)
+        blobs[h] = buf
+        order.append(h)
+    name = pathlib.Path(str(name or "deliverable.bin")).name or "deliverable.bin"
+    manifest = {"name": name, "size": len(data), "chunk_size": CHUNK_SIZE,
+                "chunks": order, "root": manifest_root(order)}
+    return manifest, blobs
+
+
 def chunk_file(path: str) -> tuple[dict, dict[str, bytes]]:
     """(manifest, {hash: bytes}). Raises if the file is missing or over the size cap."""
     p = pathlib.Path(path).expanduser().resolve()
@@ -65,18 +85,8 @@ def chunk_file(path: str) -> tuple[dict, dict[str, bytes]]:
     size = p.stat().st_size
     if size > MAX_FILE_BYTES:
         raise ValueError(f"file too large ({size // 1_000_000} MB > {MAX_FILE_BYTES // 1_000_000} MB)")
-    blobs: dict[str, bytes] = {}
-    order: list[str] = []
-    with p.open("rb") as f:
-        while True:
-            buf = f.read(CHUNK_SIZE)
-            if not buf:
-                break
-            h = _h(buf)
-            blobs[h] = buf
-            order.append(h)
-    manifest = {"name": p.name, "size": size, "chunk_size": CHUNK_SIZE,
-                "chunks": order, "root": manifest_root(order)}
+    manifest, blobs = chunk_bytes(p.read_bytes(), p.name)
+    manifest["name"] = p.name
     return manifest, blobs
 
 

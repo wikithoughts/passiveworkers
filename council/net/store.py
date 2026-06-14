@@ -118,6 +118,8 @@ class Store:
             self.conn.execute("ALTER TABLE jobs ADD COLUMN parent TEXT")
         if "child" not in cols:      # the follow-on job this job spawned on completion
             self.conn.execute("ALTER TABLE jobs ADD COLUMN child TEXT")
+        if "as_file" not in cols:    # D38: deliver the assembled sharded output as a downloadable file
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN as_file INTEGER DEFAULT 0")
         # tasks migrations (D32 orchestration): reassignment counter + per-task progress.
         tcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(tasks)")}
         if "retries" not in tcols:   # how many times this task has been reassigned on failover
@@ -370,7 +372,8 @@ class Store:
                    job_type: str = "chat", items: Optional[list] = None,
                    requires: Optional[dict] = None, fetch: bool = False,
                    context: str = "", encrypt_to: str = "",
-                   split: Optional[list] = None, then: Optional[dict] = None) -> dict:
+                   split: Optional[list] = None, then: Optional[dict] = None,
+                   as_file: bool = False) -> dict:
         with self.lock:
             asker = _clip(asker)
             # The single networked choke point for the brief/instruction (D26): scrub invisible/bidi
@@ -474,9 +477,9 @@ class Store:
                     "requires": then.get("requires") if isinstance(then.get("requires"), dict) else None})
             self.conn.execute(
                 "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
-                "pool,type,then_spec) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "pool,type,then_spec,as_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, asker, question, "pending_answers", _now(), None, None, None, None,
-                 pool, job_type, then_spec))
+                 pool, job_type, then_spec, 1 if (as_file and task_behavior(job_type).sharded) else 0))
             beh = task_behavior(job_type)
             for n in workers:
                 payload = {"question": question, "job_type": job_type}
@@ -1026,7 +1029,25 @@ class Store:
                 allr.extend(res.get("results") or [])
             allr.sort(key=lambda r: r.get("i", 0))
             result = dict(result)
-            result["merged"] = json.dumps(allr, ensure_ascii=False)
+            if job["as_file"]:
+                # D38 multi-producer file reassembly: combine the producers' parts (in input order)
+                # into ONE document, chunk it into the per-job content-addressed blob store, and
+                # deliver a manifest the asker fetches+verifies as a single signed file (pw fetch).
+                # Runs under complete_task's lock → insert blobs directly (don't call the locked
+                # put_blob, which would re-acquire the non-reentrant lock and deadlock).
+                from council.artifacts import chunk_bytes, wrap_artifact
+                content = "\n\n".join(str(r.get("output", "")) for r in allr).encode("utf-8")
+                try:
+                    manifest, blobs = chunk_bytes(content, f"{job_id[:8]}-deliverable.txt")
+                    for h, b in blobs.items():
+                        self.conn.execute(
+                            "INSERT OR IGNORE INTO blobs(hash,job_id,data,created) VALUES(?,?,?,?)",
+                            (h, job_id, b, _now()))
+                    result["merged"] = wrap_artifact(manifest)
+                except Exception:
+                    result["merged"] = json.dumps(allr, ensure_ascii=False)   # fall back to JSON
+            else:
+                result["merged"] = json.dumps(allr, ensure_ascii=False)
 
         for task_id, owner, s, rep in per_answer:
             self.conn.execute("UPDATE tasks SET score=? WHERE task_id=?", (s, task_id))
