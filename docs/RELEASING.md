@@ -1,14 +1,17 @@
 # Releasing to PyPI
 
-## Current state — **0.1.0 PUBLISHED 2026-06-13** ✅
+## Current state — **0.1.1 PUBLISHED 2026-06-14** ✅
 
-`passiveworkers` **0.1.0 is live**: https://pypi.org/project/passiveworkers/0.1.0/ — anyone can
-`pip install passiveworkers`. Verified end-to-end (twine check PASSED, clean-venv install from PyPI
-exposes a working `pw`). Token used: 1Password item **"PyPI API for Claude"** (field `credential`),
-read into a subshell env at upload time — never written to `~/.pypirc` or any file.
+`passiveworkers` **0.1.1 is live**: https://pypi.org/project/passiveworkers/0.1.1/ — `pip install
+passiveworkers` gets the full distributed-network track (R20–R25: scheduler/failover/progress,
+download-extract + code-generation task types, fetch/upload hardening, stage chaining, rate limiting,
+per-operator enrollment tokens) on top of the 0.1.0 single-player research engine. Verified end-to-end
+(twine check PASSED, sdist secret-scanned, clean-venv install from PyPI exposes a working `pw`). Token:
+1Password item **"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time
+— never written to `~/.pypirc` or any file. (0.1.0 published 2026-06-13.)
 
-> **0.1.0 is burned.** A version number on PyPI can never be reused, even after a yank. The **next**
-> release MUST bump `version` in `pyproject.toml` (`0.1.1` for fixes, `0.2.0` for features).
+> **Published versions are burned.** A version number on PyPI can never be reused, even after a yank.
+> The **next** release MUST bump `version` in `pyproject.toml` (`0.1.2` for fixes, `0.2.0` for features).
 >
 > **Next-bump cleanup (cosmetic):** switch `pyproject.toml` to the SPDX form `license = "MIT"` (drop
 > `license = { file = "LICENSE" }`) so PyPI shows a clean `license_expression` instead of embedding
