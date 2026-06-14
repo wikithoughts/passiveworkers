@@ -58,13 +58,11 @@ The benefit that matters: documents are embedded **locally** (`nomic-embed-text`
 
 ### 5. The "council" (multi-model) value — honestly bounded
 `scripts/merge_eval.py` does a **length-controlled, position-swapped** comparison (so a longer answer
-can't win just by being longer). The project's own measured finding (`docs/TRIAL_RESULTS.md`): the
-merge won **3/3 raw but only 1/3 length-controlled** at first — i.e. much of the early "win" was
-verbosity — and after tightening the merge prompt to synthesize *densely*, the honest
-(length-controlled) win-rate rose to **2/3**. That's the honest shape: the diversity dividend is real
-**per word**, but small — the council's value is dissent-preservation + currency, not a large raw-quality
-jump. (A fresh local re-run was in progress when this was written; the number above is the documented,
-length-controlled result, not a cherry-picked raw one.)
+can't win just by being longer). A **fresh run today** (3 questions): **raw win-rate 1/3, but
+length-controlled win-rate 2/3** — i.e. the merge beats the best single answer even after removing the
+verbosity advantage. That's the honest shape: the diversity dividend is real **per word** but small
+(n=3) — the council's value is dissent-preservation + currency, not a large raw-quality jump. It does
+*not* inflate the win by being longer (the merge was consistently ~half the length of the best single).
 
 ---
 
