@@ -141,5 +141,17 @@ const assert = (c,m)=>{ if(!c){ console.error('✗ FAIL:', m); process.exit(1);}
   assert(!els['answer'].innerHTML.includes('vs a single model') && !els['answer'].innerHTML.includes('▲ Council'),
          'no compare/vote card for batch jobs');
 
+  // 8) UI-polish invariants, checked on the RAW HTML so timing can't make them flaky:
+  //    exactly ONE bare <script> (a second would make both guards extract the wrong block),
+  //    the version placeholder is present (injected server-side), the spinner ships, and the
+  //    accessibility live-regions are wired.
+  const raw = execSync(
+    `python3 -c "import council.net.app as m;import sys;sys.stdout.write(m.APP_HTML)"`,
+    { cwd: __dirname + '/..', encoding: 'utf8' });
+  assert((raw.match(/<script>/g) || []).length === 1, 'exactly one bare <script> block in APP_HTML');
+  assert(raw.includes('__PW_VERSION__'), 'version placeholder present (injected server-side)');
+  assert(raw.includes('.spin{') && js.includes('class="spin"'), 'loading spinner ships (CSS + renderLive)');
+  assert(raw.includes('aria-live'), 'aria-live regions present for screen readers');
+
   console.log('\n🎉 ALL FRONT-END FLOW CHECKS PASSED — sign-in → ask → render → vote works at runtime.');
 })();

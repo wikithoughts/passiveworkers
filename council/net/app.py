@@ -20,7 +20,7 @@ APP_HTML = r"""<!doctype html>
 <title>Passive Workers — the Council</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  :root{--bg:#0a0e1c;--panel:#0f1730;--edge:#21305e;--ink:#e6ecff;--mut:#8aa0d0;
+  :root{--bg:#0a0e1c;--panel:#0f1730;--edge:#21305e;--ink:#e6ecff;--mut:#a7b6e0;--card:#0c1430;
         --good:#36d399;--warn:#fbbd23;--bad:#f87272;--acc:#6ea8ff;}
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font:14.5px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
@@ -33,8 +33,18 @@ APP_HTML = r"""<!doctype html>
   textarea{width:100%;background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;
     padding:10px 12px;font:inherit;resize:vertical;min-height:64px}
   button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:9px 14px;color:#04122e;
-    background:var(--acc);font-weight:600} button.ghost{background:#1b2750;color:var(--ink)}
+    background:var(--acc);font-weight:600;transition:filter .12s ease,transform .02s ease}
+  button.ghost{background:#1b2750;color:var(--ink)}
+  button:hover{filter:brightness(1.08)} button:active{transform:translateY(1px)}
   button:disabled{opacity:.5;cursor:default}
+  :focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:8px}
+  .err{color:var(--bad)!important}
+  .spin{display:inline-block;width:12px;height:12px;margin-right:7px;vertical-align:-1px;
+    border:2px solid var(--edge);border-top-color:var(--acc);border-radius:50%;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media(prefers-reduced-motion:reduce){.spin,.thinking,.arc{animation:none}}
+  .pwfoot{margin-top:18px;padding-top:12px;border-top:1px solid var(--edge);color:var(--mut);font-size:11.5px}
+  .pwfoot a{color:var(--acc)}
   .row{display:flex;gap:8px;align-items:center} .between{justify-content:space-between}
   .card{background:#0c1430;border:1px solid var(--edge);border-radius:12px;padding:12px 14px;margin:12px 0}
   .persp{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #1b2750}
@@ -51,39 +61,44 @@ APP_HTML = r"""<!doctype html>
   .thinking{animation:pulse 1.15s infinite}
   @keyframes flow{to{stroke-dashoffset:-20}}
   .arc{stroke-dasharray:3 7;animation:flow .7s linear infinite}
-  @media(max-width:820px){#wrap{grid-template-columns:1fr;grid-template-rows:42vh 1fr}#map{height:42vh}}
+  @media(max-width:820px){#wrap{grid-template-columns:1fr;grid-template-rows:42vh 1fr}#map{height:42vh}
+    #panel{padding:14px 14px 36px}}
+  @media(max-width:480px){.row.between{flex-wrap:wrap;gap:8px}.row.between>.row{flex-wrap:wrap}
+    #ask{flex:1 1 100%}}
+  .batchwrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .batchwrap table{min-width:480px}
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="map"></div>
+  <div id="map" aria-label="World map of online council nodes"></div>
   <div id="panel">
-    <div class="brand"><h1>🌍 Passive&nbsp;Workers</h1><span class="me" id="me"></span></div>
+    <div class="brand"><h1><span aria-hidden="true">🌍</span> Passive&nbsp;Workers</h1><span class="me" id="me"></span></div>
     <div class="sub">A global council of diverse minds — watch them deliberate.</div>
-    <div class="sub" id="netstat" style="margin-top:-10px"></div>
+    <div class="sub" id="netstat" style="margin-top:-10px" aria-live="polite"></div>
 
     <div id="auth" class="card" style="display:none">
       <div class="row between"><b>Pick a handle to begin</b></div>
-      <div class="row" style="margin-top:8px"><input id="handle" placeholder="e.g. ahmed"
+      <div class="row" style="margin-top:8px"><input id="handle" placeholder="e.g. ahmed" aria-label="Pick a handle"
         style="flex:1;background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:9px 11px;font:inherit"/>
         <button id="signin">Start</button></div>
-      <div class="muted" id="authmsg" style="margin-top:6px;font-size:12px"></div>
+      <div class="muted err" id="authmsg" style="margin-top:6px;font-size:12px" aria-live="assertive"></div>
     </div>
 
     <div id="askbox">
-      <textarea id="q" placeholder="Ask the council anything…"></textarea>
-      <textarea id="items" placeholder="Items — one per line. Every computer gets a slice."
+      <textarea id="q" aria-label="Your question for the council" placeholder="Ask the council anything…"></textarea>
+      <textarea id="items" aria-label="Batch items, one per line" placeholder="Items — one per line. Every computer gets a slice."
         style="display:none;margin-top:6px;min-height:90px"></textarea>
       <div class="row between" style="margin-top:8px">
-        <span class="muted" id="hint">3 diverse minds will answer · costs 35 credits</span>
+        <span class="muted" id="hint" aria-live="polite">3 diverse minds will answer · costs 35 credits</span>
         <span class="row" style="gap:8px">
-          <select id="jtype" title="what kind of work"
+          <select id="jtype" title="what kind of work" aria-label="Job type"
             style="background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:inherit">
             <option value="chat" selected>💬 Ask</option>
             <option value="research_report">🔬 Deep research</option>
             <option value="shard_map">⚙️ Batch</option>
           </select>
-          <select id="minds" title="how many minds answer (cost scales)"
+          <select id="minds" title="how many minds answer (cost scales)" aria-label="How many minds answer"
             style="background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:inherit">
             <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option>
           </select>
@@ -92,8 +107,8 @@ APP_HTML = r"""<!doctype html>
       </div>
     </div>
 
-    <div id="live" style="display:none"></div>
-    <div id="answer" style="display:none"></div>
+    <div id="live" style="display:none" role="status" aria-live="polite"></div>
+    <div id="answer" style="display:none" aria-live="polite"></div>
 
     <details class="card" id="histcard" style="display:none;margin-top:14px">
       <summary class="muted">🕘 My questions</summary>
@@ -104,6 +119,7 @@ APP_HTML = r"""<!doctype html>
       <div class="muted" style="font-size:12.5px;margin-top:8px">Run a worker so your machine joins the council and earns credits for your handle:</div>
       <pre id="contribute" style="white-space:pre-wrap;background:#0a1126;border:1px solid var(--edge);border-radius:8px;padding:8px;font-size:11.5px;overflow:auto"></pre>
     </details>
+    <footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
   </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -265,7 +281,7 @@ function renderLive(v){
   const el=document.getElementById('live');el.style.display='block';
   const machines=new Set((v.answers||[]).map(a=>a.machine_key)).size;
   const research=v.type==='research_report',batch=v.type==='shard_map';
-  let h='<div class="card"><div class="row between"><b>'+
+  let h='<div class="card"><div class="row between"><b>'+(v.status!=='done'?'<span class="spin"></span>':'')+
     (research
       ? (v.status==='judging'?'Compiling your report 📝':v.status==='done'?'Report ready 📄':'Researching the live web from '+machines+' countr'+(machines===1?'y':'ies')+' 🔍')
       : batch
@@ -293,7 +309,7 @@ function renderAnswer(v){
     let rows=[];try{rows=JSON.parse(v.merged||'[]')}catch(e){}
     h='<div class="card"><h3>⚙️ Batch results · '+rows.length+' items</h3>';
     if(rows.length){
-      h+='<div style="max-height:420px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+      h+='<div class="batchwrap" style="max-height:420px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
          '<tr><th style="text-align:left;padding:4px;border-bottom:1px solid var(--edge)">item</th>'+
          '<th style="text-align:left;padding:4px;border-bottom:1px solid var(--edge)">output</th></tr>'+
          rows.map(r=>'<tr><td style="padding:4px;border-bottom:1px dashed #1b2750;vertical-align:top;max-width:38%">'+esc(String(r.item||'').slice(0,200))+'</td>'+

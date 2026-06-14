@@ -89,44 +89,59 @@ def report(name: str):
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return SERVE_HTML
+    from council import get_version
+    return SERVE_HTML.replace("__PW_VERSION__", get_version())
 
 
 SERVE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Research desk — Passive Workers</title>
 <style>
-:root{--bg:#0b1020;--ink:#e8ecff;--muted:#93a0c8;--edge:#222b4d;--card:#101736}
+:root{--bg:#0b1020;--ink:#e8ecff;--muted:#a7b6e0;--edge:#21305e;--card:#101736;--cardin:#0c1430;
+  --acc:#6ea8ff;--bad:#f87272;--btn:#2447b2;--btn-edge:#2e57d6}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,Segoe UI,Inter,sans-serif}
 .wrap{max-width:860px;margin:0 auto;padding:28px 18px}
 h1{font-size:20px;margin:0 0 2px} .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
-textarea{width:100%;box-sizing:border-box;min-height:84px;background:#0c1430;color:var(--ink);
+textarea{width:100%;box-sizing:border-box;min-height:84px;background:var(--cardin);color:var(--ink);
   border:1px solid var(--edge);border-radius:12px;padding:11px;font:inherit;resize:vertical}
-select,button{background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;
-  padding:8px 12px;font:inherit;cursor:pointer}
-button.go{background:#2447b2;border-color:#2e57d6;font-weight:600}
+select,button{background:var(--cardin);color:var(--ink);border:1px solid var(--edge);border-radius:10px;
+  padding:8px 12px;font:inherit;cursor:pointer;transition:filter .12s ease,transform .02s ease}
+button:hover,select:hover{filter:brightness(1.12)} button:active{transform:translateY(1px)}
+button:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{
+  outline:2px solid var(--acc);outline-offset:2px;border-radius:8px}
+button.go{background:var(--btn);border-color:var(--btn-edge);font-weight:600;margin-left:auto}
 .row{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .card{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:14px 16px;margin-top:16px}
 .muted{color:var(--muted)} .log div{font-size:12.5px;color:var(--muted);padding:1px 0}
+.err{color:var(--bad)}
+.spin{display:none;width:12px;height:12px;margin-right:7px;vertical-align:-1px;border:2px solid var(--edge);
+  border-top-color:var(--acc);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.spin{animation:none}}
 .report h1,.report h3{margin:14px 0 6px}.report h4{margin:10px 0 4px}
-.report a{color:#6ea8ff;word-break:break-all}
+.report a{color:var(--acc);word-break:break-all}
 .hist div{cursor:pointer;padding:6px 2px;border-top:1px dashed #1b2750}
 .hist div:hover{color:#fff}
+.pwfoot{margin-top:22px;padding-top:12px;border-top:1px solid var(--edge);color:var(--muted);font-size:11.5px}
+.pwfoot a{color:var(--acc)}
+@media(max-width:820px){.wrap{padding:20px 12px}}
+@media(max-width:480px){.row{gap:8px}.go{margin-left:0;width:100%}select{flex:1 1 auto}}
 </style></head><body><div class="wrap">
-<h1>🔬 Research desk</h1>
-<div class="sub">Your models · your connection · your disk. Nothing leaves this machine but the web searches.</div>
-<textarea id="brief" placeholder="What should be researched?"></textarea>
+<h1><span aria-hidden="true">🌍</span> Passive Workers</h1>
+<div class="sub">Research desk · your models, your connection, your disk — nothing leaves this machine but the web searches.</div>
+<textarea id="brief" aria-label="Research brief" placeholder="What should be researched?"></textarea>
 <div class="row">
-  <select id="depth"><option value="quick">quick (~2–5 min)</option>
+  <select id="depth" aria-label="Research depth"><option value="quick">quick (~2–5 min)</option>
     <option value="standard" selected>standard (~5–15 min)</option>
     <option value="deep">deep (~15–30 min)</option></select>
-  <select id="analysts"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
+  <select id="analysts" aria-label="Number of analysts"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
   <span class="muted">local models as independent analysts</span>
-  <button class="go" id="go" style="margin-left:auto">Research →</button>
+  <button class="go" id="go" aria-label="Start research">Research →</button>
 </div>
-<div class="card" id="live" style="display:none"><b id="status">working…</b><div class="log" id="log"></div></div>
+<div class="card" id="live" style="display:none" aria-live="polite"><span class="spin" id="spin" aria-hidden="true"></span><b id="status">working…</b><div class="log" id="log" role="log" aria-label="Research progress"></div></div>
 <div class="card report" id="out" style="display:none"></div>
-<div class="card hist"><b>📄 Past reports</b><div id="hist" class="muted">none yet</div></div>
+<div class="card hist"><b><span aria-hidden="true">📄</span> Past reports</b><div id="hist" class="muted">none yet</div></div>
+<footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
 <script>
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function md(t){
@@ -158,13 +173,15 @@ document.getElementById('go').onclick=async()=>{
                                    body:JSON.stringify(body)});
   const j=await r.json();
   document.getElementById('live').style.display='';document.getElementById('out').style.display='none';
-  document.getElementById('log').innerHTML='';document.getElementById('status').textContent='working…';
+  document.getElementById('log').innerHTML='';
+  const st=document.getElementById('status'),sp=document.getElementById('spin');
+  st.className='';st.textContent='working…';sp.style.display='inline-block';
   if(timer)clearInterval(timer);
   timer=setInterval(async()=>{
     const p=await (await fetch('/progress/'+j.job_id)).json();
     document.getElementById('log').innerHTML=p.log.map(l=>'<div>'+esc(l)+'</div>').join('');
-    if(p.done){clearInterval(timer);timer=null;
-      document.getElementById('status').textContent=p.error?('✗ '+p.error):'done ✓';
+    if(p.done){clearInterval(timer);timer=null;sp.style.display='none';
+      st.className=p.error?'err':'';st.textContent=p.error?('✗ '+p.error):'done ✓';
       if(p.file){openReport(p.file)}
       refreshHist();
     }

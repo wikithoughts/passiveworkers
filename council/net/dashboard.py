@@ -19,14 +19,15 @@ DASHBOARD_HTML = r"""<!doctype html>
 <title>Passive Workers — Council Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  :root{--bg:#0b1020;--panel:#121a33;--ink:#e6ecff;--mut:#8aa0d0;--good:#36d399;--warn:#fbbd23;--bad:#f87272;}
+  :root{--bg:#0b1020;--panel:#121a33;--ink:#e6ecff;--mut:#a7b6e0;--edge:#21305e;--card:#0f1730;
+    --acc:#6ea8ff;--good:#36d399;--warn:#fbbd23;--bad:#f87272;}
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
   #wrap{display:grid;grid-template-columns:1fr 360px;height:100vh}
   #map{height:100vh}
-  #side{background:var(--panel);overflow:auto;padding:16px;border-left:1px solid #21305e}
+  #side{background:var(--panel);overflow:auto;padding:16px;border-left:1px solid var(--edge)}
   h1{font-size:16px;margin:0 0 2px} .sub{color:var(--mut);font-size:12px;margin-bottom:14px}
-  .card{background:#0f1730;border:1px solid #21305e;border-radius:10px;padding:10px 12px;margin-bottom:10px}
+  .card{background:var(--card);border:1px solid var(--edge);border-radius:10px;padding:10px 12px;margin-bottom:10px}
   .row{display:flex;justify-content:space-between;gap:8px;align-items:center}
   .pill{font-size:11px;padding:2px 7px;border-radius:999px;background:#1b2750;color:var(--mut)}
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
@@ -34,6 +35,12 @@ DASHBOARD_HTML = r"""<!doctype html>
   .stat{font-size:22px;font-weight:700} .statlbl{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
   .flex{display:flex;gap:18px} .ok{color:var(--good)} .no{color:var(--bad)}
   .job{font-size:12px;border-left:3px solid #2a3a6e;padding:2px 0 2px 8px;margin:4px 0}
+  a{color:var(--acc)} :focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:8px}
+  .pwfoot{margin-top:18px;padding-top:12px;border-top:1px solid var(--edge);color:var(--mut);font-size:11.5px}
+  .pwfoot a{color:var(--acc)}
+  @media(max-width:820px){#wrap{grid-template-columns:1fr;grid-template-rows:42vh 1fr}#map{height:42vh}
+    #side{border-left:0;border-top:1px solid var(--edge)}}
+  @media(max-width:480px){#side{padding:12px}.flex{gap:12px}.stat{font-size:19px}}
   .lbtn{font-size:10px;padding:1px 7px;margin-left:4px;border-radius:999px;background:#1b2750;
     color:var(--mut);cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0}
   .lbtn.on{background:#2447b2;color:#fff}
@@ -45,11 +52,11 @@ DASHBOARD_HTML = r"""<!doctype html>
 </head>
 <body>
 <div id="wrap">
-  <div id="map"></div>
+  <div id="map" aria-label="World map of online council nodes"></div>
   <div id="side">
-    <h1>🌍 Council — live operator map</h1>
-    <div class="sub">Passive Workers · varied global intelligence · positions by country (IP-geo next)</div>
-    <div class="card"><div class="flex">
+    <h1><span aria-hidden="true">🌍</span> Passive Workers</h1>
+    <div class="sub">Live operator map · varied global intelligence · positions by geo-verified country where available</div>
+    <div class="card"><div class="flex" aria-live="polite">
       <div><div class="stat" id="nodeCount">–</div><div class="statlbl">nodes online</div></div>
       <div><div class="stat" id="credTotal">–</div><div class="statlbl">credits</div></div>
       <div><div class="stat" id="conserved">–</div><div class="statlbl">ledger</div></div>
@@ -61,7 +68,8 @@ DASHBOARD_HTML = r"""<!doctype html>
     <div id="leaders"></div>
     <h1 style="font-size:13px;margin:16px 0 6px">Recent jobs</h1>
     <div id="jobs"></div>
-    <div class="sub" id="updated" style="margin-top:12px"></div>
+    <div class="sub" id="updated" style="margin-top:12px" aria-live="polite"></div>
+    <footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
   </div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

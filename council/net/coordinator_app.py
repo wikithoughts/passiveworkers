@@ -483,12 +483,14 @@ def leaderboard(sort: str = "reputation", limit: int = 20):
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return APP_HTML
+    from council import get_version
+    return APP_HTML.replace("__PW_VERSION__", get_version())
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
-    return DASHBOARD_HTML
+    from council import get_version
+    return DASHBOARD_HTML.replace("__PW_VERSION__", get_version())
 
 
 if __name__ == "__main__":
