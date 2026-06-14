@@ -49,7 +49,7 @@ reference per question, and quick-depth council. It's a real signal, not a unive
 A real `pw research` run (quick, 2 analysts, **2.7 min, 16 sources**) produced a report that is
 **current** (June-2026-dated sources lead), **cited** (`[S#]` with real URLs + dates), and — notably —
 **preserves disagreement**: the two analysts differed on the next FOMC date and the report *says so*
-rather than faking a consensus. Full sample: [`preview/sample-report.md`](preview/sample-report.md).
+rather than faking a consensus. Full sample: [`sample-report.md`](sample-report.md).
 
 ### 4. Private-document retrieval works
 `scripts/bench_rag.py`: **recall@1 = 7/7** (both dense and hybrid BM25⊕RRF). The corpus is small and a
@@ -80,9 +80,9 @@ generated report; the marketplace council answer is an **illustrative** seeded e
 
 | Surface | Desktop | Mobile |
 |---|---|---|
-| Research desk (real report) | ![](preview/img/research-desk-desktop.png) | ![](preview/img/research-desk-mobile.png) |
-| Marketplace (council answer) | ![](preview/img/marketplace-desktop.png) | ![](preview/img/marketplace-mobile.png) |
-| Operator dashboard (geo + leaderboard) | ![](preview/img/dashboard-desktop.png) | ![](preview/img/dashboard-mobile.png) |
+| Research desk (real report) | ![](img/research-desk-desktop.png) | ![](img/research-desk-mobile.png) |
+| Marketplace (council answer) | ![](img/marketplace-desktop.png) | ![](img/marketplace-mobile.png) |
+| Operator dashboard (geo + leaderboard) | ![](img/dashboard-desktop.png) | ![](img/dashboard-mobile.png) |
 
 ## Reproduce it yourself (keyless unless noted)
 ```bash
