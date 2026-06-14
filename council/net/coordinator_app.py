@@ -213,8 +213,7 @@ def register(body: RegisterBody, request: Request, x_pw_token: str | None = Head
 @app.post("/nodes/heartbeat")
 def heartbeat(body: HeartbeatBody, x_pw_token: str | None = Header(default=None),
               x_node_secret: str | None = Header(default=None)):
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     store.heartbeat(node_id, body.load)
     return {"ok": True}
 
@@ -222,8 +221,7 @@ def heartbeat(body: HeartbeatBody, x_pw_token: str | None = Header(default=None)
 @app.get("/tasks/next")
 def next_task(x_pw_token: str | None = Header(default=None),
               x_node_secret: str | None = Header(default=None)):
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     task = store.next_task(node_id)
     if task is None:
         return Response(status_code=204)
@@ -233,8 +231,7 @@ def next_task(x_pw_token: str | None = Header(default=None),
 @app.post("/tasks/{task_id}/result")
 def task_result(task_id: str, result: dict, x_pw_token: str | None = Header(default=None),
                 x_node_secret: str | None = Header(default=None)):
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     accepted = store.complete_task(task_id, result, node_id=node_id)
     if not accepted:
         raise HTTPException(status_code=409, detail="task not yours, unknown, or already done")
@@ -246,8 +243,7 @@ def task_progress(task_id: str, body: ProgressBody, x_pw_token: str | None = Hea
                   x_node_secret: str | None = Header(default=None)):
     """A worker reports mid-flight progress on its claimed task (D32). Best-effort: a rejected
     report (not yours / already done / bad numbers) just isn't recorded — it never errors the run."""
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     _ratelimit(f"prog:{node_id}", "PW_RL_PROGRESS", "600")   # generous; legit progress is throttled client-side (D36)
     store.update_task_progress(node_id, task_id, body.done, body.total)
     return {"ok": True}
@@ -257,8 +253,7 @@ def task_progress(task_id: str, body: ProgressBody, x_pw_token: str | None = Hea
 def assisted_offers(x_pw_token: str | None = Header(default=None),
                     x_node_secret: str | None = Header(default=None)):
     """Open assisted offers this operator may consent to (D21). Returns brief + bounded context."""
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     node = store.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="unknown node")
@@ -269,8 +264,7 @@ def assisted_offers(x_pw_token: str | None = Header(default=None),
 def accept_assisted(task_id: str, x_pw_token: str | None = Header(default=None),
                     x_node_secret: str | None = Header(default=None)):
     """Operator gives informed consent to + claims an assisted offer (D21)."""
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     node = store.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="unknown node")
@@ -291,8 +285,7 @@ def deliver_assisted(task_id: str, body: DeliverBody,
                      x_pw_token: str | None = Header(default=None),
                      x_node_secret: str | None = Header(default=None)):
     """Operator returns the owned deliverable; the ledger settles (D21)."""
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     out = store.deliver_assisted(task_id, node_id, body.deliverable,
                                  signature=body.signature, signer_pub=body.signer_pub)
     if not out.get("ok"):
@@ -308,8 +301,7 @@ async def put_blob(job_id: str, blob_hash: str, request: Request,
                    x_pw_token: str | None = Header(default=None),
                    x_node_secret: str | None = Header(default=None)):
     """Operator uploads a content-addressed chunk for a job it has claimed (D22)."""
-    _auth(x_pw_token)
-    node_id = _node_auth(x_node_secret)
+    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
     if store.assisted_claimant(job_id) != node_id:
         raise HTTPException(status_code=403, detail="not the claiming operator for this job")
     # Stream the body with a HARD cap and abort early, so a chunked / no-Content-Length upload can't

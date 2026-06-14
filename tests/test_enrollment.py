@@ -129,6 +129,25 @@ def test_node_registration_requires_enrollment_token(eclient):
     assert again.status_code == 403
 
 
+def test_enrolled_node_works_with_node_secret_alone(eclient):
+    # D42 fix (found by dogfooding `pw join` on the VPS): an operator who enrolled via a token does
+    # NOT have the shared admin PW_TOKEN. Its per-node secret must be sufficient for the worker loop —
+    # otherwise heartbeat/poll/result all 401 and every job the node touches fails.
+    tok = eclient.post("/admin/enroll", json={"kind": "node", "owner": "op"},
+                       headers=ADMIN).json()["enroll_token"]
+    reg = eclient.post("/nodes/register", json={"owner": "op", "answer_model": "m"},
+                       headers={"X-Enroll-Token": tok}).json()
+    secret = reg["node_secret"]
+    nodeonly = {"X-Node-Secret": secret}                    # NO X-PW-Token — the operator never has it
+    assert eclient.post("/nodes/heartbeat", json={"load": 0.1}, headers=nodeonly).status_code == 200
+    assert eclient.get("/tasks/next", headers=nodeonly).status_code in (200, 204)
+    assert eclient.get("/tasks/offers", headers=nodeonly).status_code == 200
+    # a bad/absent secret is still rejected (auth didn't get weaker)
+    assert eclient.post("/nodes/heartbeat", json={"load": 0.1},
+                        headers={"X-Node-Secret": "nope"}).status_code == 401
+    assert eclient.post("/nodes/heartbeat", json={"load": 0.1}).status_code == 401
+
+
 def test_user_signup_open_but_grant_is_token_gated(eclient):
     no_tok = eclient.post("/users", json={"handle": "alice"}).json()
     assert no_tok["balance"] == 0                          # signs up, but ZERO free credit

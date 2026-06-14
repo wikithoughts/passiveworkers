@@ -306,7 +306,8 @@ def _save_join(state: dict) -> None:
 
 def _parse_join_args(rest: list) -> tuple[list, dict]:
     """Split `pw join` args into positionals (url, token) and flags
-    (--owner/--country/--model/--lens/--judge/--judge-model/--web)."""
+    (--owner/--country/--model/--lens/--judge|--no-judge/--judge-model/--web).
+    Judging is ON by default so a lone operator can serve a job end-to-end; --no-judge opts out."""
     pos: list = []
     flags: dict = {}
     i = 0
@@ -314,6 +315,9 @@ def _parse_join_args(rest: list) -> tuple[list, dict]:
         a = rest[i]
         if a == "--judge":
             flags["can_judge"] = True
+            i += 1
+        elif a == "--no-judge":
+            flags["can_judge"] = False
             i += 1
         elif a.startswith("--") and i + 1 < len(rest):
             flags[a[2:]] = rest[i + 1]
@@ -345,8 +349,12 @@ def join(argv: list) -> int:
     cfg["country"] = flags.get("country", cfg.get("country", "local"))
     cfg["answer_model"] = flags.get("model", cfg.get("answer_model", "gemma3:4b"))
     cfg["lens"] = flags.get("lens", cfg.get("lens", "neutral"))
-    cfg["can_judge"] = bool(flags.get("can_judge", cfg.get("can_judge", False)))
-    cfg["judge_model"] = flags.get("judge-model", cfg.get("judge_model", ""))
+    # Default judge ON: a lone contributor must be able to BOTH answer and judge, or a small
+    # deployment fails every job with "no judge node online" (found dogfooding pw join on the VPS).
+    # `--no-judge` opts out. The judge reuses the answer model unless --judge-model is given.
+    cfg["can_judge"] = bool(flags.get("can_judge", cfg.get("can_judge", True)))
+    cfg["judge_model"] = (flags.get("judge-model", cfg.get("judge_model", ""))
+                          or (cfg["answer_model"] if cfg["can_judge"] else ""))
     cfg["web_backend"] = flags.get("web", cfg.get("web_backend", "ddgs"))   # joined nodes research by default
 
     # The chosen seam: the Agent reads PW_* from os.environ (incl. PW_WEB_BACKEND in hot paths) —

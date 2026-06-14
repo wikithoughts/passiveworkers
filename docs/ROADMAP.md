@@ -90,6 +90,18 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R31 — VPS DOGFOOD: `pw join` made to actually work (D47, 2026-06-14)
+Dogfooded the real operator flow on a Hetzner VPS (fresh `pip install passiveworkers` → `pw join`) —
+the council's #1 "does onboarding survive a stranger's machine?" question. Answer: not until two real
+bugs (which the prior shared-token deployment hid) were fixed. **(1)** enrolled nodes were 401'd on
+every authenticated call because they also required the shared admin token — now the per-node secret
+authenticates on its own. **(2)** a lone operator defaulted to non-judging → every job failed "no judge
+node online" — `pw join` now defaults judge-on (`--no-judge` opts out). After the fixes the full
+answer→judge→result loop completes (verified locally with a real `done` job + a real operator on the
+leaderboard; on the loaded VPS it reached the judge stage). Also: validated `pip install` + `0600`
+`join.json` on real Ubuntu; replaced the seeded preview screenshots with **real** ones; produced
+`docs/BENEFIT.md` evidence. 303 tests green. This justifies a real 0.1.5 (founder's call — not yet published).
+
 ## R30 — ENHANCEMENT ROUND: network features + 3-surface UI polish (D42–D44, D46, 2026-06-14)
 The founder asked to ship the unreleased work, enhance the repo end-to-end, and run a council on the
 features + design + UI. Built, behind the gauntlet + adversarial review, shipped as **0.1.4**.

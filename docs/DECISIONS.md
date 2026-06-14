@@ -1293,3 +1293,35 @@ A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 
   floor to 1.
 Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
 atomic doesn't make the fallback atomic. 300 tests green.
+
+## D47 — `pw join` made to actually work end-to-end (VPS dogfood fixes, 2026-06-14)
+**Decision:** Fix the two bugs that made `pw join` + enrollment unusable, found by **dogfooding the
+real operator flow on a Hetzner VPS** (a machine we don't develop on): fresh `pip install
+passiveworkers` → `pw join`.
+- **(1) Enroll-mode auth was broken.** A node registers via an enrollment token, but EVERY subsequent
+  authenticated call (`/nodes/heartbeat`, `/tasks/next`, `/tasks/{id}/result|progress`,
+  `/tasks/offers|accept|deliver`, blob upload) ALSO required the shared admin `X-PW-Token` — which a
+  `pw join` operator deliberately never has. Result: register succeeds, then every call 401s, the node
+  can't recover, and every job it touches fails. The prior 2-node deployment hid this by using the
+  shared token directly via env (never `pw join`). **Fix:** those endpoints now authenticate on the
+  **per-node secret alone** (`_node_auth`) — the secret is minted at register (itself gated by the
+  shared token OR an enrollment token), so it is sufficient; the redundant shared-token check is
+  removed. Backward-compatible (legacy agents still send the shared token; it's just no longer
+  required). Regression test: an enrolled node works with only its `X-Node-Secret`.
+- **(2) A lone operator couldn't serve a job.** `pw join` defaulted `can_judge=False`, so a
+  single-operator deployment failed every job with **"no judge node online."** **Fix:** `pw join` now
+  defaults **judge ON** (reusing the answer model), with `--no-judge` to opt out — so one machine can
+  both answer and judge (the store already falls back to the answerer as judge when no external judge
+  exists). Tested.
+**Validation:** after the fixes the full pipeline (answer → judge → cited result) completes
+end-to-end — verified locally with a real `done` job (real answer, operator on the leaderboard with a
+real rep). On the VPS it reached the judge stage but hit the 600s deadline only because that box was at
+load ~20 from unrelated workloads — environmental, not code. `pip install` + `pw join` + `0600`
+`join.json` all confirmed on real Ubuntu.
+**Why:** `pw join` is the headline onboarding feature (D42); it had never actually worked in enrollment
+mode. The council's #1 priority was "does onboarding survive a stranger's machine" — dogfooding
+answered it: not until these two fixes. This is the strongest argument yet for cutting a real **0.1.5**
+(genuine bug-fix code, founder's call). 303 tests green.
+**Lesson:** the previous deployment used the env-var/shared-token path, so the enrollment+`pw join`
+path was never exercised end-to-end. Dogfooding the *actual* operator experience on a machine you
+don't control is the only thing that finds this class of bug — green tests didn't.

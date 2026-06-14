@@ -80,6 +80,25 @@ def test_join_first_persists_config_identity_and_seeds_env(joindir, monkeypatch)
     assert os.environ["PW_OWNER"] == "alice"
 
 
+def test_join_defaults_to_judge_on(joindir, monkeypatch):
+    # a lone operator must judge by default, else jobs fail "no judge node online" (VPS dogfood)
+    monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "n", "node_secret": "s"}))
+    monkeypatch.setattr(A.Agent, "run", lambda self: None)
+    A.join(["join", "https://hub", "tok", "--model", "qwen3:4b"])
+    e = json.loads((joindir / "join.json").read_text())["https://hub"]
+    assert e["can_judge"] is True and e["judge_model"] == "qwen3:4b"   # reuses the answer model
+    assert os.environ["PW_CAN_JUDGE"] == "1"
+
+
+def test_join_no_judge_opts_out(joindir, monkeypatch):
+    monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "n", "node_secret": "s"}))
+    monkeypatch.setattr(A.Agent, "run", lambda self: None)
+    A.join(["join", "https://hub", "tok", "--no-judge"])
+    e = json.loads((joindir / "join.json").read_text())["https://hub"]
+    assert e["can_judge"] is False and e["judge_model"] == ""
+    assert os.environ["PW_CAN_JUDGE"] == "0"
+
+
 def test_join_sends_enroll_token_header(joindir, monkeypatch):
     fake = _FakeRequests({"node_id": "nid", "node_secret": "sec"})
     monkeypatch.setattr(A, "requests", fake)

@@ -70,13 +70,26 @@ verbosity advantage. That's the honest shape: the diversity dividend is real **p
 - **Not a frontier-beater on stable knowledge** — the static tie proves it; don't use it for math/code/
   explanations where a frontier chatbot is better.
 - **Small samples** in the currency eval — directional, not a benchmark league table.
-- **The network is the maturing track.** The multi-node map, geo-verified badges, and leaderboard in
-  the screenshots below are driven by **seeded demo data** (clearly labeled) — the *single-player*
-  engine is the verified flagship; the federation is real code but early/invite-only.
+- **The network is the maturing track.** The screenshots below are a **real but small** deployment:
+  a brand-new operator joined with `pw join` and answered one real job (it even shows up on the
+  leaderboard as `mac AE`, rep 5/10). It's genuine, not seeded — but it's *one* node; the map and
+  leaderboard fill out only as real operators join (still invite-only). The single-player engine is
+  the verified flagship; the federation is real, working code that's early.
+
+## Validated by dogfooding on a real VPS (2026-06-14)
+We ran the **actual operator onboarding on a Hetzner VPS** (Ubuntu, a machine we don't develop on):
+`pip install passiveworkers` (7s) → `pw join` registered the node and wrote `~/.passiveworkers/join.json`
+**owner-only (0600)**. This surfaced — and we fixed — **two real bugs that made `pw join` unusable**:
+(1) enrolled nodes were rejected on every authenticated call because those endpoints also demanded the
+shared admin token a `pw join` operator never has (now the per-node secret authenticates on its own);
+(2) a lone operator defaulted to *not* judging, so jobs failed "no judge node online" (judging is now
+on by default). After the fixes, the full loop completes end-to-end (answer → judge → cited result) —
+verified locally with a real `done` job; on the VPS it reached the judge stage but hit the 600s deadline
+purely because that box was at load ~20 (other workloads), not a code issue.
 
 ## See it (screenshots of the real running app)
-Desktop + mobile, captured with Playwright against the live UIs. (The research desk shows a **real**
-generated report; the marketplace council answer is an **illustrative** seeded example.)
+Desktop + mobile, captured with Playwright against the live UIs — **all real** (a real generated
+report; a real answered job; a real single-node operator dashboard).
 
 | Surface | Desktop | Mobile |
 |---|---|---|
