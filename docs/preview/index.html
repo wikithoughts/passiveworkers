@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Passive Workers — preview &amp; evidence</title>
+<style>
+  :root{--bg:#0b1020;--panel:#101736;--card:#0c1430;--edge:#21305e;--ink:#e8ecff;--mut:#a7b6e0;
+    --acc:#6ea8ff;--good:#36d399;--warn:#fbbd23}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,Segoe UI,Inter,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 18px 64px}
+  h1{font-size:26px;margin:0 0 4px} h2{font-size:18px;margin:34px 0 10px;border-bottom:1px solid var(--edge);padding-bottom:6px}
+  .sub{color:var(--mut);margin:0 0 18px}
+  a{color:var(--acc)}
+  .cards{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0}
+  .stat{flex:1 1 160px;background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:14px}
+  .stat .big{font-size:24px;font-weight:700} .stat .lbl{color:var(--mut);font-size:12.5px}
+  table{border-collapse:collapse;width:100%;margin:8px 0;font-size:14px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--edge)}
+  th{color:var(--mut);font-weight:600} .pos{color:var(--good)} .tie{color:var(--mut)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:12px 0}
+  figure{margin:0;background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:10px}
+  figure img{width:100%;border-radius:8px;display:block;border:1px solid var(--edge)}
+  figcaption{color:var(--mut);font-size:12.5px;margin-top:8px}
+  .note{background:var(--panel);border:1px solid var(--edge);border-left:3px solid var(--warn);
+    border-radius:8px;padding:10px 14px;color:var(--mut);font-size:13.5px;margin:14px 0}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--edge);color:var(--mut);font-size:12.5px}
+  @media(max-width:640px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body><div class="wrap">
+  <h1>🌍 Passive Workers — preview &amp; evidence</h1>
+  <p class="sub">Private, current, cited research on your own computer — and an opt-in network of
+  computers doing that work for each other. Measured on real hardware, 2026-06-14.</p>
+
+  <div class="cards">
+    <div class="stat"><div class="big pos">+2.50 / +3.00</div><div class="lbl">council beats a frontier model (live web vs memory) on recent / breaking questions</div></div>
+    <div class="stat"><div class="big tie">+0.00</div><div class="lbl">…and ties on stable knowledge (the honest control)</div></div>
+    <div class="stat"><div class="big pos">100%</div><div class="lbl">cited claims grounded in their sources (5/5 verifiable, 86% overlap)</div></div>
+    <div class="stat"><div class="big">$0</div><div class="lbl">runs on your own models — no account, no per-query fee</div></div>
+  </div>
+
+  <h2>Does it actually beat a frontier model? Only where it claims to.</h2>
+  <p>Local council (live web) vs <code>gpt-5-chat</code> (answering from memory, no web by design),
+  scored 0–10 vs curated references — <code>scripts/eval_currency_gap.py --run</code>:</p>
+  <table>
+    <tr><th>question type</th><th>council (live web)</th><th>frontier (memory)</th><th>gap</th></tr>
+    <tr><td>static — currency irrelevant (control)</td><td>10.00</td><td>10.00</td><td class="tie">+0.00 (tie)</td></tr>
+    <tr><td>recent</td><td>5.00</td><td>2.50</td><td class="pos">+2.50</td></tr>
+    <tr><td>breaking ⚠ (n=2)</td><td>4.00</td><td>1.00</td><td class="pos">+3.00</td></tr>
+    <tr><td><b>overall</b></td><td><b>6.80</b></td><td><b>5.20</b></td><td class="pos"><b>+1.60</b></td></tr>
+  </table>
+  <div class="note">Honest read: the <b>static tie is the point</b> — a 14–22B local council does not
+  out-think a frontier model on stable knowledge. The win is <b>currency, privacy, grounding, and
+  cost</b>. Small samples (recent n=4, breaking n=2), LLM grader, one reference per question — a real
+  signal, not a league table. Full detail: <a href="BENEFIT.md">BENEFIT.md</a>.</div>
+
+  <h2>See the real app</h2>
+  <p class="sub">Screenshots of the live UI (Playwright, desktop + mobile). The research desk shows a
+  <b>real</b> generated report; the marketplace council answer is an <b>illustrative</b> seeded example;
+  the dashboard nodes/leaderboard are seeded demo data.</p>
+  <h3>Research desk — a real, cited, current report</h3>
+  <div class="grid">
+    <figure><img src="img/research-desk-desktop.png" alt="research desk desktop"/><figcaption>Desktop — live web report with [S#] citations</figcaption></figure>
+    <figure><img src="img/research-desk-mobile.png" alt="research desk mobile"/><figcaption>Mobile — responsive</figcaption></figure>
+  </div>
+  <h3>Marketplace — a global council deliberating</h3>
+  <div class="grid">
+    <figure><img src="img/marketplace-desktop.png" alt="marketplace desktop"/><figcaption>Desktop — live map, consensus &amp; disagreement preserved</figcaption></figure>
+    <figure><img src="img/marketplace-mobile.png" alt="marketplace mobile"/><figcaption>Mobile — stacked layout</figcaption></figure>
+  </div>
+  <h3>Operator dashboard — geo-verified nodes &amp; leaderboard</h3>
+  <div class="grid">
+    <figure><img src="img/dashboard-desktop.png" alt="dashboard desktop"/><figcaption>Desktop — ✓ geo-verified badges, operator leaderboard, ledger ✓ ok</figcaption></figure>
+    <figure><img src="img/dashboard-mobile.png" alt="dashboard mobile"/><figcaption>Mobile</figcaption></figure>
+  </div>
+
+  <h2>Read a real report</h2>
+  <p>The full sample (current US federal funds rate — 16 sources, dissent preserved):
+  <a href="sample-report.md">sample-report.md</a>.</p>
+
+  <footer>Passive Workers · evidence generated 2026-06-14 on local Ollama ·
+  <a href="https://github.com/wikithoughts/passiveworkers">github.com/wikithoughts/passiveworkers</a> ·
+  not a public release — a preview for review.</footer>
+</div></body>
+</html>
