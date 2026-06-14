@@ -63,6 +63,27 @@ def test_reader_failure_is_swallowed(monkeypatch):
     assert G.country_for_ip("8.8.8.8") == ""
 
 
+# ----------------------------------------------------------------- _client_ip XFF spoof-gate (D43/D36)
+class _Req:
+    def __init__(self, host, xff=None):
+        self.client = type("C", (), {"host": host})()
+        self.headers = {"x-forwarded-for": xff} if xff is not None else {}
+
+
+def test_client_ip_ignores_xff_by_default(monkeypatch):
+    import council.net.coordinator_app as capp
+    monkeypatch.delenv("PW_TRUST_XFF", raising=False)
+    # an attacker's spoofed XFF must be IGNORED → the real socket peer is used (anti-geo-spoof)
+    assert capp._client_ip(_Req("203.0.113.9", xff="8.8.8.8")) == "203.0.113.9"
+
+
+def test_client_ip_trusts_first_xff_hop_only_when_enabled(monkeypatch):
+    import council.net.coordinator_app as capp
+    monkeypatch.setenv("PW_TRUST_XFF", "1")
+    assert capp._client_ip(_Req("10.0.0.1", xff=" 8.8.8.8 , 10.0.0.1")) == "8.8.8.8"   # first hop, trimmed
+    assert capp._client_ip(_Req("10.0.0.1")) == "10.0.0.1"                              # no XFF → peer
+
+
 # ----------------------------------------------------------------- register → /status integration
 @pytest.fixture()
 def client(tmp_path, monkeypatch):

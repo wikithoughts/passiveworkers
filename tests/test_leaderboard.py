@@ -88,8 +88,13 @@ def client(tmp_path, monkeypatch):
 
 
 def test_endpoint_clamps_limit_and_defaults_bad_sort(client):
+    import council.net.coordinator_app as capp
+    for i in range(150):                                         # enough that the cap actually bites
+        capp.store.ledger.open_account(f"op{i:03d}")
+        a = capp.store.ledger.accounts[f"op{i:03d}"]
+        a.quality_sum, a.quality_n, a.jobs_helped = 9, 1, i      # all rated, so all rank
     j = client.get("/leaderboard?sort=bogus&limit=99999").json()
     assert j["sort"] == "reputation"                            # bad sort → default
-    assert len(j["operators"]) <= 100                           # limit clamped
-    j2 = client.get("/leaderboard?limit=0").json()
-    assert "operators" in j2                                    # limit floored to >=1, no crash
+    assert len(j["operators"]) == 100                          # high limit clamped to exactly 100
+    assert len(client.get("/leaderboard?limit=0").json()["operators"]) == 1     # floored to >=1
+    assert len(client.get("/leaderboard?limit=-5").json()["operators"]) == 1    # negative floored too

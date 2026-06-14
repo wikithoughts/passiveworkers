@@ -90,6 +90,29 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R30 — ENHANCEMENT ROUND: network features + 3-surface UI polish (D42–D44, D46, 2026-06-14)
+The founder asked to ship the unreleased work, enhance the repo end-to-end, and run a council on the
+features + design + UI. Built, behind the gauntlet + adversarial review, shipped as **0.1.4**.
+**Network features.** **(D42) `pw join <url> <token>` / `pw work`** — one-command operator onboarding
+(persists identity to `~/.passiveworkers/join.json` `0o600`, redeems via the existing enrollment path,
+seeds the agent's env, resumes from cache). **(D43) offline GeoIP** — verify self-reported country
+against the IP we saw, via an operator-supplied GeoLite2 `.mmdb` (`[geoip]` extra), no egress, spoof-
+resistant (`PW_TRUST_XFF`-gated), `geo_country`+`geo_mismatch` on `/status` (never the IP), default-off
+fallback; the positional `nodes` INSERT is now named-column. **(D44) operator leaderboard** — pseudonymous
+`GET /leaderboard` + dashboard card (reputation needs ≥1 rating; credits = lifetime_earned, not balance).
+**UI polish (D46).** All three surfaces (research desk, marketplace app, operator dashboard): a11y
+(aria-label/live, focus, AA contrast), mobile breakpoints, button states + spinner, unified branding +
+a version footer (injected via `council.get_version()`, never hardcoded). JS guards held (one bare
+`<script>` each; no load-bearing id renamed). **+20 backend/feature tests; UI render-verified.**
+
+## R29 — RELEASE & PACKAGING HYGIENE: ship 0.1.3, stop the drift (D45, 2026-06-14)
+`main` had drifted ahead of PyPI (R28 unreleased; only `v0.1.0` tagged; no changelog). Fixed: shipped
+**0.1.3** (the R28 robustness + USE_CASES work) with PEP 639 SPDX `license = "MIT"`, authors, 17
+classifiers, project URLs; added `CHANGELOG.md` and a `git tag` step to `RELEASING.md`; created
+retroactive `v0.1.1`/`v0.1.2` + `v0.1.3`. Principle: **ship every round** — an unreleased `main` helps
+no one, thin metadata reads as unmaintained. `twine check` PASS, sdist secret-scanned, clean-venv
+install verified, CI green.
+
 ## R28 — WORKFLOW POLISH: first-run robustness + the benefit-to-people showcase (D40/D41, 2026-06-14)
 After the distributed roadmap closed, a council audit turned to the *workflow* a real user lives in.
 **Two founder asks, both shipped.** **(D40) First-run robustness — a fix, never a traceback:** the #1

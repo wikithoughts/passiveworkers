@@ -5,6 +5,26 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [0.1.4] — 2026-06-14
+Network features + a UI/UX polish pass (R29–R30 / D42–D46).
+### Added
+- **`pw join <url> <token>` / `pw work`** — one-command operator onboarding: persists identity to
+  `~/.passiveworkers/join.json` (owner-only), redeems via the existing enrollment path, seeds the
+  agent's env, and resumes from cache. Backward-compatible with the env-var flow.
+- **Offline GeoIP verification** (`[geoip]` extra, `PW_GEOIP_DB`): verify a node's self-reported
+  country against the IP the coordinator saw — no egress, spoof-resistant (`PW_TRUST_XFF`-gated),
+  surfaced as `geo_country`/`geo_mismatch` (never the IP). Default-off → falls back to self-reported.
+- **Operator leaderboard** (`GET /leaderboard` + dashboard card): pseudonymous, ranked by
+  reputation / jobs helped / credits earned.
+### Changed
+- UI/UX polish across the research desk, marketplace app, and operator dashboard: accessibility
+  (labels, live-regions, focus), mobile responsiveness, button states + a loading spinner, a unified
+  wordmark, and a version footer (injected, not hardcoded).
+- Packaging metadata + a CHANGELOG and git tags landed in 0.1.3; this continues that hygiene.
+### Fixed
+- `pw join` config write is owner-only even on the fallback path (no world-readable window for the
+  node secret).
+
 ## [0.1.3] — 2026-06-14
 First-run robustness and a benefit-to-people showcase (R28 / D40–D41).
 ### Added
@@ -47,6 +67,7 @@ Initial public release — the single-player deep-research engine.
   (`council/net/`) with a live two-country deployment.
 - Eval instruments: SimpleQA bench, citation-fidelity, and currency-gap scripts.
 
+[0.1.4]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.4
 [0.1.3]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.3
 [0.1.2]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.1

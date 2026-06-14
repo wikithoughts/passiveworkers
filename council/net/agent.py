@@ -290,7 +290,14 @@ def _save_join(state: dict) -> None:
             f.write(blob)
         os.chmod(p, 0o600)
     except Exception:
-        p.write_text(json.dumps(state, indent=2))
+        # Fallback (platforms without os.open mode support): still avoid a world-readable window
+        # by forcing a restrictive umask around the create — write_text() alone would land 0o644
+        # before chmod, briefly exposing the node secret (review).
+        old = os.umask(0o077)
+        try:
+            p.write_text(json.dumps(state, indent=2))
+        finally:
+            os.umask(old)
         try:
             os.chmod(p, 0o600)
         except Exception:

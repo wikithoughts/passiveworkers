@@ -1196,3 +1196,100 @@ capabilities list doesn't move anyone; fifteen named people with a copy-pasteabl
 grounding each in a real-world need (privilege rulings, the AI cost barrier, GDPR/HIPAA residency,
 fabricated citations) keeps it honest rather than aspirational.
 **Status:** Settled & shipped. Every recipe cross-checked against `council/cli.py` / `local.py` flags.
+
+## D42 — One-command operator onboarding: `pw join` (R29, 2026-06-14)
+**Decision:** Collapse the ~7-env-var + `python -m council.net.agent` onboarding into **`pw join
+<coordinator-url> <enrollment-token>`** (first run) and **`pw work`** / bare `pw join` (resume).
+`council/net/agent.py` gains a `join()` that: resolves config (url/token + `--owner/--country/--model/
+--lens/--judge/--judge-model/--web`), redeems via the **existing D37 path** (token sent as
+`X-Enroll-Token` on `/nodes/register` — *no new server endpoint*), persists config + the minted
+`{node_id,node_secret}` to **`~/.passiveworkers/join.json`** (owner-only `0o600` from creation, per
+the `crypto.py` `os.open` idiom; per-coordinator keyed; `default` for bare resume), **seeds the env
+the agent reads** (incl. `PW_WEB_BACKEND`, since the agent reads it from `os.environ` in hot paths),
+and starts the loop. Resume reuses the cached identity and **skips the initial register** (which under
+enrollment mode would need a fresh single-use token). Backward-compatible with the env-var flow
+(`Agent.__init__` still reads `os.environ`).
+**Why:** the founder's distributed vision needs a frictionless "contribute your computer" — one
+command, not a wall of exports. The single biggest trap (and why it's called out): the agent reads
+`PW_WEB_BACKEND` deep in its hot path, so `pw join` MUST seed it or research is silently off.
+**Status:** Settled & implemented. No new dependency. Tested (`tests/test_join.py`).
+
+## D43 — Offline, no-egress GeoIP on registration (R29, 2026-06-14)
+**Decision:** Let a coordinator **verify** an operator's self-reported country against the IP it
+actually saw — but **only offline**. New `council/net/geoip.py` (`available()` + `country_for_ip()`)
+does a local lookup against an **operator-supplied** MaxMind GeoLite2 `.mmdb` (`PW_GEOIP_DB`), behind a
+new **`[geoip]` extra** (`geoip2`). It NEVER raises and NEVER dials out, and skips private/loopback.
+The coordinator captures a **spoof-resistant** client IP via `_client_ip` (sharing the D36
+`PW_TRUST_XFF` gate — socket peer by default, first XFF hop only behind a trusted proxy) and resolves
+`geo_country` at register. `store.register_node` stores it (nodes migration + the positional INSERT
+**converted to named columns** so the migration-added column can't be silently skipped); `status()`
+exposes `geo_country` + derived `geo_mismatch` but **never the IP**. Default-off → falls back to the
+self-reported country (zero behavior change).
+**Why:** self-reported `PW_COUNTRY` is trivially forgeable; geo-diversity is the network's moat, so it
+must be verifiable. But the project ethos is no-egress — so we never send operator IPs to a GeoIP web
+API, and we don't bundle a multi-MB DB (repo has no package-data precedent; it'd bloat installs and go
+stale). **Known limitation:** the current SSH-tunnel fleet presents a loopback peer → resolves to ""
+→ falls back to self-reported; geo is meaningful for directly-reachable operators or those behind an
+XFF-setting proxy.
+**Status:** Settled & implemented. One optional dependency (`geoip2`, default-off). Tested
+(`tests/test_geoip.py`).
+
+## D44 — Operator leaderboard: a pseudonymous recruiting lever (R29, 2026-06-14)
+**Decision:** `store.leaderboard(limit, sort)` ranks operators (aggregated **by owner** — a ledger
+`Account` is already the per-owner aggregate) by `reputation | helped | credits`, surfaced at
+**`GET /leaderboard`** (unauthenticated read like `/status`/`/metrics`, inputs clamped) and a dashboard
+card. Two deliberate choices: the **reputation** board requires `quality_n > 0` (a 0/0 newcomer must
+not tie the top contributor at 0.0), and the **credits** board ranks by `lifetime_earned`, **not
+`balance`** (an untouched starter grant must not top a board that's meant to reward *work done*).
+Pseudonymous: only `owner` is exposed — never `node_id`/IP/secret/`machine_id`.
+**Why:** BOINC/Folding@home-style social proof + friendly competition is the founder's recruiting
+lever. It amplifies (but doesn't weaken) the D24/D37 anti-farming posture — the `quality_n>0` filter
+and the earned-not-held metric are what keep it honest.
+**Status:** Settled & implemented. No new dependency. Tested (`tests/test_leaderboard.py`).
+
+## D45 — Release & packaging hygiene; ship every round (R29, 2026-06-14)
+**Decision:** Cut a PyPI release as soon as work is done rather than letting `main` drift ahead of the
+published version (R28 had sat unreleased). Ship **0.1.3** immediately (the R28 robustness + USE_CASES
+work), then **0.1.4** for this round. Polish the PyPI page to look maintained: PEP 639 SPDX
+`license = "MIT"` (+ `license-files`), authors/maintainers, 17 classifiers (Dev-Status, Python
+3.10–3.14, OS, topics), project URLs (Issues/Documentation/Changelog). Add a **`CHANGELOG.md`** (Keep
+a Changelog) and a **`git tag vX.Y.Z`** step to `RELEASING.md` (retroactive `v0.1.1`/`v0.1.2` created).
+**Why:** an unreleased `main` means users never get the work; thin metadata + no changelog + no tags
+read as "unmaintained" on a public package. Two cheap releases beat hiding proven work behind a big
+round.
+**Status:** Settled & shipped. 0.1.3 live (`twine check` PASS, sdist secret-scanned, clean-venv
+install verified); tags pushed.
+
+## D46 — UI/UX consistency + version injection across the three web surfaces (R29, 2026-06-14)
+**Decision:** One polish pass over the research desk (`serve.py`), marketplace app (`net/app.py`), and
+operator dashboard (`net/dashboard.py`): accessibility (aria-label/aria-live/role, visible focus,
+red error text, muted token raised to `#a7b6e0` for WCAG AA), responsive breakpoints (820/480),
+button `:hover/:active/:focus-visible` + a CSS spinner alongside (not replacing) the status text,
+a unified **"🌍 Passive Workers"** wordmark, and a footer with the product/version/GitHub link.
+**Version is injected, never hardcoded:** `council.get_version()` (via `importlib.metadata`, `dev`
+fallback) replaces a literal `__PW_VERSION__` placeholder in each view.
+**Why:** the surfaces looked inconsistent, weren't accessible, and broke on mobile — a poor first
+impression for a tool people self-host. The load-bearing constraint: both JS guards extract the **last
+bare `<script>`**, so version injection uses a literal `.replace()` (the HTML/CSS/JS is full of braces,
+so `.format()` would crash) and the placeholder lives only in plain footer text — and **no surface may
+gain a second bare `<script>`**. No fe_test id/handler was renamed; the guards stay green.
+**Status:** Settled & implemented. No new dependency. `check_app_js.sh` + `fe_test.js` (with added
+single-`<script>`/version/spinner/aria guards) green; all three pages render with the version injected.
+
+### D42–D46 addendum — adversarial review pass (R29/R30)
+A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 9 agents) → 6 findings,
+**4 confirmed, all addressed**:
+- **(HIGH, real) `agent._save_join` fallback wasn't atomic.** The primary write uses
+  `os.open(..., 0o600)` (atomic), but the fallback did `write_text()` (lands `0o644` under a typical
+  umask) *before* `chmod` — a brief world-readable window for the node **secret** if `os.open` ever
+  fails (FUSE/WSL/special FS). Fixed: wrap the fallback in `os.umask(0o077)` so the create is
+  owner-only from the start. Regression-tested (force the fallback → assert `0o600`).
+- **(MED, test gap) the `PW_TRUST_XFF` geo-spoof gate was untested.** `_client_ip` is the only thing
+  stopping a client from forging its geo via `X-Forwarded-For`; the geoip tests mocked past it. Added
+  direct unit tests: XFF ignored by default (socket peer used), first hop trusted only when
+  `PW_TRUST_XFF=1`.
+- **(LOW, test gap) the leaderboard clamp test passed trivially** on an empty DB (`<=100` always
+  true). Strengthened: seed 150 operators → assert `limit=99999` returns exactly 100 and `limit=0/-5`
+  floor to 1.
+Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
+atomic doesn't make the fallback atomic. 300 tests green.

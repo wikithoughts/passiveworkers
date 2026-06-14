@@ -117,3 +117,19 @@ def test_join_without_url_or_saved_default_errors(joindir, monkeypatch):
     monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "n", "node_secret": "s"}))
     with pytest.raises(SystemExit):
         A.join(["join"])                                   # no url given, nothing cached
+
+
+def test_save_join_fallback_path_is_still_owner_only(joindir, monkeypatch):
+    # if os.open fails (special filesystems), the fallback must NOT leave the bearer secret
+    # world-readable — force the fallback and assert the final file is 0o600.
+    real_open = os.open
+
+    def boom_open(path, *a, **k):
+        if str(path).endswith("join.json"):
+            raise OSError("no mode support here")
+        return real_open(path, *a, **k)
+    monkeypatch.setattr(A.os, "open", boom_open)
+    A._save_join({"default": "https://h", "https://h": {"node_secret": "shh"}})
+    p = joindir / "join.json"
+    assert p.exists() and stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert "shh" in p.read_text()
