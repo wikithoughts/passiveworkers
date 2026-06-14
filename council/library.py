@@ -66,13 +66,21 @@ def _read_text_file(path: pathlib.Path) -> str:
 
 
 def _read_pdf(path: pathlib.Path) -> str:
-    from pypdf import PdfReader
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise SystemExit("Reading PDFs needs the optional extra: pip install 'passiveworkers[docs]'"
+                         f"  [{exc}]")
     reader = PdfReader(str(path))
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 def _read_docx(path: pathlib.Path) -> str:
-    import docx
+    try:
+        import docx
+    except ImportError as exc:
+        raise SystemExit("Reading .docx needs the optional extra: pip install 'passiveworkers[docs]'"
+                         f"  [{exc}]")
     return "\n".join(p.text for p in docx.Document(str(path)).paragraphs)
 
 
@@ -245,6 +253,12 @@ class Library:
                             files += 1
                             tbytes += sz
                         total += added
+                    except SystemExit:
+                        # A missing optional extra (pypdf / python-docx) is a fatal CONFIG error,
+                        # not a per-file problem — it would skip EVERY PDF/docx and silently leave
+                        # gaps in the library. Re-raise so it halts with the install hint; the user
+                        # installs the extra and re-runs (incremental indexing resumes cleanly).
+                        raise
                     except Exception as e:
                         print(f"  skip {f.name}: {e}", flush=True)
             return total
@@ -412,7 +426,10 @@ def main() -> int:
     if cmd == "add":
         if len(args) < 2:
             print("usage: pw library add <path|dir>"); return 2
-        n = lib.add(args[1])
+        try:
+            n = lib.add(args[1])
+        except SystemExit as e:        # missing optional extra (e.g. [docs]) — a fix, not a traceback
+            print(e); return 1
         print(f"✓ {n} chunks indexed.")
         return 0
     if cmd == "remove":

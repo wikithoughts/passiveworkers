@@ -10,6 +10,7 @@ task type ([see "The network", below](#the-network--computers-doing-real-work-fo
 
 ```bash
 pip install 'passiveworkers[all]'   # core + extraction + private-docs + MCP
+ollama serve &                      # make sure Ollama is running (skip if it already is)
 ollama pull qwen3:14b               # any decent models you like — it auto-detects what you have
 pw research "What changed in EU AI Act enforcement this quarter, and who has been fined?"
 ```
@@ -91,6 +92,17 @@ docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
   switch it on) yours for others. A commons of machines, not a data-harvesting cloud: you always
   see and consent to what your machine does, and it returns work it produced — never proxied
   traffic. Deep research is the first task type; more are on the roadmap. See *The network*, below.
+
+## Who this is for / why it matters
+
+The cloud model asks you to hand someone else your questions, your documents, and your money.
+Passive Workers is the opposite bet — your models, your connection, your disk — and it serves the
+people that bet helps most: a **lawyer** or **clinician** who *can't* send privileged files to a
+cloud, a **journalist** protecting sources, a **student** or a researcher **in the Global South**
+with no API budget and metered bandwidth, a **regulated org** that needs real data residency, and
+anyone tired of **fabricated citations**. And — opt-in — a **commons of computers** doing real,
+owned work for each other. Fifteen concrete, runnable scenarios (each with the exact `pw` command
+and the benefit) are in **[docs/USE_CASES.md](docs/USE_CASES.md)**.
 
 ## Honesty section (when the research task is NOT the right tool)
 
@@ -207,6 +219,7 @@ other — **no token, no secondary market, money only ever at the edges.** See
 
 | Doc | What |
 |---|---|
+| [docs/USE_CASES.md](docs/USE_CASES.md) | Who this is for — 15 concrete, runnable benefit-to-people scenarios. |
 | [docs/CONTEXT.md](docs/CONTEXT.md) | The why, the history, the layered vision. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones + pivots (living tracker). |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Roles, local vs networked shape, trust/security. |

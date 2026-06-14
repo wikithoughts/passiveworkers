@@ -51,8 +51,14 @@ def _make_emit(on_progress):
 
 
 def detect_models() -> list[dict]:
-    r = requests.get(f"{OLLAMA}/api/tags", timeout=10)
-    r.raise_for_status()
+    try:
+        r = requests.get(f"{OLLAMA}/api/tags", timeout=10)
+        r.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        # The #1 first-run failure: Ollama installed but not running. Give a fix, not a traceback.
+        raise SystemExit(
+            f"Can't reach Ollama at {OLLAMA}. Is it running? Start it with `ollama serve`, then "
+            f"`ollama pull qwen3:14b` (any decent model). [{type(exc).__name__}]")
     models = [m for m in r.json().get("models", [])
               if not any(x in m["name"].lower() for x in _EXCLUDE)]
     # On CPU-only / constrained machines big models crawl (3-6 tok/s) — let users cap

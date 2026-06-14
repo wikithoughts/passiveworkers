@@ -41,8 +41,44 @@ def _normalize_research_args(brief: str, depth: str, analysts, scope):
     return brief, depth, analysts, scope, ""
 
 
+def _run_research_text(brief: str, depth: str, analysts, scope) -> str:
+    """The research() tool body, extracted so it is testable without a live MCP client: normalize
+    the args, run, and convert ANY failure (Ollama down, no models, network) into a clean
+    'error: …' string. Honors the module contract: an MCP client never sees a traceback. Note
+    SystemExit (e.g. "Can't reach Ollama…") is a BaseException, so it must be caught explicitly."""
+    from council.local import run
+    brief, depth, analysts, scope, err = _normalize_research_args(brief, depth, analysts, scope)
+    if err:
+        return err
+    try:
+        return run(brief, depth=depth, n_analysts=analysts, scope=scope).read_text()
+    except SystemExit as exc:        # e.g. "Can't reach Ollama…" / "No usable models…"
+        return f"error: {exc}"
+    except Exception as exc:
+        return f"error: {type(exc).__name__}: {exc}"
+
+
+def _library_add_text(path: str) -> str:
+    """The library_add() tool body, extracted for testing: index a path and convert any failure
+    into a clean 'error: …' string. Crucially, a missing optional extra (pypdf / python-docx)
+    raises SystemExit — a BaseException, NOT caught by `except Exception` — so we catch it
+    explicitly here, or the MCP client would see a raw traceback / a killed server."""
+    from council.library import Library
+    try:
+        n = Library().add(path)
+        return f"Indexed {n} chunks from {path}."
+    except SystemExit as exc:        # e.g. pip install 'passiveworkers[docs]'
+        return f"error: {exc}"
+    except Exception as exc:
+        return f"error: {type(exc).__name__}: {exc}"
+
+
 def build_server():
-    from mcp.server.fastmcp import FastMCP
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as exc:
+        raise SystemExit("The MCP server needs the optional extra: pip install 'passiveworkers[mcp]'"
+                         f"  [{exc}]")
 
     mcp = FastMCP("passive-workers")
 
@@ -51,12 +87,7 @@ def build_server():
                  scope: str = "both") -> str:
         """Run multi-model local deep research (live web + your private library) and return a
         cited markdown report. depth: quick|standard|deep. scope: both|web|local. Takes minutes."""
-        from council.local import run
-        brief, depth, analysts, scope, err = _normalize_research_args(brief, depth, analysts, scope)
-        if err:
-            return err
-        path = run(brief, depth=depth, n_analysts=analysts, scope=scope)
-        return path.read_text()
+        return _run_research_text(brief, depth, analysts, scope)
 
     @mcp.tool()
     def library_search(query: str, k: int = 5) -> str:
@@ -73,9 +104,7 @@ def build_server():
     @mcp.tool()
     def library_add(path: str) -> str:
         """Index a local file or directory (PDF/docx/txt/md) into your private library."""
-        from council.library import Library
-        n = Library().add(path)
-        return f"Indexed {n} chunks from {path}."
+        return _library_add_text(path)
 
     return mcp
 

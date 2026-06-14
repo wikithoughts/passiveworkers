@@ -90,6 +90,23 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R28 — WORKFLOW POLISH: first-run robustness + the benefit-to-people showcase (D40/D41, 2026-06-14)
+After the distributed roadmap closed, a council audit turned to the *workflow* a real user lives in.
+**Two founder asks, both shipped.** **(D40) First-run robustness — a fix, never a traceback:** the #1
+new-user failure (Ollama installed but not running) now prints `Start it with `ollama serve`…` instead
+of a `ConnectionError` stack; missing optional extras hint `pip install 'passiveworkers[docs]'` / `[mcp]`;
+the MCP `research`/`library_add` tools honor "a client never sees a traceback" (extracted to
+`_run_research_text`/`_library_add_text`); README quickstart gains an `ollama serve` step. **(D41)
+`docs/USE_CASES.md`:** 15 concrete, runnable, honesty-bounded scenarios (privacy · access/cost ·
+sovereignty/honest-citations · the commons) — each a named person + the exact `pw` command + the
+benefit — linked from a new README "Who this is for" section. **Adversarial review (12 agents) → 9
+findings, 7 fixed:** the throughline was **`SystemExit` is a `BaseException`** — it slipped past
+`except Exception` in the library directory walk (would silently skip every PDF → now halts with the
+hint), the MCP `library_add` boundary, and the `serve` daemon (job hung at `done=False` forever → now
+records the error). Plus three test-coverage fills (MCP no-traceback contract, the all-models-exceed-cap
+fallback, the serve error path). **277 tests** green. The single-player flagship is now pleasant on
+first contact, tested on its critical paths, and clearly explains who it's for.
+
 ## R26+R27 — PHASE-3 TAIL: file reassembly + multi-stage pipeline (D38/D39, 2026-06-14) — "do it all"
 **R26 (D38) multi-producer file reassembly:** a sharded job with `as_file=True` delivers its combined
 output as ONE downloadable, content-addressed, integrity-verified file (`artifacts.chunk_bytes` →

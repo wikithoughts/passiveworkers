@@ -1140,3 +1140,59 @@ R23 single-hop preserved):
   its own try/except (logged + swallowed) — the chain link is best-effort like the rest.
 Lesson: "coerce to int defensively" must enumerate ALL the numeric failure modes — `inf` raises
 `OverflowError`, not `ValueError`; a partial except is a hidden crash.
+
+## D40 — First-run robustness: a fix, never a traceback (workflow-polish, 2026-06-14)
+**Decision:** The flagship single-player path must fail *kindly*. The #1 new-user failure is **Ollama
+installed but not running** → an uncaught `ConnectionError` traceback. Make the common first-run
+failures print an actionable hint instead:
+- `local.detect_models()` wraps `requests.get(.../api/tags)` in `except requests.exceptions.RequestException`
+  → `SystemExit("Can't reach Ollama at <url>. Start it with `ollama serve`, then `ollama pull qwen3:14b`.")`.
+- `library._read_pdf`/`_read_docx` wrap their lazy `pypdf`/`docx` imports → `SystemExit("… pip install
+  'passiveworkers[docs]'")`; `mcp_server.build_server()` does the same for `mcp` → `[mcp]` (the
+  `[crypto]` hint pattern `operator.py` already uses).
+- The MCP boundary honors its contract — *an MCP client never sees a traceback*: the `research` and
+  `library_add` tool bodies are extracted to `_run_research_text` / `_library_add_text` and convert
+  any failure to a clean `"error: …"` string.
+- README quickstart gains an explicit `ollama serve` step.
+**Why:** robustness on first contact is the highest-leverage UX win for a tool people self-install;
+a traceback reads as "broken", a one-line hint reads as "almost there".
+**Status:** Settled & implemented. No new dependency. Regression-tested (`tests/test_local.py`,
+`tests/test_mcp.py`, `tests/test_serve.py`).
+
+### D40 addendum — adversarial review pass (the SystemExit/BaseException trap)
+A workflow review (3 lenses — robustness / tests / docs — × adversarial verify, 12 agents) → 9
+findings, **7 confirmed and all fixed**. The theme: **`SystemExit` is a `BaseException`, not an
+`Exception`**, so raising it from a low-level helper slips past every `except Exception` upstream:
+- **(HIGH) `library.add()` directory walk** caught `except Exception`, so a missing `[docs]` extra
+  *escaped* the per-file skip. Decision: a missing optional dep is a **fatal config error, not a
+  per-file problem** — silently skipping every PDF would leave invisible gaps in the library (a
+  correctness/confidentiality hazard for the lawyer/clinician use case). Fixed by an **explicit
+  `except SystemExit: raise`** so it halts with the install hint; the user installs the extra and
+  re-runs (incremental indexing resumes cleanly). Chose *halt* over the reviewer's suggested *skip*.
+- **(HIGH) MCP `library_add`** didn't wrap `add()` → `SystemExit` would escape into the long-running
+  MCP server. Fixed via `_library_add_text` (catches `SystemExit` + `Exception`).
+- **(HIGH) `serve._work` daemon** caught only `Exception`, so a `SystemExit` from `run_research`
+  (Ollama down) left the web-desk job **hung at `done=False` forever**. Fixed: `except (Exception,
+  SystemExit)` records the error and marks done.
+- **(MED) CLI `pw library add`** now catches `SystemExit` → prints the hint + returns exit-code 1
+  (so `library_main` consistently returns an int).
+- Three confirmed **test-coverage gaps** filled: the MCP `research`/`library_add` no-traceback
+  contract, the `detect_models` all-models-exceed-cap fallback (`capped or models[:1]`), and the
+  `serve` error path (generic + `SystemExit`).
+- **(MED, docs)** USE_CASES scenario 11 didn't set `PW_COORDINATOR` for the asker's shell → fixed.
+Lesson: when you adopt `SystemExit` as a "friendly halt" signal, audit **every** `except Exception`
+between the raise site and the user-facing boundary — `BaseException` is exactly the set those clauses
+do not catch.
+
+## D41 — `docs/USE_CASES.md`: the benefit-to-people showcase (workflow-polish, 2026-06-14)
+**Decision:** Ship a concrete, runnable "who this is for / why it matters" document — 15 scenarios in
+four groups (privacy & confidentiality · access & cost · sovereignty/resilience/honest-citations · the
+commons), each = scenario + which capability + the **exact `pw` command** + the benefit. Link it from
+the README ("Who this is for" section + docs table). Keep it **inside the honesty guardrails**: a
+frontier chatbot still wins on stable knowledge; the network is the *maturing* track (invite-only,
+framed as such); and never imply proxying or computer-use — nodes return **owned deliverables** only.
+**Why:** the founder's ask — "show several ways such software gave the benefit to humanity." A
+capabilities list doesn't move anyone; fifteen named people with a copy-pasteable command does, and
+grounding each in a real-world need (privilege rulings, the AI cost barrier, GDPR/HIPAA residency,
+fabricated citations) keeps it honest rather than aspirational.
+**Status:** Settled & shipped. Every recipe cross-checked against `council/cli.py` / `local.py` flags.

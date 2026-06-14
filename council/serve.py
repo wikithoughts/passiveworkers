@@ -47,7 +47,10 @@ def _work(job_id: str, b: Brief) -> None:
                             on_progress=progress)
         with _lock:
             j["file"], j["done"] = path.name, True
-    except Exception as e:
+    except (Exception, SystemExit) as e:
+        # run_research raises SystemExit on the common first-run failures (Ollama down, no models).
+        # SystemExit is a BaseException, NOT caught by `except Exception` — without it the job would
+        # hang at done=False forever. Record the error and mark done so the desk shows it cleanly.
         with _lock:
             j["error"], j["done"] = f"{type(e).__name__}: {e}", True
 
