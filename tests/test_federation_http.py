@@ -74,6 +74,14 @@ def test_progress_endpoint_raises_the_fraction(client):
     assert client.get(f"/jobs/{jid}").json()["progress"] > 0.0
 
 
+def test_user_signup_is_rate_limited(client, monkeypatch):
+    # D36: the unauthenticated /users mint must 429 past its per-client cap (env-tunable, read live)
+    monkeypatch.setenv("PW_RL_USERS", "2")
+    assert client.post("/users", json={"handle": "a"}).status_code == 200
+    assert client.post("/users", json={"handle": "b"}).status_code == 200
+    assert client.post("/users", json={"handle": "c"}).status_code == 429   # over the cap
+
+
 def test_blob_upload_caps_peak_memory(client):
     # D34: an oversize chunk is rejected by a STREAMED cap (413), not buffered whole; a non-claimant
     # is rejected (403) before any body is read; a valid small chunk stores.

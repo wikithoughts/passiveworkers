@@ -90,6 +90,22 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R24 — PER-IDENTITY RATE LIMITING (D36, 2026-06-14) — public-launch auth, part 1
+A tiny in-process sliding-window `RateLimiter` (`council/net/ratelimit.py`) caps the coordinator's
+creation/mint endpoints: `/nodes/register`, **`/users`** (unauthenticated → prime ledger-inflation
+target), `/jobs` (per asker), `/tasks/{id}/progress` (per node). Env-tunable (`PW_RL_*`, read live;
+generous defaults; `<=0` disables). **Spoof-proof by default** — keys on the socket peer, not a
+client-supplied `X-Forwarded-For` (trusting XFF blindly = an attacker rotates it for unlimited keys);
+per-client XFF granularity is opt-in via `PW_TRUST_XFF` (trusted proxy). Bounded memory (denied events
+unrecorded; idle keys swept). High-frequency polling (`/tasks/next`, heartbeat) deliberately NOT
+limited. **237 tests (+7)**: `test_ratelimit` (window math, denied-not-recorded, expiry, disable,
+independence, sweep) + a `/users` 429 endpoint test. Review (3 lenses × verify, 15 agents) → register
+default raised 30→60, a PW_TRUST_XFF startup warning, docs; and it surfaced a **pre-existing** Sybil
+starter-grant residual (free credits per new identity) that D36 only *bounds* — its root fix is the
+next item. **Roadmap (public-launch auth part 2 — closes that residual):** per-operator enrollment
+tokens for `/nodes/register` + signup gating for `/users`. Then: generic automated→automated DAG;
+multi-producer file reassembly.
+
 ## R23 — STAGE CHAINING: the "connecting them" step (D35, 2026-06-14) — generate parts → integrate
 Delivers the founder's "coding parts then connecting them." A job may declare a `then` follow-on
 `{question, requires?}`; when it completes, `store._maybe_chain` spawns an **assisted** job seeded with

@@ -29,6 +29,7 @@ Run:  PW_TOKEN=… python -m council.net.coordinator_app
 from __future__ import annotations
 
 import ipaddress
+import os
 import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -39,6 +40,7 @@ from council.net.app import APP_HTML
 from council.net.baseline import generate_baseline
 from council.net.config import CONFIG, JOB_TYPES, task_behavior
 from council.net.dashboard import DASHBOARD_HTML
+from council.net.ratelimit import RateLimiter
 from council.net.store import Store
 
 
@@ -60,8 +62,38 @@ def _startup_guard() -> None:
 
 
 _startup_guard()
+if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
+    # D36 review: trusting X-Forwarded-For for rate-limit keys is only safe behind a reverse proxy
+    # that SETS and STRIPS client-supplied XFF — otherwise clients rotate it to bypass the limit.
+    print("[coordinator] PW_TRUST_XFF enabled — rate-limit keys trust X-Forwarded-For. Ensure your "
+          "reverse proxy sets AND sanitizes that header (drops client-supplied values), or attackers "
+          "can rotate it to defeat per-client limits.", flush=True)
 app = FastAPI(title="Passive Workers — Council Coordinator")
 store = Store()
+_rl = RateLimiter()   # per-process sliding-window rate limiter (D36)
+
+
+def _client_key(request: Request) -> str:
+    """A per-client key for pre-auth endpoints. By DEFAULT keys on the socket peer (behind a tunnel
+    that's usually loopback → effectively a conservative GLOBAL cap, which is spoof-proof). Only when
+    PW_TRUST_XFF is set — i.e. the operator runs a trusted reverse proxy that sets AND sanitizes
+    X-Forwarded-For — do we key on the first XFF hop for per-client granularity. Trusting XFF blindly
+    would let an attacker rotate the header to mint unlimited keys and bypass the limit entirely."""
+    if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            return xff.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "?")[:64]
+
+
+def _ratelimit(key: str, env: str, default: str) -> None:
+    """Raise 429 if `key` exceeds its per-60s limit. Limit is env-tunable; `<=0` disables it."""
+    try:
+        limit = int(os.environ.get(env, default))
+    except (TypeError, ValueError):
+        limit = int(default)
+    if not _rl.allow(key, limit, 60.0):
+        raise HTTPException(status_code=429, detail="rate limit exceeded — slow down")
 
 
 def _auth(token: str | None) -> None:
@@ -132,6 +164,7 @@ def healthz():
 
 @app.post("/nodes/register")
 def register(body: RegisterBody, request: Request, x_pw_token: str | None = Header(default=None)):
+    _ratelimit(f"reg:{_client_key(request)}", "PW_RL_REGISTER", "60")   # D36 (per client/global-behind-tunnel)
     _auth(x_pw_token)
     ip = request.client.host if request.client else ""
     return store.register_node(body.model_dump(), ip=ip)   # {node_id, node_secret}
@@ -175,6 +208,7 @@ def task_progress(task_id: str, body: ProgressBody, x_pw_token: str | None = Hea
     report (not yours / already done / bad numbers) just isn't recorded — it never errors the run."""
     _auth(x_pw_token)
     node_id = _node_auth(x_node_secret)
+    _ratelimit(f"prog:{node_id}", "PW_RL_PROGRESS", "600")   # generous; legit progress is throttled client-side (D36)
     store.update_task_progress(node_id, task_id, body.done, body.total)
     return {"ok": True}
 
@@ -280,7 +314,9 @@ def get_blob(job_id: str, blob_hash: str, x_user_secret: str | None = Header(def
 
 
 @app.post("/users")
-def make_user(body: UserBody):
+def make_user(body: UserBody, request: Request):
+    # unauthenticated mint → the prime flood/ledger-inflation target; bound it per client (D36)
+    _ratelimit(f"usr:{_client_key(request)}", "PW_RL_USERS", "20")
     res = store.register_user(body.handle)
     if res.get("error"):
         raise HTTPException(status_code=409, detail=res["error"])
@@ -333,6 +369,7 @@ def job_types():
 @app.post("/jobs")
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
+    _ratelimit(f"job:{handle}", "PW_RL_JOBS", "120")   # per-asker job-creation cap (D36)
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,
                            requires=body.requires, fetch=body.fetch, context=body.context,

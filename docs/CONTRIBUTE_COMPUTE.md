@@ -73,6 +73,17 @@ It registers, heartbeats, and starts taking jobs. Leave it running; stop it when
 - **Always-on (Linux):** `scripts/install_systemd.sh` installs a systemd unit that survives reboot.
 - **Mac trial:** `scripts/mac_join.sh` opens a tunnel and runs a couple of perspectives + a judge.
 
+## For coordinator operators: rate limits (D36)
+
+The coordinator rate-limits its creation/mint endpoints (`/nodes/register`, `/users`, `/jobs`,
+`/tasks/*/progress`) — tunable via `PW_RL_*` env vars (per 60s; set `0` to disable one). By default
+the limit key is the **socket peer**, which behind a tunnel is loopback — i.e. a conservative
+**global** cap that is spoof-proof. Running more than a handful of operators? Put the coordinator
+behind a reverse proxy that **sets and sanitizes** `X-Forwarded-For`, then set `PW_TRUST_XFF=1` for
+per-client limits. Do **not** set `PW_TRUST_XFF` without such a proxy — clients could rotate the
+header to bypass the limits. (Rate limits bound abuse *rate*; gating *who* may register at all is the
+next step — per-operator enrollment tokens.)
+
 ## The geo-diversity moat
 
 When your agent does web research, it searches from **your** internet egress — so a node in Berlin

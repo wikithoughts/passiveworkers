@@ -987,3 +987,51 @@ verify, 6 agents) returned 3 findings, **2 confirmed (same root), fixed:**
 Lesson: "best-effort, runs after commit" must be enforced with an actual try/except, and any in-memory
 ledger mutation before a commit needs a compensating rollback on failure — durability + atomicity, not
 just conservation.
+
+## D36 — Per-identity rate limiting on the coordinator (D32 Phase-3, public-launch auth)
+**Decision:** Bound abuse on the coordinator's creation/mint endpoints — the first half of
+"public-launch auth." A tiny in-process sliding-window `RateLimiter` (`council/net/ratelimit.py`)
+caps events per key per window; it's applied to the four flood/inflation-prone endpoints:
+`/nodes/register` (per client), **`/users` (per client — unauthenticated, the prime ledger-inflation
+target since each signup mints a starter grant)**, `/jobs` (per asker), and `/tasks/{id}/progress`
+(per node). Limits are env-tunable (`PW_RL_*`, read live), generous by default
+(register 30 / users 20 / jobs 120 / progress 600 per 60s); `<=0` disables a limit.
+Design choices:
+- **Spoof-proof by default.** `_client_key` keys on the **socket peer**, NOT a client-supplied
+  `X-Forwarded-For` — trusting XFF blindly would let an attacker rotate the header to mint unlimited
+  keys and bypass the limit. Behind the usual tunnel that means a conservative *global* cap; an
+  operator with a trusted, XFF-sanitizing proxy opts into per-client granularity via `PW_TRUST_XFF`.
+- **Bounded memory.** A denied event is not recorded (a key's deque never exceeds `limit`); idle keys
+  are swept past a 1h horizon when the table exceeds `max_keys`.
+- **No legit-traffic regression.** The high-frequency authenticated polling paths (`/tasks/next`,
+  heartbeat) are deliberately NOT limited.
+**Why:** the network is invite-only today, but a single leaked shared `PW_TOKEN` or the open `/users`
+mint already allows a flood; this closes it for every deployment now, ahead of opening up. The
+`allow()` seam swaps cleanly for Redis when the coordinator is horizontally scaled.
+**Status:** Settled & implemented. 237 tests green (7 new). No new dependency. **Still roadmap (the
+second half of public-launch auth):** per-operator enrollment tokens (replace the single shared
+registration token so one leak can't enroll for everyone).
+
+### D36 addendum — adversarial review pass (rate limiting)
+A workflow review (3 lenses — correctness/memory, bypass/efficacy, regression/ops — × adversarial
+verify, 15 agents) returned 12 findings, **9 confirmed** (2 of them positive PASS verifications: the
+window math has no off-by-one, and the high-frequency polling paths are correctly exempt). Triage:
+- **Fixed (D36 scope):** the default `/nodes/register` cap was raised 30→60 (a fleet restarting at
+  once behind one tunnel could brush 30/min globally); a **startup warning** now fires when
+  `PW_TRUST_XFF` is enabled (it's only safe behind a proxy that *sanitizes* XFF — else clients rotate
+  the header to bypass limits); the trusted-proxy / multi-operator tuning is documented here and in
+  `docs/CONTRIBUTE_COMPUTE.md`.
+- **(CRITICAL/HIGH) Sybil starter-grant minting — PRE-EXISTING, partially mitigated, root fix is the
+  next round.** `ledger.open_account` grants a starter allowance per *new* owner/handle, so a holder
+  of the shared token (register) or anyone (the open `/users` mint) can create many identities for
+  free credits. This **predates D36** — D36 strictly *improves* it by bounding the rate (≤60 reg /
+  ≤20 user creations per minute per client). It is **not** eliminated: the complete fix is identity
+  gating — **per-operator enrollment tokens** for `/nodes/register` and signup gating / grant policy
+  for `/users` (the planned public-launch-auth part 2). **Impact is bounded by D1:** minted credit is
+  **non-transferable and never cashable** — it can only buy job-asking (itself rate-limited by
+  `PW_RL_JOBS`), so this is a compute-abuse vector, not financial theft. Documented as a known
+  residual; the network is invite-only today, so current exposure is low.
+- **(low) heartbeat 429 handling / a client-side 429 test** — heartbeat is *not* a limited endpoint,
+  and `register()` already backs off on any HTTP error, so this is moot for the current scope; noted.
+Lesson: rate limiting bounds the *rate* of an abuse but cannot fix an *economic* hole (free credits
+per identity) — that needs identity gating; the two are complementary, not substitutes.
