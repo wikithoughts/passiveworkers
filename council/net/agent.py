@@ -21,7 +21,9 @@ Run:  python -m council.net.agent
 
 from __future__ import annotations
 
+import json
 import os
+import pathlib
 import platform
 import signal
 import socket
@@ -62,8 +64,12 @@ class Agent:
         self.can_judge = _env("PW_CAN_JUDGE", "0") in ("1", "true", "True")
         self.judge_model = _env("PW_JUDGE_MODEL", self.answer_model if self.can_judge else "")
         self.poll_s = float(_env("PW_POLL", "2"))
+        self.enroll_token = _env("PW_ENROLL_TOKEN", "")   # D42: per-operator token for `pw join`
         self.node_id: str | None = None
         self.node_secret: str | None = None
+        # D42: a callback (node_id, secret) -> None, set by `pw join` so a freshly minted identity is
+        # persisted to ~/.passiveworkers/join.json the moment register() succeeds.
+        self._on_identity = None
         self._running = True
 
     # ------------------------------------------------------------------ http
@@ -95,11 +101,19 @@ class Agent:
             "can_judge": self.can_judge, "judge_model": self.judge_model,
             "machine_id": self.machine_id, "profile": self._profile(),
         }
-        r = requests.post(f"{self.base}/nodes/register", json=body, headers=self._headers(), timeout=15)
+        headers = self._headers()
+        if self.enroll_token:   # D42/D37: redeem a per-operator enrollment token at register
+            headers = {**headers, "X-Enroll-Token": self.enroll_token}
+        r = requests.post(f"{self.base}/nodes/register", json=body, headers=headers, timeout=15)
         r.raise_for_status()
         data = r.json()
         self.node_id = data["node_id"]
         self.node_secret = data.get("node_secret")
+        if self._on_identity:   # D42: persist the minted identity (best-effort; never break register)
+            try:
+                self._on_identity(self.node_id, self.node_secret)
+            except Exception as exc:
+                print(f"[agent] could not persist identity: {exc}")
         print(f"[agent] registered {self.name} ({self.answer_model}/{self.lens}/{self.country}) "
               f"judge={self.can_judge} → node {self.node_id[:8]}…  @ {self.base}")
 
@@ -202,14 +216,18 @@ class Agent:
             time.sleep(self.poll_s)
 
     def run(self) -> None:
-        # Never die because the coordinator/tunnel is briefly down at boot — keep trying.
-        while self._running:
-            try:
-                self.register()
-                break
-            except requests.RequestException as exc:
-                print(f"[agent] register failed ({exc}); retrying in 10s…")
-                time.sleep(10)
+        # D42 resume: a `pw join` that already has a cached identity skips the initial register
+        # (which, under enrollment mode, would need a fresh single-use token) and reuses its node
+        # secret directly. If the coordinator has forgotten it, the heartbeat loop re-registers.
+        if not (self.node_id and self.node_secret):
+            # Never die because the coordinator/tunnel is briefly down at boot — keep trying.
+            while self._running:
+                try:
+                    self.register()
+                    break
+                except requests.RequestException as exc:
+                    print(f"[agent] register failed ({exc}); retrying in 10s…")
+                    time.sleep(10)
         threading.Thread(target=self._heartbeat_loop, daemon=True, name="pw-hb").start()
         while self._running:
             try:
@@ -244,6 +262,125 @@ class Agent:
     def stop(self, *_):
         print("\n[agent] shutting down…")
         self._running = False
+
+
+# ---------------------------------------------------------------- D42: one-command `pw join`
+def _join_state_path() -> pathlib.Path:
+    base = os.environ.get("PW_LIBRARY_DIR", str(pathlib.Path.home() / ".passiveworkers"))
+    return pathlib.Path(base) / "join.json"
+
+
+def _load_join() -> dict:
+    p = _join_state_path()
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def _save_join(state: dict) -> None:
+    """Persist join.json owner-only FROM CREATION — the node secret is a bearer credential
+    (mirrors council.crypto.load_or_create; no world-readable window before chmod)."""
+    p = _join_state_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    blob = json.dumps(state, indent=2).encode()
+    try:
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(blob)
+        os.chmod(p, 0o600)
+    except Exception:
+        p.write_text(json.dumps(state, indent=2))
+        try:
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
+
+
+def _parse_join_args(rest: list) -> tuple[list, dict]:
+    """Split `pw join` args into positionals (url, token) and flags
+    (--owner/--country/--model/--lens/--judge/--judge-model/--web)."""
+    pos: list = []
+    flags: dict = {}
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--judge":
+            flags["can_judge"] = True
+            i += 1
+        elif a.startswith("--") and i + 1 < len(rest):
+            flags[a[2:]] = rest[i + 1]
+            i += 2
+        else:
+            pos.append(a)
+            i += 1
+    return pos, flags
+
+
+def join(argv: list) -> int:
+    """`pw join <coordinator-url> <enrollment-token>` (first run) or `pw join` / `pw work` (resume):
+    one command to contribute a machine. Persists identity+config to ~/.passiveworkers/join.json,
+    seeds the env the agent reads, and starts the worker loop. Backward-compatible with the env flow."""
+    pos, flags = _parse_join_args(argv[1:] if argv else [])
+    url = pos[0].rstrip("/") if pos else ""
+    token = pos[1] if len(pos) > 1 else ""
+
+    state = _load_join()
+    if not url:                                   # resume: fall back to the last coordinator joined
+        url = (state.get("default") or "").rstrip("/")
+        if not url:
+            raise SystemExit("usage: pw join <coordinator-url> <enrollment-token>   (first time)\n"
+                             "       pw join | pw work                              (resume)")
+
+    cfg = dict(state.get(url, {}))                # existing cached config for this coordinator, if any
+    cfg["owner"] = flags.get("owner", cfg.get("owner") or socket.gethostname())
+    cfg["name"] = flags.get("name", cfg.get("name") or socket.gethostname())
+    cfg["country"] = flags.get("country", cfg.get("country", "local"))
+    cfg["answer_model"] = flags.get("model", cfg.get("answer_model", "gemma3:4b"))
+    cfg["lens"] = flags.get("lens", cfg.get("lens", "neutral"))
+    cfg["can_judge"] = bool(flags.get("can_judge", cfg.get("can_judge", False)))
+    cfg["judge_model"] = flags.get("judge-model", cfg.get("judge_model", ""))
+    cfg["web_backend"] = flags.get("web", cfg.get("web_backend", "ddgs"))   # joined nodes research by default
+
+    # The chosen seam: the Agent reads PW_* from os.environ (incl. PW_WEB_BACKEND in hot paths) —
+    # seed them from the resolved config BEFORE constructing it, so web research isn't silently off.
+    os.environ["PW_COORDINATOR"] = url
+    os.environ["PW_OWNER"] = cfg["owner"]
+    os.environ["PW_NAME"] = cfg["name"]
+    os.environ["PW_COUNTRY"] = cfg["country"]
+    os.environ["PW_ANSWER_MODEL"] = cfg["answer_model"]
+    os.environ["PW_LENS"] = cfg["lens"]
+    os.environ["PW_CAN_JUDGE"] = "1" if cfg["can_judge"] else "0"
+    os.environ["PW_JUDGE_MODEL"] = cfg["judge_model"]
+    os.environ["PW_WEB_BACKEND"] = cfg["web_backend"]
+    if token:
+        os.environ["PW_ENROLL_TOKEN"] = token
+
+    # Persist the config (sans identity) up front so `default` + cfg survive even a pre-register crash.
+    state[url] = {**state.get(url, {}), **cfg}
+    state["default"] = url
+    _save_join(state)
+
+    agent = Agent()
+    if not token and cfg.get("node_id") and cfg.get("node_secret"):
+        # resume: reuse the cached identity (register under enroll mode needs a fresh single-use token)
+        agent.node_id, agent.node_secret = cfg["node_id"], cfg["node_secret"]
+
+    def _persist(node_id: str, secret: str) -> None:
+        s = _load_join()
+        entry = {**s.get(url, {}), **cfg, "node_id": node_id, "node_secret": secret}
+        entry.pop("enroll_token", None)           # never persist the (single-use) token
+        s[url] = entry
+        s["default"] = url
+        _save_join(s)
+    agent._on_identity = _persist
+
+    print(f"[join] {url} as {cfg['owner']} "
+          f"({cfg['answer_model']}/{cfg['country']}, web={cfg['web_backend']}) — Ctrl-C to stop")
+    signal.signal(signal.SIGINT, agent.stop)
+    signal.signal(signal.SIGTERM, agent.stop)
+    agent.run()
+    return 0
 
 
 def main() -> int:

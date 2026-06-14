@@ -12,6 +12,8 @@ Make your computer work for you (and, opt-in, for others). Research is the flags
     pw mcp                         # run as an MCP server (Claude Desktop, Codex, …)
 
   The network — do work for / with other computers (opt-in):
+    pw join <coordinator-url> <enrollment-token>   # contribute this machine (one command)
+    pw work                        # resume contributing after you've joined once
     pw tasks                       # list open offers your machine can take on
     pw accept <id> | deliver <id> <text|@file>
     pw fetch <job> <dir>           # download + verify a delivered file (asker)
@@ -47,6 +49,10 @@ def main() -> int:
         from council.mcp_server import main as mcp_main
         mcp_main()
         return 0
+    if cmd in ("join", "work"):
+        # one-command operator onboarding / resume — starts the long-running worker loop
+        from council.net.agent import join as join_main
+        return join_main([cmd] + rest)
     if cmd in ("tasks", "accept", "deliver", "fetch", "keygen", "rate", "fingerprint", "trust"):
         sys.argv = ["pw", cmd] + rest   # operator.main dispatches on argv[1] (the verb)
         from council.operator import main as operator_main

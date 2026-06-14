@@ -158,6 +158,11 @@ class Store:
             self.conn.execute("ALTER TABLE tasks ADD COLUMN retries INTEGER DEFAULT 0")
         if "progress" not in tcols:  # JSON {"done":N,"total":M} a worker reports mid-flight
             self.conn.execute("ALTER TABLE tasks ADD COLUMN progress TEXT")
+        # nodes migration (D43): offline-resolved country, to verify against the self-reported one.
+        # (The existing `ip` column already holds the client IP and is never exposed via /status.)
+        ncols = {r["name"] for r in self.conn.execute("PRAGMA table_info(nodes)")}
+        if "geo_country" not in ncols:
+            self.conn.execute("ALTER TABLE nodes ADD COLUMN geo_country TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------ ledger persistence
@@ -226,22 +231,28 @@ class Store:
             return {"ok": True, "owner": row["owner"], "grant": row["grant_amount"]}
 
     # ------------------------------------------------------------------ nodes
-    def register_node(self, body: dict, ip: str = "", grant_amount: float | None = None) -> dict:
+    def register_node(self, body: dict, ip: str = "", grant_amount: float | None = None,
+                      geo_country: str = "") -> dict:
         """Returns {node_id, node_secret}. The secret is shown ONCE; only its hash is stored.
         `grant_amount` (D37): the owner's starter credit — None → STARTER_ALLOWANCE (default), 0 →
-        none (enrollment-gated callers pass 0 / the token's amount)."""
+        none (enrollment-gated callers pass 0 / the token's amount). `geo_country` (D43): the
+        coordinator's offline IP→country lookup ("" when unavailable → falls back to self-reported).
+        Named-column INSERT (NOT positional) so migration-added columns can't be silently skipped."""
         with self.lock:
             node_id = str(uuid.uuid4())
             secret = _secrets.token_urlsafe(24)
             self.ledger.open_account(_clip(body["owner"]), grant_amount=grant_amount)
             self.conn.execute(
-                "INSERT INTO nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO nodes(node_id, name, country, owner, answer_model, lens, can_judge, "
+                "judge_model, profile, last_seen, load, status, ip, secret_hash, machine_id, "
+                "geo_country) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     node_id, _clip(body.get("name", "node")), _clip(body.get("country", "?")),
                     _clip(body["owner"]), _clip(body.get("answer_model", "")),
                     _clip(body.get("lens", "neutral")), int(bool(body.get("can_judge", False))),
                     _clip(body.get("judge_model", "")), json.dumps(body.get("profile", {})),
                     _now(), 0.0, "online", ip, _hash(secret), _clip(body.get("machine_id", "?")),
+                    _clip((geo_country or "").upper()),
                 ),
             )
             self._save_ledger()
@@ -1340,6 +1351,7 @@ class Store:
             for n in self.online_nodes():
                 acct = self.ledger.accounts.get(n["owner"])
                 machines.add(n["machine_id"] or n["node_id"])
+                geo = (n["geo_country"] or "") if "geo_country" in n.keys() else ""
                 nodes.append({
                     # opaque key (not the raw node_id, which authenticates nothing now but
                     # shouldn't be freely enumerable) — stable for the map's jitter.
@@ -1351,6 +1363,9 @@ class Store:
                     "age_s": round(_now() - n["last_seen"], 1),
                     "reputation": acct.avg_quality if acct else 0.0,
                     "jobs_helped": acct.jobs_helped if acct else 0,
+                    # D43: offline geo-verification ("" if unavailable). The raw IP is NEVER exposed.
+                    "geo_country": geo,
+                    "geo_mismatch": bool(geo and n["country"] and geo.upper() != (n["country"] or "").upper()),
                 })
             jobs = [dict(j) for j in self.conn.execute(
                 "SELECT job_id, asker, status, created FROM jobs ORDER BY created DESC LIMIT 10")]
@@ -1368,3 +1383,38 @@ class Store:
                                  "helped": a.jobs_helped, "asked": a.jobs_asked}
                              for u, a in accounts},
             }
+
+    def leaderboard(self, limit: int = 20, sort: str = "reputation") -> dict:
+        """Top operators (D44) — pseudonymous owners, aggregated across all their nodes (an Account
+        is already the per-owner aggregate). A recruiting board, so:
+          • reputation = mean judge score, and an owner needs >=1 rating to appear (a 0/0 newcomer
+            must not tie the top contributor at 0.0);
+          • credits = lifetime EARNED, never `balance` — an untouched starter grant must not top it.
+        Returns only `owner` (never node_id/ip/secret) — see /status's no-IP-leak contract."""
+        with self.lock:
+            from council.ledger import ESCROW_ID
+            online: dict[str, set] = {}      # owner -> set of countries they're serving from now
+            for n in self.online_nodes():
+                geo = (n["geo_country"] or "") if "geo_country" in n.keys() else ""
+                cc = (geo or n["country"] or "").upper()
+                bucket = online.setdefault(n["owner"], set())
+                if cc and cc not in ("?", "LOCAL"):
+                    bucket.add(cc)
+            rows = []
+            for owner, a in self.ledger.accounts.items():
+                if owner == ESCROW_ID:
+                    continue
+                if sort == "reputation" and a.quality_n <= 0:
+                    continue
+                rows.append({
+                    "owner": owner, "reputation": a.avg_quality, "ratings": a.quality_n,
+                    "jobs_helped": a.jobs_helped, "credits_earned": round(a.lifetime_earned, 1),
+                    "countries": sorted(online.get(owner, set())), "online": owner in online,
+                })
+            keys = {
+                "reputation": lambda r: (r["reputation"], r["jobs_helped"]),
+                "helped": lambda r: (r["jobs_helped"], r["credits_earned"]),
+                "credits": lambda r: (r["credits_earned"], r["jobs_helped"]),
+            }
+            rows.sort(key=keys.get(sort, keys["reputation"]), reverse=True)
+            return {"sort": sort, "operators": rows[:max(1, limit)], "total_operators": len(rows)}

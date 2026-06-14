@@ -1,0 +1,119 @@
+"""D42 — one-command `pw join`: config+identity persistence to join.json (0o600), env seeding so the
+agent's hot-path PW_WEB_BACKEND isn't silently off, the X-Enroll-Token header, and resume-without-token
+reusing the cached identity (no re-register). The agent loop itself is monkeypatched away."""
+import json
+import os
+import stat
+
+import pytest
+
+import council.net.agent as A
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._p
+
+
+class _FakeRequests:
+    """Stand-in for council.net.agent.requests: register() POST returns an identity; the profile
+    /api/tags GET fails (→ models=[]). Records POST headers so we can assert the enroll token."""
+    exceptions = A.requests.exceptions
+
+    def __init__(self, reg_payload):
+        self._reg = reg_payload
+        self.posts = []
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.posts.append((url, json, headers or {}))
+        return _Resp(self._reg)
+
+    def get(self, url, timeout=None):
+        raise A.requests.exceptions.RequestException("no ollama in tests")
+
+
+@pytest.fixture()
+def joindir(tmp_path, monkeypatch):
+    monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))   # _join_state_path() reads this each call
+    return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _restore_env():
+    keys = ["PW_COORDINATOR", "PW_OWNER", "PW_NAME", "PW_COUNTRY", "PW_ANSWER_MODEL", "PW_LENS",
+            "PW_CAN_JUDGE", "PW_JUDGE_MODEL", "PW_WEB_BACKEND", "PW_ENROLL_TOKEN"]
+    saved = {k: os.environ.get(k) for k in keys}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def test_join_first_persists_config_identity_and_seeds_env(joindir, monkeypatch):
+    monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "nid-123", "node_secret": "sec-xyz"}))
+    monkeypatch.setattr(A.Agent, "run", lambda self: self.register())   # no infinite loop
+
+    rc = A.join(["join", "https://hub/", "tok-1",
+                 "--owner", "alice", "--country", "DE", "--model", "qwen3:14b", "--web", "ddgs"])
+    assert rc == 0
+
+    p = joindir / "join.json"
+    assert p.exists()
+    assert stat.S_IMODE(p.stat().st_mode) == 0o600          # bearer secret → owner-only
+    s = json.loads(p.read_text())
+    assert s["default"] == "https://hub"
+    e = s["https://hub"]
+    assert e["owner"] == "alice" and e["country"] == "DE" and e["answer_model"] == "qwen3:14b"
+    assert e["node_id"] == "nid-123" and e["node_secret"] == "sec-xyz"
+    assert "enroll_token" not in e                          # the single-use token is never persisted
+    # env seeded for the agent's hot paths
+    assert os.environ["PW_COORDINATOR"] == "https://hub"
+    assert os.environ["PW_WEB_BACKEND"] == "ddgs"
+    assert os.environ["PW_OWNER"] == "alice"
+
+
+def test_join_sends_enroll_token_header(joindir, monkeypatch):
+    fake = _FakeRequests({"node_id": "nid", "node_secret": "sec"})
+    monkeypatch.setattr(A, "requests", fake)
+    monkeypatch.setattr(A.Agent, "run", lambda self: self.register())
+
+    A.join(["join", "https://hub", "tok-9"])
+    reg = [p for p in fake.posts if p[0].endswith("/nodes/register")][-1]
+    assert reg[2].get("X-Enroll-Token") == "tok-9"
+
+
+def test_join_resume_reuses_identity_without_register(joindir, monkeypatch):
+    (joindir / "join.json").write_text(json.dumps({
+        "default": "https://hub",
+        "https://hub": {"owner": "alice", "name": "n", "country": "DE", "answer_model": "m",
+                        "lens": "neutral", "can_judge": False, "judge_model": "", "web_backend": "ddgs",
+                        "node_id": "old-nid", "node_secret": "old-sec"},
+    }))
+    seen = {}
+
+    def fake_run(self):
+        seen["node_id"] = self.node_id
+        seen["node_secret"] = self.node_secret
+    monkeypatch.setattr(A.Agent, "run", fake_run)
+    # register() would raise if called (no token persisted), proving resume must NOT register:
+    monkeypatch.setattr(A.Agent, "register",
+                        lambda self: (_ for _ in ()).throw(AssertionError("must not re-register")))
+
+    rc = A.join(["work"])                                   # bare resume, no url/token
+    assert rc == 0
+    assert seen == {"node_id": "old-nid", "node_secret": "old-sec"}
+    assert os.environ["PW_COORDINATOR"] == "https://hub"
+
+
+def test_join_without_url_or_saved_default_errors(joindir, monkeypatch):
+    monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "n", "node_secret": "s"}))
+    with pytest.raises(SystemExit):
+        A.join(["join"])                                   # no url given, nothing cached

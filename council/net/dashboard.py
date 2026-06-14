@@ -34,6 +34,13 @@ DASHBOARD_HTML = r"""<!doctype html>
   .stat{font-size:22px;font-weight:700} .statlbl{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
   .flex{display:flex;gap:18px} .ok{color:var(--good)} .no{color:var(--bad)}
   .job{font-size:12px;border-left:3px solid #2a3a6e;padding:2px 0 2px 8px;margin:4px 0}
+  .lbtn{font-size:10px;padding:1px 7px;margin-left:4px;border-radius:999px;background:#1b2750;
+    color:var(--mut);cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0}
+  .lbtn.on{background:#2447b2;color:#fff}
+  .lead{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:4px 0;border-bottom:1px solid #18213f}
+  .lead .rank{color:var(--mut);width:18px;text-align:right}
+  .lead .who{flex:1;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lead .met{color:var(--mut)}
 </style>
 </head>
 <body>
@@ -48,6 +55,10 @@ DASHBOARD_HTML = r"""<!doctype html>
       <div><div class="stat" id="conserved">–</div><div class="statlbl">ledger</div></div>
     </div></div>
     <div id="nodes"></div>
+    <h1 style="font-size:13px;margin:16px 0 6px">Top operators
+      <span class="lbtn on" id="lb_reputation">rep</span><span class="lbtn" id="lb_helped">helped</span><span class="lbtn" id="lb_credits">earned</span>
+    </h1>
+    <div id="leaders"></div>
     <h1 style="font-size:13px;margin:16px 0 6px">Recent jobs</h1>
     <div id="jobs"></div>
     <div class="sub" id="updated" style="margin-top:12px"></div>
@@ -80,17 +91,21 @@ async function tick(){
   markers.forEach(m=>map.removeLayer(m)); markers=[];
   const list=document.getElementById('nodes'); list.innerHTML='';
   for(const n of nodes){
-    const c=CENTROIDS[n.country]||CENTROIDS['?'];
+    const disp=n.geo_country||n.country;   // D43: prefer the geo-verified country for placement
+    const c=CENTROIDS[disp]||CENTROIDS['?'];
     const lat=c[0]+jitter(n.node_key), lng=c[1]+jitter(n.node_key+'x');
     const col=loadColor(n.load), role=esc(n.answer_model||'judge');
+    const geoBadge=n.geo_mismatch
+      ? `<span class="pill" title="self-reported vs geo-verified" style="color:#fbbd23">⚠ says ${esc(n.country)} · geo ${esc(n.geo_country)}</span>`
+      : (n.geo_country ? `<span class="pill" title="geo-verified" style="color:#36d399">✓ ${esc(n.geo_country)}</span>` : '');
     const m=L.circleMarker([lat,lng],{radius:9,color:col,fillColor:col,fillOpacity:.85,weight:2}).addTo(map);
-    m.bindPopup(`<b>${esc(n.name)}</b> · ${esc(n.country)}<br>owner ${esc(n.owner)}<br>${role}`+
+    m.bindPopup(`<b>${esc(n.name)}</b> · ${esc(disp)}${n.geo_mismatch?' (says '+esc(n.country)+')':''}<br>owner ${esc(n.owner)}<br>${role}`+
       `<br>load ${(100*(n.load||0)).toFixed(0)}% · rep ${(+n.reputation||0)}/10`+
       `<br>helped ${(+n.jobs_helped||0)} · seen ${(+n.age_s||0)}s ago`);
     markers.push(m);
     list.insertAdjacentHTML('beforeend',
       `<div class="card"><div class="row"><div><span class="dot" style="background:${col}"></span>`+
-      `<b>${esc(n.name)}</b> <span class="muted">${esc(n.country)}</span></div>`+
+      `<b>${esc(n.name)}</b> <span class="muted">${esc(disp)}</span> ${geoBadge}</div>`+
       `<span class="pill">rep ${(+n.reputation||0)}</span></div>`+
       `<div class="row" style="margin-top:6px"><span class="k">${role}</span>`+
       `<span class="muted">load ${(100*(n.load||0)).toFixed(0)}% · ${(+n.age_s||0)}s</span></div></div>`);
@@ -104,6 +119,35 @@ async function tick(){
   }
   document.getElementById('updated').textContent='updated '+new Date().toLocaleTimeString();
 }
+// D44: operator leaderboard (pseudonymous; owner only). Slower cadence — it changes slowly.
+let lbSort='reputation';
+function lbMetric(o){
+  if(lbSort==='helped') return (+o.jobs_helped||0)+' jobs';
+  if(lbSort==='credits') return (+o.credits_earned||0)+' cr';
+  return 'rep '+(+o.reputation||0)+'/10';
+}
+async function tickLeaders(){
+  let d; try{ d=await (await fetch('/leaderboard?sort='+lbSort,{cache:'no-store'})).json(); }catch(e){ return; }
+  const box=document.getElementById('leaders'); if(!box) return; box.innerHTML='';
+  const ops=d.operators||[];
+  if(!ops.length){ box.innerHTML='<div class="muted" style="font-size:12px">no operators yet</div>'; return; }
+  ops.forEach((o,i)=>{
+    const dot=o.online?'<span class="dot" style="background:#36d399"></span>':'';
+    const cc=(o.countries||[]).length?' <span class="muted">'+esc((o.countries||[]).join(' '))+'</span>':'';
+    box.insertAdjacentHTML('beforeend',
+      `<div class="lead"><span class="rank">${i+1}</span><span class="who">${dot}${esc(o.owner)}${cc}</span>`+
+      `<span class="met">${esc(lbMetric(o))}</span></div>`);
+  });
+}
+['reputation','helped','credits'].forEach(s=>{
+  const b=document.getElementById('lb_'+s);
+  if(b) b.onclick=()=>{
+    lbSort=s;
+    ['reputation','helped','credits'].forEach(x=>document.getElementById('lb_'+x).classList.toggle('on',x===s));
+    tickLeaders();
+  };
+});
+tickLeaders(); setInterval(tickLeaders,15000);
 tick(); setInterval(tick,3000);
 </script>
 </body>

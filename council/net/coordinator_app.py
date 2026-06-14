@@ -36,6 +36,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from council.net import geoip
 from council.net.app import APP_HTML
 from council.net.baseline import generate_baseline
 from council.net.config import CONFIG, JOB_TYPES, task_behavior
@@ -84,6 +85,17 @@ def _client_key(request: Request) -> str:
         if xff:
             return xff.split(",")[0].strip()[:64]
     return (request.client.host if request.client else "?")[:64]
+
+
+def _client_ip(request: Request) -> str:
+    """The client IP for geo-verification (D43) — same PW_TRUST_XFF spoof-resistance as _client_key
+    (socket peer by default; first XFF hop only behind a trusted proxy), but a clean, untruncated IP.
+    Trusting XFF blindly would let a client spoof their geo, so it stays behind the same gate."""
+    if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.client.host if request.client else ""
 
 
 def _ratelimit(key: str, env: str, default: str) -> None:
@@ -192,8 +204,10 @@ def register(body: RegisterBody, request: Request, x_pw_token: str | None = Head
         grant = red.get("grant")
     else:
         _auth(x_pw_token)
-    ip = request.client.host if request.client else ""
-    return store.register_node(body.model_dump(), ip=ip, grant_amount=grant)   # {node_id, node_secret}
+    ip = _client_ip(request)                       # D43: spoof-resistant (PW_TRUST_XFF-gated) client IP
+    geo = geoip.country_for_ip(ip)                  # offline lookup; "" when unavailable (default off)
+    return store.register_node(body.model_dump(), ip=ip, grant_amount=grant,
+                               geo_country=geo)     # {node_id, node_secret}
 
 
 @app.post("/nodes/heartbeat")
@@ -457,6 +471,14 @@ def metrics():
 @app.get("/status")
 def status():
     return store.status()
+
+
+@app.get("/leaderboard")
+def leaderboard(sort: str = "reputation", limit: int = 20):
+    """Pseudonymous top-operators board (D44). Public read like /status & /metrics; inputs clamped."""
+    if sort not in ("reputation", "helped", "credits"):
+        sort = "reputation"
+    return store.leaderboard(limit=max(1, min(100, limit)), sort=sort)
 
 
 @app.get("/", response_class=HTMLResponse)
