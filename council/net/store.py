@@ -105,6 +105,13 @@ class Store:
             self.conn.execute("ALTER TABLE jobs ADD COLUMN pool REAL")
         if "type" not in cols:       # job type — async work marketplace (D13); null/legacy = chat
             self.conn.execute("ALTER TABLE jobs ADD COLUMN type TEXT")
+        # stage chaining (D35): a `then` follow-on spec + parent/child links between chained jobs.
+        if "then_spec" not in cols:  # JSON {"question","requires"} → an assisted follow-on at completion
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN then_spec TEXT")
+        if "parent" not in cols:     # this job was spawned as the `then` follow-on of parent
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN parent TEXT")
+        if "child" not in cols:      # the follow-on job this job spawned on completion
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN child TEXT")
         # tasks migrations (D32 orchestration): reassignment counter + per-task progress.
         tcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(tasks)")}
         if "retries" not in tcols:   # how many times this task has been reassigned on failover
@@ -312,7 +319,7 @@ class Store:
                    job_type: str = "chat", items: Optional[list] = None,
                    requires: Optional[dict] = None, fetch: bool = False,
                    context: str = "", encrypt_to: str = "",
-                   split: Optional[list] = None) -> dict:
+                   split: Optional[list] = None, then: Optional[dict] = None) -> dict:
         with self.lock:
             asker = _clip(asker)
             # The single networked choke point for the brief/instruction (D26): scrub invisible/bidi
@@ -406,10 +413,19 @@ class Store:
                 return {"job_id": job_id, "status": "failed",
                         "error": "insufficient credit — help on a job first"}
 
+            # stage chaining (D35): persist a `then` follow-on spec so that, when THIS job completes,
+            # _settle spawns an assisted hand-off seeded with the deliverable (the "connecting them"
+            # step). Stored only with a non-empty question; the spec is re-sanitized at chain time.
+            then_spec = None
+            if isinstance(then, dict) and str(then.get("question") or "").strip():
+                then_spec = json.dumps({
+                    "question": str(then.get("question"))[:4000],
+                    "requires": then.get("requires") if isinstance(then.get("requires"), dict) else None})
             self.conn.execute(
-                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, asker, question, "pending_answers", _now(), None, None, None, None, pool, job_type))
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
+                "pool,type,then_spec) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "pending_answers", _now(), None, None, None, None,
+                 pool, job_type, then_spec))
             beh = task_behavior(job_type)
             for n in workers:
                 payload = {"question": question, "job_type": job_type}
@@ -479,22 +495,68 @@ class Store:
             self._save_ledger(); self.conn.commit()
             return {"job_id": job_id, "status": "failed",
                     "error": "insufficient credit — help on a job first"}
-        self.conn.execute(
-            "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (job_id, asker, question, "pending_assist", _now(), None, None, None, None, pool, "assisted"))
-        # ONE open task, no node_id — any consenting capable operator may claim it.
-        payload = {"question": question, "job_type": "assisted",
-                   "context": (context or "")[:4000], "requires": requires or {}, "price": pool,
-                   "encrypt_to": (encrypt_to or "")[:100]}
-        self.conn.execute(
-            "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
-            "owner,lens,country,model,created,score,claimed_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (str(uuid.uuid4()), job_id, "assisted", None, "open",
-             json.dumps(payload), None, None, None, "", "", "", _now(), None, None))
-        self._save_ledger(); self.conn.commit()
+        # The escrow hold is now applied IN MEMORY. If persisting the offer fails, undo it so the
+        # in-memory ledger can't diverge from the DB (review D35) — otherwise a phantom hold would
+        # later persist, stranding the asker's credit in escrow for a job that never existed.
+        try:
+            self.conn.execute(
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "pending_assist", _now(), None, None, None, None, pool, "assisted"))
+            # ONE open task, no node_id — any consenting capable operator may claim it.
+            payload = {"question": question, "job_type": "assisted",
+                       "context": (context or "")[:4000], "requires": requires or {}, "price": pool,
+                       "encrypt_to": (encrypt_to or "")[:100]}
+            self.conn.execute(
+                "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
+                "owner,lens,country,model,created,score,claimed_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (str(uuid.uuid4()), job_id, "assisted", None, "open",
+                 json.dumps(payload), None, None, None, "", "", "", _now(), None, None))
+            self._save_ledger(); self.conn.commit()
+        except Exception:
+            self.ledger.refund(asker, pool)   # roll the in-memory hold back to keep ledger==DB
+            raise
         return {"job_id": job_id, "status": "pending_assist", "price": pool}
+
+    def _maybe_chain(self, job_id: str, asker: str, deliverable: str) -> None:
+        """Stage chaining (D35): if the just-completed `job_id` declared a `then` follow-on, spawn an
+        ASSISTED job seeded with its deliverable as bounded context — the human-mediated "connecting
+        them" step (e.g. code_generation → integrate/build the generated units, D15/D18). Charged to
+        the same asker; links parent↔child. Best-effort: a follow-on that can't be created (no
+        question, or the asker can't afford the escrow) just isn't chained — the parent's own result
+        is untouched. The child carries NO then_spec, so chains never recurse. Called AFTER the
+        parent's final commit, under the caller's lock; _create_assisted is lock-free."""
+        row = self.conn.execute("SELECT then_spec FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        if not row or not row["then_spec"]:
+            return
+        try:
+            spec = json.loads(row["then_spec"])
+        except Exception:
+            return
+        if not isinstance(spec, dict):
+            return
+        q = sanitize_brief(str(spec.get("question") or ""))
+        if not q:
+            return
+        # best-effort: if the asker can't fund the follow-on's escrow, skip the chain cleanly (no
+        # orphan failed job) — the parent's own result stands and they can launch it manually later.
+        assisted_pool = round(CONFIG.worker_pool / CONFIG.fleet_size * JOB_TYPES["assisted"]["pool_mult"], 4)
+        if not self.ledger.can_afford(asker, assisted_pool):
+            return
+        requires = spec.get("requires") if isinstance(spec.get("requires"), dict) else None
+        # BEST-EFFORT: the parent is already settled+committed — a follow-on that errors (e.g. a DB
+        # failure mid-create) must NEVER fail the parent's completion (review D35). _create_assisted
+        # rolls back its own escrow hold on failure, so swallowing here can't leak credit.
+        try:
+            child = self._create_assisted(asker, q, (deliverable or "")[:4000], requires, "")
+        except Exception as exc:
+            print(f"[chain] follow-on for job {job_id} failed: {type(exc).__name__}: {exc}", flush=True)
+            return
+        if child.get("status") == "pending_assist":
+            self.conn.execute("UPDATE jobs SET child=? WHERE job_id=?", (child["job_id"], job_id))
+            self.conn.execute("UPDATE jobs SET parent=? WHERE job_id=?", (job_id, child["job_id"]))
+            self.conn.commit()
 
     def assisted_offers(self, node: dict) -> list:
         """Open assisted offers this operator's node is eligible for (capability-matched).
@@ -599,6 +661,10 @@ class Store:
             self.conn.execute("UPDATE jobs SET status='done', merged=?, receipt=? WHERE job_id=?",
                               (deliverable, json.dumps(receipt), t["job_id"]))
             self._save_ledger(); self.conn.commit()
+            # stage chaining (D35): spawn a `then` follow-on if this assisted job declared one
+            # (currently only automated parents set then_spec, so this is a no-op for now —
+            # symmetry + future assisted→assisted chains).
+            self._maybe_chain(t["job_id"], job["asker"], deliverable)
             return {"ok": True, "job_id": t["job_id"]}
 
     # ------------------------------------------------------------------ blobs (D22)
@@ -925,6 +991,9 @@ class Store:
              json.dumps(council) if council else None, job_id))
         self._save_ledger()
         self.conn.commit()
+        # stage chaining (D35): now that this job is settled+committed, spawn its `then` follow-on
+        # (no-op unless one was declared). After the commit so the parent is durable first.
+        self._maybe_chain(job_id, job["asker"], result.get("merged", ""))
 
     # ------------------------------------------------------------------ failover (D32)
     def _pick_replacement(self, job: Any, task: Any) -> Optional[sqlite3.Row]:
@@ -1122,6 +1191,7 @@ class Store:
             return {
                 "job_id": job["job_id"], "asker": job["asker"], "question": job["question"],
                 "type": job["type"] or "chat", "progress": progress,
+                "parent": job["parent"], "child": job["child"],   # stage chain links (D35)
                 "status": job["status"], "error": job["error"], "merged": job["merged"],
                 "council": json.loads(job["council"]) if job["council"] else None,
                 "judge_country": jt["country"] if jt else None,

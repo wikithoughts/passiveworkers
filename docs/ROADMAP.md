@@ -90,6 +90,23 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R23 — STAGE CHAINING: the "connecting them" step (D35, 2026-06-14) — generate parts → integrate
+Delivers the founder's "coding parts then connecting them." A job may declare a `then` follow-on
+`{question, requires?}`; when it completes, `store._maybe_chain` spawns an **assisted** job seeded with
+the parent's deliverable as bounded context — the human-mediated connect/integrate/build step
+(honoring D15/D18). Canonical: `code_generation` → `then` (a person integrates the generated units).
+Fires from BOTH completion paths (`_settle` automated, `deliver_assisted`) AFTER the parent's commit,
+under the caller's lock (`_create_assisted` is lock-free → no re-entrant deadlock). Charged to the same
+asker (own escrow); links `parent.child`/`child.parent` (in `job_view`). Conservation preserved (each
+job settles independently; a `can_afford` pre-check skips cleanly if unfunded). No recursion — the
+child carries no `then_spec` (≤1 hop per completion; bounded by balance). **230 tests (+7)**:
+`test_pipeline` (code_gen→assisted chain seeded with deliverable + links; no-then no-chain; no-recurse;
+unaffordable skips; chat can chain too; + review-fix tests). Review (3 lenses × verify, 6 agents) → 2
+fixed: chaining is now truly best-effort (a follow-on error never fails the committed parent), and
+`_create_assisted` refunds its escrow hold if persisting fails (ledger never diverges from the DB).
+**Roadmap (Phase-3 tail):** generic automated→automated DAG;
+multi-producer file reassembly; public-launch auth (per-operator tokens + rate limiting).
+
 ## R22 — HARDEN THE FETCH + UPLOAD SURFACE (D34, 2026-06-14) — close gaps the network now exercises
 Security follow-on to shipping `download_extract` (which makes operator machines fetch arbitrary
 asker URLs). Two flagged gaps closed: **SSRF redirect hardening** — `research._guarded_get` disables

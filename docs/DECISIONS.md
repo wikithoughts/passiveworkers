@@ -940,3 +940,50 @@ returned 6 findings, **1 actionable, fixed:**
   403 claimant check correctly precedes the body read — no change needed.)
 Lesson: with a streaming cap, the check must gate the *append*, not follow it — "validate before you
 accumulate."
+
+## D35 — Stage chaining: a `then` follow-on (the "connecting them" step) (D32 Phase-3)
+**Decision:** Deliver the founder's "coding parts then connecting them" by generalizing the existing
+answer→judge dependency into **asker-declared stage chaining**. A job may carry a `then` spec
+`{question, requires?}`; when the job **completes**, `store._maybe_chain` spawns an **assisted**
+follow-on seeded with the parent's deliverable as bounded context — the human-mediated "connect /
+integrate / build" step (honoring D15/D18: generation distributes; running/linking code is
+human-mediated). The canonical use: `code_generation` (generate the units, distributed) → `then`
+(a person integrates + builds them). It also works after any automated job (chat/research/shard
+types). The follow-on is charged to the **same asker** (its own escrow hold) and the jobs are linked
+`parent.child` / `child.parent` (surfaced in `job_view`).
+Design properties:
+- Fired from BOTH completion paths — `_settle` (automated) and `deliver_assisted` (assisted) — **after
+  the parent's final commit**, under the caller's lock; `_create_assisted` is lock-free, so no
+  re-entrant deadlock (the lock is non-reentrant).
+- **Conservation preserved:** each job escrows/settles independently; the chain never touches the
+  parent's ledger. A `can_afford` pre-check skips the chain cleanly if the asker can't fund the
+  follow-on (no orphan failed job; the parent's result stands).
+- **No recursion / explosion:** the child carries NO `then_spec`, so a chain is at most one hop per
+  completion; total follow-ons are bounded by the asker's balance (each holds escrow).
+- The follow-on question is `sanitize_brief`-scrubbed at chain time; the seeded context is the
+  asker's own deliverable, bounded to 4000 chars.
+**Why:** "connecting the parts" that requires running/building code is exactly the gated, human-mediated
+work `assisted` already models (D15/D18) — chaining turns a generation batch into a finished,
+integrated deliverable without ever auto-executing third-party code, and reuses the settled escrow +
+rating + signed-delivery machinery.
+**Status:** Settled & implemented. 230 tests green (7 new). No new dependency. **Roadmap (Phase-3 tail):**
+generic automated→automated multi-stage DAG; multi-producer file reassembly; public-launch auth
+(per-operator enrollment tokens + per-identity rate limiting).
+
+### D35 addendum — adversarial review pass (stage chaining)
+A workflow review (3 lenses — correctness/locking, conservation/recursion, abuse/input — × adversarial
+verify, 6 agents) returned 3 findings, **2 confirmed (same root), fixed:**
+- **(HIGH) The chain wasn't actually best-effort.** `_maybe_chain` called `_create_assisted` with no
+  try/except, so a follow-on that errored (a DB failure mid-create) would propagate back through
+  `_settle`/`deliver_assisted`/`complete_task` and **fail the parent's already-committed completion**.
+  Fixed: `_maybe_chain` now swallows + logs any follow-on exception (the parent stands).
+- **(HIGH, related) In-memory ledger could diverge from the DB.** If `_create_assisted`'s escrow
+  `hold()` succeeded but a later INSERT failed, the in-memory hold was kept while nothing was
+  persisted — a phantom hold that would later strand the asker's credit in escrow. Fixed:
+  `_create_assisted` now **refunds the hold and re-raises** if persisting the offer fails, so the
+  ledger and DB never diverge (benefits the primary `create_job` assisted path too). Both verifiers
+  agreed conservation was never broken (hold is a symmetric move) — the real flaws were *atomicity*
+  and *best-effort semantics*, now both enforced.
+Lesson: "best-effort, runs after commit" must be enforced with an actual try/except, and any in-memory
+ledger mutation before a commit needs a compensating rollback on failure — durability + atomicity, not
+just conservation.
