@@ -38,6 +38,14 @@ without web *by design* — this measures the value of live grounding, not model
 *Caveats: small samples (recent n=4, breaking n=2 ⚠ — noise at that size), an LLM grader, one curated
 reference per question, and quick-depth council. It's a real signal, not a universal verdict.*
 
+> **Replication at deeper depth (2026-06-14, same 10 verified questions, `--depth standard --analysts 2`):**
+> static **−0.25** (9.75 vs 10.00, control still ~tie), recent **+2.25** (5.00 vs 2.75), breaking
+> **+2.00 ⚠** (2.00 vs 0.00, n=2), overall **+1.20** (6.30 vs 5.10). The moat **replicates** — the
+> council wins on recent/breaking and ~ties on the control at both depths. Notably, deeper depth did
+> **not** raise the overall score (6.30 vs 6.80 at quick) — honest signal that the edge is **currency
+> (live web), not compute depth**. We re-ran the *verified* question bank deeper rather than fabricate
+> new "breaking" reference answers we couldn't vouch for (a wrong reference silently corrupts the gap).
+
 ### 2. Citations are grounded, not decorative
 `scripts/eval_citation_fidelity.py` on a fresh report ("current US federal funds rate…"):
 - **Grounded rate: 5/5 verifiable cited claims (100%)**, **mean content overlap 86%**.
