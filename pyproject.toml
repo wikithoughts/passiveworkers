@@ -1,20 +1,36 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "passiveworkers"
-version = "0.1.2"
+version = "0.1.3"
 description = "Make your computer work for you and others: a local-first compute network where machines do typed jobs for each other. Flagship task — deep research: local LLMs research the live web as independent analysts and a blind editor compiles one cited report."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [{ name = "Passive Workers" }]
+maintainers = [{ name = "Passive Workers" }]
 keywords = ["deep-research", "ollama", "local-first", "llm", "rag", "privacy", "mcp", "distributed", "federation", "compute-network", "marketplace"]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
     "requests>=2.32",
@@ -42,6 +58,9 @@ all = ["trafilatura>=2.0", "pypdf>=4.0", "python-docx>=1.1", "mcp>=1.0", "pynacl
 [project.urls]
 Homepage = "https://github.com/wikithoughts/passiveworkers"
 Repository = "https://github.com/wikithoughts/passiveworkers"
+Issues = "https://github.com/wikithoughts/passiveworkers/issues"
+Documentation = "https://github.com/wikithoughts/passiveworkers#readme"
+Changelog = "https://github.com/wikithoughts/passiveworkers/blob/main/CHANGELOG.md"
 
 [project.scripts]
 pw = "council.cli:main"
