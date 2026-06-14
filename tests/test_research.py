@@ -39,3 +39,70 @@ def test_extract_main_falls_back_without_trafilatura(monkeypatch):
     # even if trafilatura is absent, regex strip returns text
     text, date = R._extract_main("<html><body><p>Hello world</p><script>x</script></body></html>")
     assert "Hello world" in text and "x" not in text
+
+
+# --------------------------------------------------------- SSRF redirect hardening (D34)
+class _Raw:
+    def __init__(self, data):
+        self._d = data
+
+    def read(self, n=-1, decode_content=True):
+        return self._d
+
+
+class _Resp:
+    def __init__(self, location=None, body=b"<html><body><p>ok</p></body></html>"):
+        self.is_redirect = location is not None
+        self.is_permanent_redirect = False
+        self.headers = {"Location": location} if location else {}
+        self.raw = _Raw(body)
+
+    def raise_for_status(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_guarded_get_blocks_redirect_to_internal(monkeypatch):
+    # a public URL must NOT be able to 30x-redirect to a metadata/private address (SSRF)
+    import pytest
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: h != "169.254.169.254")
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Resp(location="http://169.254.169.254/latest/"))
+    with pytest.raises(ValueError):
+        R._guarded_get("http://good.example/page", timeout=5)
+
+
+def test_guarded_get_returns_final_non_redirect(monkeypatch):
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Resp())
+    r = R._guarded_get("http://good.example/x", timeout=5)
+    assert r.is_redirect is False
+
+
+def test_guarded_get_bounds_redirect_chains(monkeypatch):
+    import pytest
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)   # all public, but endless redirects
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Resp(location="http://good.example/next"))
+    with pytest.raises(ValueError):
+        R._guarded_get("http://good.example/start", timeout=5)
+
+
+def test_fetch_extract_blocks_redirect_to_metadata(monkeypatch):
+    import pytest
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: h != "169.254.169.254")
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Resp(location="http://169.254.169.254/"))
+    with pytest.raises(ValueError):
+        R.fetch_extract("http://good.example/page")
+
+
+def test_fetch_extract_happy_path_through_guarded_get(monkeypatch):
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    monkeypatch.setattr(requests, "get",
+                        lambda url, **kw: _Resp(body=b"<html><body><p>Hello SSRF-safe</p></body></html>"))
+    assert "Hello SSRF-safe" in R.fetch_extract("http://good.example/page")

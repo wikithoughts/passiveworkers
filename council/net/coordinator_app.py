@@ -31,7 +31,7 @@ from __future__ import annotations
 import ipaddress
 import threading
 
-from fastapi import Body, FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -225,22 +225,28 @@ def deliver_assisted(task_id: str, body: DeliverBody,
     return out
 
 
+_BLOB_CAP = 512 * 1024   # max bytes for one content-addressed chunk
+
+
 @app.post("/jobs/{job_id}/blobs/{blob_hash}")
-def put_blob(job_id: str, blob_hash: str, request: Request, data: bytes = Body(default=b""),
-             x_pw_token: str | None = Header(default=None),
-             x_node_secret: str | None = Header(default=None)):
+async def put_blob(job_id: str, blob_hash: str, request: Request,
+                   x_pw_token: str | None = Header(default=None),
+                   x_node_secret: str | None = Header(default=None)):
     """Operator uploads a content-addressed chunk for a job it has claimed (D22)."""
     _auth(x_pw_token)
     node_id = _node_auth(x_node_secret)
-    # reject oversize by Content-Length BEFORE we trust the buffered body (DoS guard)
-    try:
-        if int(request.headers.get("content-length", 0)) > 512 * 1024:
-            raise HTTPException(status_code=413, detail="chunk too large")
-    except (TypeError, ValueError):
-        pass
     if store.assisted_claimant(job_id) != node_id:
         raise HTTPException(status_code=403, detail="not the claiming operator for this job")
-    out = store.put_blob(job_id, blob_hash, data)
+    # Stream the body with a HARD cap and abort early, so a chunked / no-Content-Length upload can't
+    # buffer unbounded memory before the size check (the old Content-Length guard was advisory —
+    # a client can omit/lie about it; review D32 finding). Check BEFORE extending so the accumulator
+    # never grows past the cap (review D34) — peak ≈ _BLOB_CAP + one server-sized stream chunk.
+    buf = bytearray()
+    async for chunk in request.stream():
+        if len(buf) + len(chunk) > _BLOB_CAP:
+            raise HTTPException(status_code=413, detail="chunk too large")
+        buf.extend(chunk)
+    out = store.put_blob(job_id, blob_hash, bytes(buf))
     if not out.get("ok"):
         raise HTTPException(status_code=400, detail=out.get("error", "rejected"))
     return out

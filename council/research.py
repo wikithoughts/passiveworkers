@@ -91,6 +91,37 @@ def _host_is_public(host: str) -> bool:
         return False
 
 
+_MAX_REDIRECTS = 3
+
+
+def _guarded_get(url: str, timeout: float):
+    """A streaming GET that re-validates the host on the INITIAL request AND on EVERY redirect hop.
+    A public URL must never be able to 30x-redirect to a loopback/private/CGNAT/metadata address —
+    so we disable requests' automatic redirects and follow them manually, bounded and re-checked.
+    Raises ValueError on any non-http(s) or non-public hop, or on too many hops. Used for ANY
+    asker-influenced fetch (page evidence, shard_map fetch:true, the download_extract task type).
+    Residual (documented, Phase-3+): getaddrinfo runs again inside requests, so a DNS-rebinding
+    attacker could in principle swap a public→private address between this check and the connect
+    (TOCTOU); the allowlist narrows it, full IP-pinning needs a custom connector."""
+    import requests
+    cur = url
+    for _hop in range(_MAX_REDIRECTS + 1):
+        host = (urlparse(cur).hostname or "").lower()
+        if not cur.startswith(("http://", "https://")) or not _host_is_public(host):
+            raise ValueError(f"blocked non-public URL hop: {cur[:80]}")
+        r = requests.get(cur, headers={"User-Agent": _UA}, timeout=timeout, stream=True,
+                         allow_redirects=False)
+        if r.is_redirect or r.is_permanent_redirect:
+            loc = r.headers.get("Location") or ""
+            r.close()
+            if not loc:
+                raise ValueError("redirect with no Location")
+            cur = requests.compat.urljoin(cur, loc)   # resolve relative → re-checked next loop
+            continue
+        return r
+    raise ValueError("too many redirects")
+
+
 def _clean(results: list[dict]) -> str:
     out, seen = [], set()
     for r in results:
@@ -507,12 +538,10 @@ def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
     """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized main text.
     Shared by the researcher (page evidence) and batch fetch shards. Raises on failure —
     callers treat page evidence as best-effort. with_date=True → (text, iso_date)."""
-    import requests
     from council.sanitize import clean
-    host = (urlparse(url).hostname or "").lower()
-    if not url.startswith(("http://", "https://")) or not _host_is_public(host):
-        raise ValueError(f"not a public http(s) URL: {url[:80]}")
-    r = requests.get(url, headers={"User-Agent": _UA}, timeout=15, stream=True)
+    # SSRF-guarded GET that re-validates the host on every redirect hop (a public URL must not be
+    # able to bounce to an internal address). Raises on a non-public hop or too many redirects.
+    r = _guarded_get(url, timeout=15)
     r.raise_for_status()
     raw = r.raw.read(_FETCH_CAP, decode_content=True).decode("utf-8", "replace")
     text, date = _extract_main(raw)

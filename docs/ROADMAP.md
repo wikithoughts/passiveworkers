@@ -90,6 +90,19 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R22 — HARDEN THE FETCH + UPLOAD SURFACE (D34, 2026-06-14) — close gaps the network now exercises
+Security follow-on to shipping `download_extract` (which makes operator machines fetch arbitrary
+asker URLs). Two flagged gaps closed: **SSRF redirect hardening** — `research._guarded_get` disables
+auto-redirects and follows them manually, bounded + re-validating every hop's host (`_host_is_public`),
+so a public URL can no longer 30x-redirect to a private/loopback/metadata (169.254.169.254) address;
+used by web page-evidence, `shard_map fetch:true`, and `download_extract`. **Blob upload peak-memory
+cap** — `put_blob` now streams the body with a hard 512 KB cap (413 early), closing the chunked/no-
+Content-Length bypass; the claimant 403 check runs before any body read. **223 tests (+6)** (SSRF
+redirect/bound/e2e + blob cap via TestClient). Review (3 lenses × verify, 9 agents) → 1 fixed: the cap
+now checks size BEFORE extending the buffer (no SSRF redirect/scheme/IP-encoding bypass found).
+Documented residual: DNS-rebinding TOCTOU (allowlist narrows it; full IP-pinning later). **Still roadmap:** per-operator enrollment tokens + per-identity
+rate limiting (public-launch auth); pipeline/DAG "connecting them"; multi-producer file reassembly.
+
 ## R21 — TASK-TYPE REGISTRY + download-extract & code-generation (D33, 2026-06-13) — "research is one type"
 Made "research is just one task type" structurally true. A single `TASK_BEHAVIORS` registry
 (`council/net/config.py`: executor / sharded / fetch / judge / assemble / framing) replaces the ~5

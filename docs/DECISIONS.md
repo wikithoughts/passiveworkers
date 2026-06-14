@@ -902,3 +902,41 @@ returned 3 findings, **2 confirmed (same root cause), fixed before commit:**
 Lesson: a per-type capability flag must not be silently widened by a shared user input — "who decides
 whether this fetches?" is the type's contract, not the caller's. The registry made the right answer a
 one-line per-type declaration.
+
+## D34 — Harden the asker-influenced fetch + upload surface (D32 Phase-3, security)
+**Decision:** Close two flagged security gaps now that the network fetches and stores more on behalf of
+askers — the responsible follow-on to shipping `download_extract` (D33), which makes operator machines
+fetch arbitrary asker-supplied URLs.
+- **SSRF redirect hardening** (`research._guarded_get`): the old `fetch_extract` used
+  `requests.get(stream=True)` with redirects followed **automatically**, so a *public* URL could
+  30x-redirect to a loopback/private/CGNAT/**metadata** (169.254.169.254) address — the host guard
+  only checked the *original* URL. `_guarded_get` disables auto-redirects and follows them **manually,
+  bounded (`_MAX_REDIRECTS=3`), re-validating every hop's host** with `_host_is_public` (which resolves
+  via `getaddrinfo`, catching odd IP encodings) and rejecting non-http(s) hops. Used by every
+  asker-influenced fetch: web page-evidence, `shard_map fetch:true`, and `download_extract`.
+- **Blob upload peak-memory cap** (`coordinator_app.put_blob`): the handler buffered the whole body via
+  `Body()`, so a chunked / no-Content-Length upload bypassed the *advisory* Content-Length check. It
+  now **streams the body with a hard 512 KB cap and aborts (413) early**; the claimant **403** check
+  runs *before* any body is read.
+**Why:** these are the two surfaces the broader, soon-to-open network exercises on behalf of untrusted
+askers; both were flagged in prior reviews and the SSRF one became materially more exploitable the
+moment `download_extract` shipped.
+**Status:** Settled & implemented. 223 tests green (6 new). No new dependency. **Documented residual:**
+DNS-rebinding TOCTOU (the host is resolved again inside `requests` after our check) — narrowed by the
+allowlist; full IP-pinning needs a custom connector (later). **Still roadmap:** per-operator
+enrollment tokens + per-identity rate limiting (the auth-model items for public launch); the
+pipeline/DAG "connecting them" step; multi-producer file reassembly.
+
+### D34 addendum — adversarial review pass (fetch + upload hardening)
+A workflow review (3 lenses — SSRF-bypass / blob-cap / regression — × adversarial verify, 9 agents)
+returned 6 findings, **1 actionable, fixed:**
+- **(HIGH) The blob cap checked size AFTER `buf.extend(chunk)`** — so a single large stream chunk was
+  fully buffered before the check (peak ≈ cap + arbitrary chunk). Fixed: check `len(buf) + len(chunk)`
+  **before** extending, so the accumulator never grows past the cap (peak ≈ cap + one server-sized
+  stream chunk). The SSRF-bypass lens found no redirect/scheme/IP-encoding bypass of `_guarded_get`
+  (the per-hop `_host_is_public` resolves via `getaddrinfo`, catching odd encodings; non-http(s) hops
+  and bounded loops are rejected), and the regression lens confirmed normal public fetches + the
+  assisted file-delivery path are unchanged. (A second "finding" was a positive verification that the
+  403 claimant check correctly precedes the body read — no change needed.)
+Lesson: with a streaming cap, the check must gate the *append*, not follow it — "validate before you
+accumulate."
