@@ -152,6 +152,48 @@ def test_create_assisted_refunds_hold_if_persisting_fails(store, monkeypatch):
     assert store.ledger.conservation_ok()
 
 
+def _deliver_assisted(store, job_id, op="intg"):
+    """An operator accepts + delivers the open assisted offer for job_id (store-level)."""
+    nid = _reg(store, op)
+    node = dict(store.get_node(nid))
+    off = next(o for o in store.assisted_offers(node) if o["job_id"] == job_id)
+    store.accept_assisted(off["task_id"], nid, op)
+    store.deliver_assisted(off["task_id"], nid, "delivered output")
+
+
+def test_multistage_pipeline_propagates_across_stages(store):
+    # D39: `then` is a LIST → code_generation → assisted(integrate) → assisted(finalize)
+    _reg(store, "opA")
+    _reg(store, "opB")
+    _reg(store, "judge", answer_model="", judge=True)
+    jid = _run_code_job(store, then=[{"type": "assisted", "question": "integrate the units"},
+                                     {"type": "assisted", "question": "finalize the build"}])
+    stage1 = store.job_view(jid)["child"]
+    assert stage1 and store.job_view(stage1)["type"] == "assisted"
+    # stage1 still carries the remaining stage (the chain self-propagates)
+    assert store.conn.execute("SELECT then_spec FROM jobs WHERE job_id=?", (stage1,)).fetchone()["then_spec"]
+    _deliver_assisted(store, stage1, op="intg")            # delivering stage1 spawns stage2
+    stage2 = store.job_view(stage1)["child"]
+    assert stage2 and store.job_view(stage2)["type"] == "assisted"
+    assert store.job_view(stage2)["parent"] == stage1
+    # stage2 is the last — no further chain
+    assert store.conn.execute("SELECT then_spec FROM jobs WHERE job_id=?", (stage2,)).fetchone()["then_spec"] is None
+    assert store.ledger.conservation_ok()
+
+
+def test_chain_can_target_an_automated_stage(store):
+    # D39: a stage can be any type — code_generation → chat, with the deliverable forwarded in
+    _reg(store, "opA")
+    _reg(store, "judge", answer_model="", judge=True)
+    jid = _run_code_job(store, then=[{"type": "chat", "question": "summarize the generated code"}],
+                        minds=1)
+    child = store.job_view(jid)["child"]
+    assert child and store.job_view(child)["type"] == "chat"
+    assert store.job_view(child)["status"] == "pending_answers"
+    q = store.conn.execute("SELECT question FROM jobs WHERE job_id=?", (child,)).fetchone()["question"]
+    assert "Upstream result to build on:" in q and "code_0" in q   # deliverable forwarded
+
+
 def test_chat_job_can_also_declare_a_followon(store):
     # chaining isn't code-specific: any automated job that settles can hand off
     _reg(store, "opA")

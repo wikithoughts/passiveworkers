@@ -133,6 +133,42 @@ def test_without_as_file_deliverable_stays_json(store):
     assert read_artifact(store.job_view(jid)["merged"]) is None   # plain JSON, not a file artifact
 
 
+# ---------------------------------------------------------------- malformed shard index (review: HIGH)
+def test_settle_tolerates_mixed_index_types(store):
+    # a worker returning a STRING 'i' must not crash _settle's sort (→ conservation break) — review
+    _reg(store, "opA")
+    _reg(store, "judge", answer_model="", judge=True)
+    j = store.create_job("alice", "do", job_type="shard_map", items=["a", "b"], minds=1)
+    jid = j["job_id"]
+    t = _answer_tasks(store, jid)[0]
+    res = {"results": [{"i": "1", "item": "b", "output": "B"},   # string index
+                       {"i": 0, "item": "a", "output": "A"}]}     # int index
+    assert store.complete_task(t["task_id"], res, node_id=t["node_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
+    assert store.complete_task(jt["task_id"], {"scores": {}}, node_id=jt["node_id"])
+    view = store.job_view(jid)
+    assert view["status"] == "done"                              # did NOT crash
+    assert [r["output"] for r in json.loads(view["merged"])] == ["A", "B"]   # sorted 0 then "1"
+    assert store.ledger.conservation_ok()
+
+
+def test_settle_tolerates_infinity_index(store):
+    # review (CRITICAL): int(float('inf')) raises OverflowError (not Value/TypeError) — the sort
+    # coercion must catch it too, or a worker returning i=inf crashes settle / breaks conservation.
+    _reg(store, "opA")
+    _reg(store, "judge", answer_model="", judge=True)
+    j = store.create_job("alice", "do", job_type="shard_map", items=["a", "b"], minds=1)
+    jid = j["job_id"]
+    t = _answer_tasks(store, jid)[0]
+    res = {"results": [{"i": float("inf"), "item": "b", "output": "B"},
+                       {"i": 0, "item": "a", "output": "A"}]}
+    assert store.complete_task(t["task_id"], res, node_id=t["node_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
+    assert store.complete_task(jt["task_id"], {"scores": {}}, node_id=jt["node_id"])
+    assert store.job_view(jid)["status"] == "done"      # inf index did NOT crash settle
+    assert store.ledger.conservation_ok()
+
+
 # ---------------------------------------------------------------- malformed split (review: critical)
 def test_non_finite_split_does_not_crash_falls_back_to_capacity(store):
     _reg(store, "n1", cores=4)

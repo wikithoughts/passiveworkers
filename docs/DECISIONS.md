@@ -1082,3 +1082,61 @@ A workflow review (3 lenses — sybil-closure / token-auth / conservation-compat
 Lesson: a money-amount entering the ledger needs finitude+sign validation at the chokepoint (not just
 the API), and an "enrollment-gated grant" is only airtight if the *default* grant is gated too — one
 missed `open_account(None)` reopens the hole, so gate the default, not each call site.
+
+## D38 — Multi-producer file reassembly: a sharded deliverable as one downloadable file (Phase-3 tail)
+**Decision:** Let a sharded job (`shard_map`/`download_extract`/`code_generation`) deliver its combined
+output as ONE downloadable, content-addressed, integrity-verified **file** instead of a JSON results
+array. A job created with `as_file=True` triggers, at settle: assemble the producers' parts in input
+order → `artifacts.chunk_bytes()` (a new in-memory variant of `chunk_file`, same Merkle/content-address
+format) → store the chunks in the per-job blob store → set `merged = wrap_artifact(manifest)`. The asker
+fetches + reassembles + verifies via the existing D22 path (`pw fetch` / `get_blob` / `reassemble`). So
+"generate code across N machines" yields a real file you can save/build, not a blob of JSON.
+**Why:** the founder's distributed vision includes file outputs ("coding parts then connecting them" is
+more useful when the parts come back as a file); this reuses the entire signed-delivery + fetch path,
+adding only the coordinator-side reassembly at settle.
+**Status:** Settled & implemented. No new dependency.
+
+### D38 addendum — adversarial review pass (file reassembly)
+A workflow review (3 lenses × verify, 15 agents) → 12 findings, **2 real bugs fixed** (the rest were
+PASS verifications, e.g. chunk_bytes is byte-identical to the old chunk_file):
+- **(HIGH) The shard-assembly sort could crash.** `allr.sort(key=r.get("i",0))` raises `TypeError` on
+  a worker result with a mixed-type index (e.g. a string `"i"`), aborting `_settle` mid-way →
+  ledger-conservation break / job stuck in judging. (Pre-existing, exposed by the review.) Fixed: the
+  sort key coerces `i` via `int(...)` with a 0 fallback — can't crash, still orders correctly.
+- **(HIGH) The as_file blob insert bypassed the per-job 200 MB storage cap** (it inserted directly
+  rather than via the cap-enforcing `put_blob`). Fixed: an explicit per-job total check before insert,
+  falling back to the JSON deliverable if the cap would be exceeded.
+- **(corrected)** the "non-reentrant lock would deadlock" comment was wrong — the lock is an `RLock`
+  (reentrant); comment fixed (and that fact is what makes D39's chaining simple).
+
+## D39 — Generic multi-stage pipeline: `then` as a chain across any task type (Phase-3 tail)
+**Decision:** Generalize R23's single-hop `then` (one assisted follow-on) into a **pipeline**: `then`
+is a stage dict OR a **list** of stage specs `{type, question, requires?, items?, split?, as_file?}`.
+When a job completes, `_maybe_chain` materializes the **first** stage as a job of its declared type
+(seeded with the deliverable — as `context` for an assisted stage, else appended to the instruction as
+"upstream result"; sharded stages use the spec's own items) and passes the **rest** of the chain down
+as that job's `then`, so the pipeline self-propagates (e.g. `code_generation → assisted integrate →
+assisted finalize`, or `research → chat → assisted`). Charged to the same asker; linked
+parent↔child; best-effort. `_norm_then` caps the chain at 8 stages and whitelists types via
+`JOB_TYPES` (unknown → `assisted`).
+Implementation note: `store.lock` is an `RLock` (reentrant), so `_maybe_chain` calls full `create_job`
+for the next stage directly under the held lock — no post-lock machinery or lock-free refactor needed.
+The chain strictly shrinks each hop (stages[1:]), so it always terminates; total jobs are bounded by
+the (≤8) chain length, each escrowed/settled independently → conservation holds.
+**Why:** completes the founder's "connecting the parts" beyond a single hand-off — arbitrary automated
++ human stages composed into one declared pipeline, reusing the whole job/settle/escrow machinery.
+**Status:** Settled & implemented. 255 tests green. No new dependency.
+
+### D39 addendum — adversarial review pass (pipeline + D38 fixes)
+A workflow review (3 lenses — termination/recursion, conservation/best-effort, correctness/compat —
+× verify, 10 agents) → 7 findings, **2 fixed** (the rest PASS: chain terminates, conservation holds,
+R23 single-hop preserved):
+- **(CRITICAL) The D38 sort fix missed `OverflowError`.** `int(float('inf'))` raises `OverflowError`,
+  which my `except (TypeError, ValueError)` didn't catch — so a worker returning `i: inf` still
+  crashed `_settle` (→ conservation break). Fixed: catch `OverflowError` too (so the index sort
+  tolerates inf/-inf/nan/str/None). Regression-tested.
+- **(low) Parent↔child linking wasn't best-effort.** The linking `UPDATE`s sat outside the try/except,
+  so a DB error there could propagate and fail the already-committed parent. Fixed: linking is now in
+  its own try/except (logged + swallowed) — the chain link is best-effort like the rest.
+Lesson: "coerce to int defensively" must enumerate ALL the numeric failure modes — `inf` raises
+`OverflowError`, not `ValueError`; a partial except is a hidden crash.

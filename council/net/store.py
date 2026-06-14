@@ -53,6 +53,38 @@ def _clip(s: Any) -> str:
     return str(s if s is not None else "")[:_FIELD_MAX]
 
 
+_MAX_CHAIN_STAGES = 8   # cap a `then` pipeline length (abuse bound)
+
+
+def _norm_then(then: Any) -> Optional[str]:
+    """Normalize a `then` chain — a single stage dict OR a list of stage dicts — into a JSON list of
+    sanitized stage specs (or None). Each stage: {type, question(required), requires?, items?, split?,
+    as_file?}; an unknown/absent type defaults to 'assisted' (the human-mediated hand-off). D39."""
+    if isinstance(then, dict):
+        then = [then]
+    if not isinstance(then, list):
+        return None
+    stages = []
+    for s in then[:_MAX_CHAIN_STAGES]:
+        if not isinstance(s, dict):
+            continue
+        q = str(s.get("question") or "").strip()
+        if not q:
+            continue
+        stage = {"type": s.get("type") if s.get("type") in JOB_TYPES else "assisted",
+                 "question": q[:4000]}
+        if isinstance(s.get("requires"), dict):
+            stage["requires"] = s["requires"]
+        if isinstance(s.get("items"), list):
+            stage["items"] = [str(x)[:2000] for x in s["items"]][:200]
+        if isinstance(s.get("split"), list):
+            stage["split"] = s["split"]
+        if s.get("as_file"):
+            stage["as_file"] = True
+        stages.append(stage)
+    return json.dumps(stages) if stages else None
+
+
 class Store:
     def __init__(self, path: str = None):
         self.lock = threading.RLock()
@@ -388,7 +420,8 @@ class Store:
             # any consenting, capable operator may claim, do (with their own AI or by hand),
             # and deliver. No autonomous computer-use by us; the human is the agent.
             if job_type == "assisted":
-                return self._create_assisted(asker, question, context, requires, encrypt_to)
+                return self._create_assisted(asker, question, context, requires, encrypt_to,
+                                             then_spec=_norm_then(then))
             # Answer-workers = online nodes that declare a model AND meet the job's
             # capability requirements; prefer higher reputation.
             candidates = [n for n in self.online_nodes()
@@ -467,14 +500,10 @@ class Store:
                 return {"job_id": job_id, "status": "failed",
                         "error": "insufficient credit — help on a job first"}
 
-            # stage chaining (D35): persist a `then` follow-on spec so that, when THIS job completes,
-            # _settle spawns an assisted hand-off seeded with the deliverable (the "connecting them"
-            # step). Stored only with a non-empty question; the spec is re-sanitized at chain time.
-            then_spec = None
-            if isinstance(then, dict) and str(then.get("question") or "").strip():
-                then_spec = json.dumps({
-                    "question": str(then.get("question"))[:4000],
-                    "requires": then.get("requires") if isinstance(then.get("requires"), dict) else None})
+            # stage chaining (D35/D39): persist a `then` PIPELINE (one stage, or a list of stages of
+            # any type) so that when THIS job completes, _maybe_chain materializes the next stage
+            # seeded with the deliverable and passes the rest of the chain down. Re-sanitized here.
+            then_spec = _norm_then(then)
             self.conn.execute(
                 "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
                 "pool,type,then_spec,as_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -522,8 +551,10 @@ class Store:
         return bool(a and a.quality_n > 0 and a.avg_quality >= need)
 
     def _create_assisted(self, asker: str, question: str, context: str,
-                         requires: Optional[dict], encrypt_to: str = "") -> dict:
-        """Create an OPEN assisted offer (called under self.lock from create_job)."""
+                         requires: Optional[dict], encrypt_to: str = "",
+                         then_spec: Optional[str] = None) -> dict:
+        """Create an OPEN assisted offer (called under self.lock from create_job). `then_spec` (D39):
+        a JSON chain of follow-on stages this job spawns when delivered."""
         job_id = str(uuid.uuid4())
         # validate a reputation gate up front so a fat-fingered value surfaces to the asker
         if requires and "min_reputation" in requires:
@@ -554,9 +585,10 @@ class Store:
         # later persist, stranding the asker's credit in escrow for a job that never existed.
         try:
             self.conn.execute(
-                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,pool,type)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, asker, question, "pending_assist", _now(), None, None, None, None, pool, "assisted"))
+                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
+                "pool,type,then_spec) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, asker, question, "pending_assist", _now(), None, None, None, None,
+                 pool, "assisted", then_spec))
             # ONE open task, no node_id — any consenting capable operator may claim it.
             payload = {"question": question, "job_type": "assisted",
                        "context": (context or "")[:4000], "requires": requires or {}, "price": pool,
@@ -574,43 +606,55 @@ class Store:
         return {"job_id": job_id, "status": "pending_assist", "price": pool}
 
     def _maybe_chain(self, job_id: str, asker: str, deliverable: str) -> None:
-        """Stage chaining (D35): if the just-completed `job_id` declared a `then` follow-on, spawn an
-        ASSISTED job seeded with its deliverable as bounded context — the human-mediated "connecting
-        them" step (e.g. code_generation → integrate/build the generated units, D15/D18). Charged to
-        the same asker; links parent↔child. Best-effort: a follow-on that can't be created (no
-        question, or the asker can't afford the escrow) just isn't chained — the parent's own result
-        is untouched. The child carries NO then_spec, so chains never recurse. Called AFTER the
-        parent's final commit, under the caller's lock; _create_assisted is lock-free."""
+        """Stage chaining (D35/D39): if the just-completed `job_id` declares a `then` PIPELINE,
+        materialize the NEXT stage — a job of ANY type, seeded with this job's deliverable — and pass
+        the REMAINING stages down so the chain self-propagates (e.g. code_generation → assisted
+        integrate, or research → chat → assisted). The deliverable seeds the next stage as `context`
+        for an assisted stage, else as an "upstream result" appended to its instruction. Charged to
+        the same asker; links parent↔child. Best-effort: a stage that can't start (bad spec, no
+        affordable escrow, no workers, create error) just isn't chained — the parent's result stands.
+        Runs under the caller's (reentrant) lock; create_job re-acquires it safely."""
         row = self.conn.execute("SELECT then_spec FROM jobs WHERE job_id=?", (job_id,)).fetchone()
         if not row or not row["then_spec"]:
             return
         try:
-            spec = json.loads(row["then_spec"])
+            stages = json.loads(row["then_spec"])
         except Exception:
             return
-        if not isinstance(spec, dict):
+        if not isinstance(stages, list) or not stages:
             return
-        q = sanitize_brief(str(spec.get("question") or ""))
+        stage, rest = stages[0], (stages[1:] or None)
+        jtype = stage.get("type") if stage.get("type") in JOB_TYPES else "assisted"
+        q = sanitize_brief(str(stage.get("question") or ""))
         if not q:
             return
-        # best-effort: if the asker can't fund the follow-on's escrow, skip the chain cleanly (no
-        # orphan failed job) — the parent's own result stands and they can launch it manually later.
-        assisted_pool = round(CONFIG.worker_pool / CONFIG.fleet_size * JOB_TYPES["assisted"]["pool_mult"], 4)
-        if not self.ledger.can_afford(asker, assisted_pool):
-            return
-        requires = spec.get("requires") if isinstance(spec.get("requires"), dict) else None
-        # BEST-EFFORT: the parent is already settled+committed — a follow-on that errors (e.g. a DB
-        # failure mid-create) must NEVER fail the parent's completion (review D35). _create_assisted
-        # rolls back its own escrow hold on failure, so swallowing here can't leak credit.
+        ctx = (deliverable or "")[:4000]
+        requires = stage.get("requires") if isinstance(stage.get("requires"), dict) else None
         try:
-            child = self._create_assisted(asker, q, (deliverable or "")[:4000], requires, "")
+            if jtype == "assisted":
+                # only the assisted escrow needs a pre-check (avoid an orphan failed offer); create_job
+                # handles affordability for the automated types itself.
+                assisted_pool = round(CONFIG.worker_pool / CONFIG.fleet_size
+                                      * JOB_TYPES["assisted"]["pool_mult"], 4)
+                if not self.ledger.can_afford(asker, assisted_pool):
+                    return
+                child = self.create_job(asker, q, job_type="assisted", context=ctx,
+                                        requires=requires, then=rest)
+            else:
+                qfull = f"{q}\n\nUpstream result to build on:\n{ctx}" if ctx else q
+                child = self.create_job(asker, qfull, job_type=jtype, items=stage.get("items"),
+                                        requires=requires, split=stage.get("split"),
+                                        as_file=bool(stage.get("as_file")), then=rest)
         except Exception as exc:
             print(f"[chain] follow-on for job {job_id} failed: {type(exc).__name__}: {exc}", flush=True)
             return
-        if child.get("status") == "pending_assist":
-            self.conn.execute("UPDATE jobs SET child=? WHERE job_id=?", (child["job_id"], job_id))
-            self.conn.execute("UPDATE jobs SET parent=? WHERE job_id=?", (job_id, child["job_id"]))
-            self.conn.commit()
+        if child.get("status") in ("pending_assist", "pending_answers"):
+            try:   # linking is also best-effort — a link failure must not fail the committed parent
+                self.conn.execute("UPDATE jobs SET child=? WHERE job_id=?", (child["job_id"], job_id))
+                self.conn.execute("UPDATE jobs SET parent=? WHERE job_id=?", (job_id, child["job_id"]))
+                self.conn.commit()
+            except Exception as exc:
+                print(f"[chain] link parent {job_id}↔child {child['job_id']} failed: {exc}", flush=True)
 
     def assisted_offers(self, node: dict) -> list:
         """Open assisted offers this operator's node is eligible for (capability-matched).
@@ -1027,18 +1071,30 @@ class Store:
             for a in answers:
                 res = json.loads(a["result"]) if a["result"] else {}
                 allr.extend(res.get("results") or [])
-            allr.sort(key=lambda r: r.get("i", 0))
+
+            def _shard_i(r):   # coerce a malformed/foreign 'i' so the sort can't crash (review):
+                try:           # TypeError(None)/ValueError("x"/nan)/OverflowError(inf) → 0
+                    return int(r.get("i", 0))
+                except (TypeError, ValueError, OverflowError):
+                    return 0
+            allr.sort(key=_shard_i)
             result = dict(result)
             if job["as_file"]:
                 # D38 multi-producer file reassembly: combine the producers' parts (in input order)
                 # into ONE document, chunk it into the per-job content-addressed blob store, and
                 # deliver a manifest the asker fetches+verifies as a single signed file (pw fetch).
-                # Runs under complete_task's lock → insert blobs directly (don't call the locked
-                # put_blob, which would re-acquire the non-reentrant lock and deadlock).
+                # Runs under complete_task's lock (an RLock, reentrant — see __init__); we insert blobs
+                # directly to defer to settle's single commit, and enforce the per-job storage cap here
+                # ourselves (put_blob's cap is otherwise bypassed — review D38).
                 from council.artifacts import chunk_bytes, wrap_artifact
                 content = "\n\n".join(str(r.get("output", "")) for r in allr).encode("utf-8")
                 try:
                     manifest, blobs = chunk_bytes(content, f"{job_id[:8]}-deliverable.txt")
+                    used = self.conn.execute(
+                        "SELECT COALESCE(SUM(LENGTH(data)),0) s FROM blobs WHERE job_id=?",
+                        (job_id,)).fetchone()["s"]
+                    if used + sum(len(b) for b in blobs.values()) > 200 * 1024 * 1024:
+                        raise ValueError("per-job storage cap reached")
                     for h, b in blobs.items():
                         self.conn.execute(
                             "INSERT OR IGNORE INTO blobs(hash,job_id,data,created) VALUES(?,?,?,?)",

@@ -90,6 +90,21 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R26+R27 — PHASE-3 TAIL: file reassembly + multi-stage pipeline (D38/D39, 2026-06-14) — "do it all"
+**R26 (D38) multi-producer file reassembly:** a sharded job with `as_file=True` delivers its combined
+output as ONE downloadable, content-addressed, integrity-verified file (`artifacts.chunk_bytes` →
+per-job blob store → `merged=wrap_artifact(manifest)`; asker `pw fetch`es + verifies) instead of a JSON
+array — so distributed code/extraction comes back as a real file. Review (15 agents) → 2 fixed: a
+pre-existing shard-index sort crash on mixed types (coerced now) + an as_file per-job-cap bypass
+(enforced now). **R27 (D39) generic multi-stage pipeline:** `then` is now a stage dict OR a LIST of
+stages of ANY type; each completion materializes the next stage (deliverable forwarded as context /
+appended instruction; sharded uses spec items) and passes the rest down → self-propagating pipeline
+(code_gen → assisted → assisted; research → chat → assisted). RLock makes `_maybe_chain`→`create_job`
+safe (no deadlock); chain shrinks each hop (≤8) so it terminates; conservation holds per stage;
+best-effort. Backward-compatible with R23 (single-dict `then` = one assisted hop). **254 tests**
+(multi-stage propagation, any-type stage, file reassembly+verify, mixed-index tolerance). With these,
+the distributed-network roadmap is COMPLETE.
+
 ## R25 — PER-OPERATOR ENROLLMENT TOKENS (D37, 2026-06-14) — public-launch auth, part 2 (closes the Sybil CRITICAL)
 Closes the D36-review Sybil starter-grant CRITICAL: the **starter grant now requires an admin-minted
 enrollment token** (opt-in `PW_ENROLL`; default off = unchanged). `ledger.open_account(grant_amount=

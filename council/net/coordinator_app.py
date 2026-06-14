@@ -151,7 +151,7 @@ class JobBody(BaseModel):
     context: str = Field(default="", max_length=4000)   # assisted: bounded context for the operator
     encrypt_to: str = Field(default="", max_length=100)  # assisted: asker box pubkey for E2E file encryption (D23)
     split: list[float] | None = Field(default=None, max_length=16)  # shard_map: explicit per-worker weights (else capacity-weighted, D32)
-    then: dict | None = None        # stage chaining (D35): {question, requires?} → an assisted follow-on at completion
+    then: dict | list | None = None  # stage chaining (D35/D39): a stage dict, or a LIST of stages, run as a pipeline on completion
     as_file: bool = False           # D38: deliver the assembled sharded output as one downloadable file
 
 
