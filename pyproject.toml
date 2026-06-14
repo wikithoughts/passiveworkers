@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "passiveworkers"
-version = "0.1.0"
+version = "0.1.1"
 description = "Make your computer work for you and others: a local-first compute network where machines do typed jobs for each other. Flagship task — deep research: local LLMs research the live web as independent analysts and a blind editor compiles one cited report."
 readme = "README.md"
 license = { file = "LICENSE" }
