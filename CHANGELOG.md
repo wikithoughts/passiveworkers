@@ -5,6 +5,18 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [0.1.5] — 2026-06-14
+`pw join` actually works now — two bugs found by dogfooding the real operator flow on a VPS (R31 / D47).
+### Fixed
+- **Enrollment-mode auth:** an operator who joined with `pw join` (and so never has the shared admin
+  token) was rejected (401) on every authenticated call after registering — heartbeat, task poll,
+  result, progress, assisted offers/accept/deliver, blob upload — so every job it touched failed. The
+  per-node secret now authenticates those endpoints on its own (it's minted at register, itself gated).
+  Backward-compatible. This made `pw join` + enrollment usable end-to-end for the first time.
+- **Lone-operator judging:** `pw join` defaulted to non-judging, so a single-operator deployment failed
+  every job with "no judge node online". Judging is now **on by default** (reuses the answer model);
+  `--no-judge` opts out. A lone operator can now answer *and* judge a job end-to-end.
+
 ## [0.1.4] — 2026-06-14
 Network features + a UI/UX polish pass (R29–R30 / D42–D46).
 ### Added
@@ -67,6 +79,7 @@ Initial public release — the single-player deep-research engine.
   (`council/net/`) with a live two-country deployment.
 - Eval instruments: SimpleQA bench, citation-fidelity, and currency-gap scripts.
 
+[0.1.5]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.5
 [0.1.4]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.4
 [0.1.3]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.3
 [0.1.2]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.2

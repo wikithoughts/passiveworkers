@@ -1,6 +1,9 @@
 # Releasing to PyPI
 
-## Current state — **0.1.3 (releasing) 2026-06-14**
+## Current state — **0.1.5 (releasing) 2026-06-14**
+0.1.5 ships the `pw join` end-to-end fixes (enrollment auth + judge default, D47/R31) found by
+dogfooding the real operator flow on the VPS — making the headline onboarding feature actually work.
+
 
 `passiveworkers` 0.1.0–0.1.2 are live on https://pypi.org/project/passiveworkers/. **0.1.3** ships the
 first-run robustness pass + `docs/USE_CASES.md` (R28) plus packaging-metadata hygiene (PEP 639 SPDX
