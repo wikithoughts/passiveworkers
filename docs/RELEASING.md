@@ -1,17 +1,20 @@
 # Releasing to PyPI
 
-## Current state — **0.1.1 PUBLISHED 2026-06-14** ✅
+## Current state — **0.1.2 PUBLISHED 2026-06-14** ✅
 
-`passiveworkers` **0.1.1 is live**: https://pypi.org/project/passiveworkers/0.1.1/ — `pip install
-passiveworkers` gets the full distributed-network track (R20–R25: scheduler/failover/progress,
-download-extract + code-generation task types, fetch/upload hardening, stage chaining, rate limiting,
-per-operator enrollment tokens) on top of the 0.1.0 single-player research engine. Verified end-to-end
+`passiveworkers` **0.1.2 is live**: https://pypi.org/project/passiveworkers/0.1.2/ — `pip install
+passiveworkers` now gets the COMPLETE distributed-network roadmap (R20–R27): scheduler/failover/
+progress/capacity-split, download-extract + code-generation task types, fetch/upload hardening, the
+generic multi-stage `then` pipeline, multi-producer file reassembly (`as_file`), rate limiting, and
+per-operator enrollment tokens — on top of the 0.1.0 single-player research engine. Verified end-to-end
 (twine check PASSED, sdist secret-scanned, clean-venv install from PyPI exposes a working `pw`). Token:
 1Password item **"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time
-— never written to `~/.pypirc` or any file. (0.1.0 published 2026-06-13.)
+— never written to `~/.pypirc` or any file. (0.1.0 published 2026-06-13; 0.1.1 + 0.1.2 on 2026-06-14.)
 
 > **Published versions are burned.** A version number on PyPI can never be reused, even after a yank.
-> The **next** release MUST bump `version` in `pyproject.toml` (`0.1.2` for fixes, `0.2.0` for features).
+> The **next** release MUST bump `version` in `pyproject.toml` (`0.1.3` for fixes, `0.2.0` for features).
+> Note: the PyPI JSON API updates instantly but the pip simple-index lags ~30–60s — a fresh
+> `pip install ==<newver>` may 404 right after upload; retry after a minute.
 >
 > **Next-bump cleanup (cosmetic):** switch `pyproject.toml` to the SPDX form `license = "MIT"` (drop
 > `license = { file = "LICENSE" }`) so PyPI shows a clean `license_expression` instead of embedding
