@@ -83,11 +83,14 @@ const assert = (c,m)=>{ if(!c){ console.error('✗ FAIL:', m); process.exit(1);}
   assert(((els['netstat']&&els['netstat'].textContent)||'').includes('machine'),
          'network status (N machines · M minds) shown');
 
-  // 2) sign in
+  // 2) sign in (new account) — the key is shown ONCE; acknowledge it to reveal the desk
   document.getElementById('handle').value='tester';
   await document.getElementById('signin').onclick();
   await wait(30);
   assert(store['pw_secret']==='SEC123', 'sign-in stored the user secret');
+  assert(els['authkeyval'].value==='SEC123', 'account key shown once for the user to save');
+  await document.getElementById('authkeydone').onclick();   // "I saved it — continue"
+  await wait(30);
   assert(els['askbox'].style.display!=='none', 'after sign-in: Ask box revealed');
   assert(fetchCalls.includes('POST /users'), 'sign-in POSTed /users');
 

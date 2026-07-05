@@ -78,10 +78,25 @@ APP_HTML = r"""<!doctype html>
     <div class="sub" id="netstat" style="margin-top:-10px" aria-live="polite"></div>
 
     <div id="auth" class="card" style="display:none">
-      <div class="row between"><b>Pick a handle to begin</b></div>
-      <div class="row" style="margin-top:8px"><input id="handle" placeholder="e.g. ahmed" aria-label="Pick a handle"
-        style="flex:1;background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:9px 11px;font:inherit"/>
-        <button id="signin">Start</button></div>
+      <div class="row between"><b id="authtitle">Pick a handle to begin</b>
+        <span class="muted" id="authtoggle" style="cursor:pointer;font-size:12px" role="button" tabindex="0">I have a key ▸</span></div>
+      <div id="authnew">
+        <div class="row" style="margin-top:8px"><input id="handle" placeholder="e.g. ahmed" aria-label="Pick a handle"
+          style="flex:1;background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:9px 11px;font:inherit"/>
+          <button id="signin">Start</button></div>
+      </div>
+      <div id="authhave" style="display:none">
+        <div class="row" style="margin-top:8px"><input id="usecret" placeholder="paste your account key" aria-label="Account key"
+          style="flex:1;background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:9px 11px;font:inherit"/>
+          <button id="restore">Sign in</button></div>
+      </div>
+      <div id="authkey" style="display:none;margin-top:8px">
+        <div class="muted" style="font-size:12px">Save this key — it is the ONLY way back into your account (no password reset):</div>
+        <div class="row" style="margin-top:4px"><input id="authkeyval" readonly aria-label="Your account key"
+          style="flex:1;background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:9px 11px;font:inherit"/>
+          <button class="ghost" id="authkeycopy">copy</button></div>
+        <button id="authkeydone" style="margin-top:6px">I saved it — continue</button>
+      </div>
       <div class="muted err" id="authmsg" style="margin-top:6px;font-size:12px" aria-live="assertive"></div>
     </div>
 
@@ -100,7 +115,7 @@ APP_HTML = r"""<!doctype html>
           </select>
           <select id="minds" title="how many minds answer (cost scales)" aria-label="How many minds answer"
             style="background:#0c1430;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:inherit">
-            <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option>
+            <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>8</option>
           </select>
           <button id="ask">Ask the council →</button>
         </span>
@@ -128,7 +143,7 @@ const CENTROIDS={FI:[61.9,25.7],AE:[23.4,53.8],US:[39.8,-98.6],DE:[51.2,10.4],BR
  GB:[54,-2],FR:[46.6,2.2],IN:[21,78],SG:[1.35,103.8],JP:[36.2,138.3],NL:[52.1,5.3],CA:[56,-106],
  AU:[-25,133],ZA:[-29,24],NG:[9,8],KE:[0.2,37.9],EG:[26,30],SA:[24,45],IQ:[33,44],TR:[39,35],
  RU:[61,105],CN:[35,105],KR:[36,128],ID:[-2,118],VN:[14,108],MX:[23,-102],ES:[40,-3.7],IT:[42.8,12.8],
- SE:[62,15],PL:[52,19]};
+ SE:[62,15],PL:[52,19],AR:[-38,-63]};
 const YOU=[25.2,55.3];  // asker anchor (overridden by geolocation if allowed)
 let you=YOU.slice();
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -152,8 +167,9 @@ async function refreshMe(){
   try{const m=await (await fetch('/me',{headers:uHeaders()})).json();
     document.getElementById('me').innerHTML='@'+esc(m.handle)+' · <b>'+m.balance+'</b> cr';
     document.getElementById('contribute').textContent=
-      'PW_COORDINATOR='+location.origin+' PW_TOKEN=<operator-token> \\\n  PW_OWNER='+m.handle+
-      ' PW_NAME=my-pc PW_COUNTRY=<XX> PW_ANSWER_MODEL=gemma3:4b PW_LENS=practical \\\n  python -m council.net.agent';
+      '# ask whoever runs this coordinator for an enrollment token, then:\n'+
+      'pip install passiveworkers\n'+
+      'pw join '+location.origin+' <enrollment-token>    # one command · resume later with: pw work';
   }catch(e){}
   refreshHistory();
 }
@@ -172,15 +188,41 @@ async function refreshHistory(){
     }).join('');
   }catch(e){}
 }
+function _save(h,s){handle=h;secret=s;localStorage.setItem('pw_handle',h);localStorage.setItem('pw_secret',s);}
 document.getElementById('signin').onclick=async()=>{
   const h=document.getElementById('handle').value.trim();if(!h)return;
   const r=await fetch('/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:h})});
-  if(r.status===409){document.getElementById('authmsg').textContent='“'+h+'” is taken — try another.';return}
+  if(r.status===409){document.getElementById('authmsg').textContent='“'+h+'” is taken — try another, or use your key.';return}
   if(!r.ok){document.getElementById('authmsg').textContent='Could not start. Try again.';return}
-  const d=await r.json();handle=d.handle;secret=d.user_secret;
-  localStorage.setItem('pw_handle',handle);localStorage.setItem('pw_secret',secret);
+  const d=await r.json();_save(d.handle,d.user_secret);
+  // show the key ONCE — losing it means losing the account (there is no password reset)
+  document.getElementById('authnew').style.display='none';
+  document.getElementById('authtoggle').style.display='none';
+  document.getElementById('authtitle').textContent='Account created';
+  document.getElementById('authkeyval').value=secret;
+  document.getElementById('authkey').style.display='';
+};
+document.getElementById('authkeydone').onclick=()=>{document.getElementById('auth').style.display='none';refreshMe();};
+document.getElementById('authkeycopy').onclick=()=>{const v=document.getElementById('authkeyval');
+  if(navigator.clipboard)navigator.clipboard.writeText(v.value);document.getElementById('authkeycopy').textContent='copied ✓';};
+document.getElementById('restore').onclick=async()=>{
+  const s=document.getElementById('usecret').value.trim();if(!s)return;
+  const r=await fetch('/me',{headers:{'X-User-Secret':s}});   // the key IS the identity; /me confirms it
+  if(!r.ok){document.getElementById('authmsg').textContent='That key was not recognized.';return}
+  const m=await r.json();_save(m.handle,s);
   document.getElementById('auth').style.display='none';refreshMe();
 };
+function _toggleAuth(){
+  const have=document.getElementById('authhave'),nw=document.getElementById('authnew'),
+    tog=document.getElementById('authtoggle'),ttl=document.getElementById('authtitle');
+  const showHave=have.style.display==='none';
+  have.style.display=showHave?'':'none';nw.style.display=showHave?'none':'';
+  tog.textContent=showHave?'◂ new account':'I have a key ▸';
+  ttl.textContent=showHave?'Sign in with your key':'Pick a handle to begin';
+  document.getElementById('authmsg').textContent='';
+}
+document.getElementById('authtoggle').onclick=_toggleAuth;
+document.getElementById('authtoggle').onkeydown=(e)=>{if(e.key==='Enter'||e.key===' ')_toggleAuth();};
 
 // ---- ambient online nodes (so the map breathes before you ask) ----
 function byMachine(arr){const m={};for(const x of arr||[]){(m[x.machine_key]=m[x.machine_key]||{country:x.country,items:[]}).items.push(x);}return m;}
@@ -195,11 +237,15 @@ async function ambientTick(){
         .bindPopup('<b>'+flag(m.country)+' '+esc(cc(m.country))+'</b><br>'+m.items.length+' mind(s): '+
           esc(m.items.map(x=>x.answer_model||'judge').join(', ')));
     }
-  }catch(e){}
+  }catch(e){const hdr=document.getElementById('netstat');
+    if(hdr)hdr.textContent='⚠ coordinator unreachable — retrying…';}
 }
 
 // ---- ask + live render ----
-let polling=null,bwait=0,lastAns='';
+let polling=null,bwait=0,lastAns='',JOBTYPES=null;
+// authoritative prices come from the server (GET /job-types) — never hardcode them here, or the
+// preview lies the moment an operator tunes PW_WORKER_POOL / PW_JUDGE_FEE / PW_FLEET_SIZE.
+async function loadJobTypes(){try{JOBTYPES=await (await fetch('/job-types')).json()}catch(e){}}
 function openJob(id){            // watch any job live (new ask, history click, or #job= link)
   if(polling)clearInterval(polling);
   bwait=0;lastAns='';
@@ -212,8 +258,9 @@ function jt(){return (document.getElementById('jtype')||{}).value||'chat'}
 function updateHint(){
   const n=+(document.getElementById('minds').value||3);
   const t=jt();
-  const per=t==='research_report'?30:t==='shard_map'?20:10;
-  const cost=n*per+5;
+  const info=(JOBTYPES&&JOBTYPES[t])||null;                       // real server prices when loaded
+  const per=info?info.price_per_mind:(t==='research_report'?30:t==='shard_map'?20:10);
+  const cost=Math.round(n*per+(info?info.judge_fee:5));
   const itemsEl=document.getElementById('items');
   if(itemsEl)itemsEl.style.display=t==='shard_map'?'':'none';
   const qEl=document.getElementById('q');
@@ -399,9 +446,10 @@ async function poll(id){
 }
 
 if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{you=[p.coords.latitude,p.coords.longitude]},()=>{},{timeout:4000});
-refreshMe();ambientTick();setInterval(ambientTick,5000);updateHint();
-// deep link: /#job=<id> reopens that question (shareable result)
-if(secret&&location.hash.indexOf('#job=')===0)openJob(location.hash.slice(5));
+refreshMe();ambientTick();setInterval(ambientTick,5000);updateHint();loadJobTypes().then(updateHint);
+// deep link: /#job=<id> reopens that question (a shareable result capability URL — works even when
+// logged out; the answer is public by the unguessable id, the private receipt/identity stays hidden)
+if(location.hash.indexOf('#job=')===0)openJob(location.hash.slice(5));
 </script>
 </body>
 </html>
