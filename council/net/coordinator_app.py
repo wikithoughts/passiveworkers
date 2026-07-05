@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import secrets
 import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -115,7 +116,10 @@ def _enroll_enabled() -> bool:
 
 
 def _auth(token: str | None) -> None:
-    if token != CONFIG.token:
+    # constant-time compare on BYTES: compare_digest raises TypeError on a non-ASCII str, which would
+    # turn a bad token into a 500 instead of a clean 401 (D48 review). Fails closed on any mismatch.
+    if not secrets.compare_digest((token or "").encode("utf-8", "replace"),
+                                  (CONFIG.token or "").encode("utf-8", "replace")):
         raise HTTPException(status_code=401, detail="bad or missing X-PW-Token")
 
 
@@ -193,21 +197,20 @@ def healthz():
 def register(body: RegisterBody, request: Request, x_pw_token: str | None = Header(default=None),
              x_enroll_token: str | None = Header(default=None)):
     _ratelimit(f"reg:{_client_key(request)}", "PW_RL_REGISTER", "60")   # D36 (per client/global-behind-tunnel)
-    grant = None
+    ip = _client_ip(request)                       # D43: spoof-resistant (PW_TRUST_XFF-gated) client IP
+    geo = geoip.country_for_ip(ip)                  # offline lookup; "" when unavailable (default off)
     if _enroll_enabled():
         # D37: registration requires a per-operator enrollment token (the shared PW_TOKEN is now the
         # ADMIN token, used only to mint these) — so one leaked token can't enroll for everyone, and
-        # the owner's starter grant comes from (and is bounded by) the redeemed token.
-        red = store.redeem_enrollment(x_enroll_token or "", kind="node")
-        if not red.get("ok"):
-            raise HTTPException(status_code=403, detail=red.get("error", "valid enrollment token required"))
-        grant = red.get("grant")
-    else:
-        _auth(x_pw_token)
-    ip = _client_ip(request)                       # D43: spoof-resistant (PW_TRUST_XFF-gated) client IP
-    geo = geoip.country_for_ip(ip)                  # offline lookup; "" when unavailable (default off)
-    return store.register_node(body.model_dump(), ip=ip, grant_amount=grant,
-                               geo_country=geo)     # {node_id, node_secret}
+        # the owner's starter grant comes from (and is bounded by) the redeemed token. D48: the token
+        # is redeemed IN THE SAME transaction as the node INSERT, so a failed insert can't burn it.
+        res = store.register_node(body.model_dump(), ip=ip, geo_country=geo,
+                                  enroll_token=x_enroll_token or "", enroll_kind="node")
+        if res.get("error"):
+            raise HTTPException(status_code=403, detail=res["error"])
+        return res
+    _auth(x_pw_token)
+    return store.register_node(body.model_dump(), ip=ip, geo_country=geo)   # {node_id, node_secret}
 
 
 @app.post("/nodes/heartbeat")
@@ -349,14 +352,14 @@ def get_blob(job_id: str, blob_hash: str, x_user_secret: str | None = Header(def
 def make_user(body: UserBody, request: Request, x_enroll_token: str | None = Header(default=None)):
     # unauthenticated mint → the prime flood/ledger-inflation target; bound it per client (D36)
     _ratelimit(f"usr:{_client_key(request)}", "PW_RL_USERS", "20")
-    grant = None
     if _enroll_enabled():
         # D37: signup stays open, but the STARTER GRANT requires a valid enrollment token — without
         # one the account is created with ZERO credit (it can still earn), so minting many handles
-        # yields no free credits. This closes the Sybil starter-grant hole the D36 review surfaced.
-        red = store.redeem_enrollment(x_enroll_token or "", kind="user")
-        grant = red.get("grant") if red.get("ok") else 0.0
-    res = store.register_user(body.handle, grant_amount=grant)
+        # yields no free credits. D48: the token is redeemed INSIDE register_user's transaction, AFTER
+        # its handle-availability check, so a 'handle taken' collision can't burn a single-use token.
+        res = store.register_user(body.handle, enroll_token=x_enroll_token or "", enroll_kind="user")
+    else:
+        res = store.register_user(body.handle)
     if res.get("error"):
         raise HTTPException(status_code=409, detail=res["error"])
     return res
@@ -439,10 +442,24 @@ def my_jobs(x_user_secret: str | None = Header(default=None)):
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str):
+def get_job(job_id: str, x_user_secret: str | None = Header(default=None)):
     view = store.job_view(job_id)
     if view is None:
         raise HTTPException(status_code=404, detail="unknown job_id")
+    # Capability-URL model: the job_id is an unguessable UUID, so the RESULT (question, answers,
+    # merged deliverable) is readable by anyone the asker shares the link with — that's the intended
+    # "shareable result". But the asker's IDENTITY and the financial RECEIPT (asker_id, payouts,
+    # balances) are private; they are only returned to the authenticated asker. Job ids are no longer
+    # exposed on the public /status feed, so they aren't enumerable.
+    requester = store.user_for_secret(x_user_secret or "")
+    if requester != view.get("asker"):
+        # Redact everything private, keep the shareable result visible (D48 + review): the asker's
+        # identity, the financial receipt, the settlement `error` (which can embed the asker's handle
+        # and exact balance), and the parent/child chain ids (working capability URLs to the asker's
+        # OTHER pipeline stages — leaking them would defeat the non-enumerability this model relies on).
+        view = dict(view)
+        for k in ("asker", "receipt", "error", "parent", "child"):
+            view[k] = None
     return view
 
 

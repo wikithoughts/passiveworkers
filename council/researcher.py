@@ -23,19 +23,13 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-import requests
-
+from council import ollama as _ollama
 from council.judge import _extract_json
 from council.research import (extract_date_hint, fetch_extract, inject_recency, is_breaking,
                               is_time_sensitive, order_by_recency, route_engines,
                               search_structured)
-
-OLLAMA_BASE = "http://localhost:11434"
-_GEN_TIMEOUT = float(os.environ.get("PW_RESEARCH_GEN_TIMEOUT",
-                                    os.environ.get("PW_OLLAMA_TIMEOUT", "480")))
-
 
 @dataclass
 class ResearchWorker:
@@ -44,7 +38,7 @@ class ResearchWorker:
     lens: str = "neutral"
     country: str = "local"
     temperature: float = 0.4
-    ollama_base: str = OLLAMA_BASE
+    ollama_base: str = field(default_factory=_ollama.base)
     depth: str = "standard"   # quick (plan only) | standard (plan+refine) | deep (plan+2×refine)
     angle: str = ""           # STORM-lite: the distinct perspective THIS analyst researches through
     page_evidence: bool = True  # fetch top result pages (leaders draft from pages, not snippets)
@@ -73,17 +67,10 @@ class ResearchWorker:
         return order[min(i + 1, len(order) - 1)]
 
     def _generate(self, prompt: str, num_predict: int) -> tuple[str, int]:
-        r = requests.post(
-            f"{self.ollama_base}/api/generate",
-            json={"model": self.model, "prompt": prompt, "stream": False,
-                  "options": {"temperature": self.temperature, "num_predict": num_predict},
-                  # keep this analyst warm across its plan→refine→draft rounds (R17)
-                  "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
-            timeout=_GEN_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        return (data.get("response") or "").strip(), (data.get("eval_count") or 0)
+        # keep this analyst warm across its plan→refine→draft rounds (R17); PW_OLLAMA_BASE honored
+        return _ollama.generate(prompt, model=self.model, base_url=self.ollama_base,
+                                temperature=self.temperature, num_predict=num_predict,
+                                timeout_env="PW_RESEARCH_GEN_TIMEOUT", timeout_default=480)
 
     # ------------------------------------------------------------------ rounds
     def _plan_queries(self, brief: str) -> list[str]:

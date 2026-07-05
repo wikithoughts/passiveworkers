@@ -65,7 +65,7 @@ def main() -> int:
     deadline = time.monotonic() + args.timeout
     last = None
     while time.monotonic() < deadline:
-        v = requests.get(f"{base}/jobs/{job_id}", timeout=15).json()
+        v = requests.get(f"{base}/jobs/{job_id}", headers=headers, timeout=15).json()
         if v["status"] != last:
             print(f"  … {v['status']}")
             last = v["status"]

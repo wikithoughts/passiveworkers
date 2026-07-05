@@ -19,16 +19,11 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-import requests
-
+from council import ollama as _ollama
 from council.research import fetch_extract
 from council.sanitize import clean, spotlight
-
-OLLAMA_BASE = "http://localhost:11434"
-_GEN_TIMEOUT = float(os.environ.get("PW_BATCH_GEN_TIMEOUT",
-                                    os.environ.get("PW_OLLAMA_TIMEOUT", "480")))
 
 
 @dataclass
@@ -37,20 +32,14 @@ class BatchWorker:
     model: str
     country: str = "local"
     temperature: float = 0.2
-    ollama_base: str = OLLAMA_BASE
+    ollama_base: str = field(default_factory=_ollama.base)
 
     def _generate(self, prompt: str, num_predict: int = 220) -> tuple[str, int]:
-        r = requests.post(
-            f"{self.ollama_base}/api/generate",
-            json={"model": self.model, "prompt": prompt, "stream": False,
-                  "options": {"temperature": self.temperature, "num_predict": num_predict},
-                  # keep the model warm across this shard's items (R17) — batch loops _generate per item
-                  "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
-            timeout=_GEN_TIMEOUT,
-        )
-        r.raise_for_status()
-        d = r.json()
-        return (d.get("response") or "").strip(), (d.get("eval_count") or 0)
+        # keep the model warm across this shard's items (R17) — batch loops _generate per item;
+        # PW_OLLAMA_BASE honored, PW_BATCH_GEN_TIMEOUT (then PW_OLLAMA_TIMEOUT) tunes the timeout.
+        return _ollama.generate(prompt, model=self.model, base_url=self.ollama_base,
+                                temperature=self.temperature, num_predict=num_predict,
+                                timeout_env="PW_BATCH_GEN_TIMEOUT", timeout_default=480)
 
     def process(self, instruction: str, shard: list[dict], fetch: bool = False,
                 on_progress=None) -> dict:
@@ -74,7 +63,8 @@ class BatchWorker:
                 ok += 1
                 results.append({"i": idx, "item": item, "output": out})
             except Exception as e:
-                results.append({"i": idx, "item": item,
+                # mark failed items so settlement can tell an all-errors batch from a real one (D48)
+                results.append({"i": idx, "item": item, "error": True,
                                 "output": f"(error: {type(e).__name__}: {str(e)[:120]})"})
             # mid-flight progress (D32): report items done / total so the coordinator can show a
             # job completion % and the reaper sees a live, advancing claim. Best-effort by the caller.

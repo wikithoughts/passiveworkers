@@ -23,14 +23,11 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
-import requests
-
+from council import ollama as _ollama
 from council.sanitize import strip_invisible
-
-OLLAMA_BASE = "http://localhost:11434"
 
 
 def _blind_order(n: int, seed: str) -> list[int]:
@@ -109,26 +106,16 @@ class ScoredCandidate:
 @dataclass
 class Judge:
     model: str
-    ollama_base: str = OLLAMA_BASE
+    ollama_base: str = field(default_factory=_ollama.base)
     num_predict: int = 900
 
     def _generate(self, prompt: str, num_predict: Optional[int] = None) -> str:
-        resp = requests.post(
-            f"{self.ollama_base}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.0, "num_predict": num_predict or self.num_predict},
-                "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m"),  # warm judge (R17)
-            },
-            # CPU-only/busy machines need headroom (measured: a 4B judge can exceed 400s
-            # under contention); configurable like the worker/researcher timeouts.
-            timeout=float(os.environ.get("PW_JUDGE_TIMEOUT",
-                                         os.environ.get("PW_OLLAMA_TIMEOUT", "400"))),
-        )
-        resp.raise_for_status()
-        return (resp.json().get("response") or "").strip()
+        # temperature 0.0 for deterministic judging; a 4B judge on a busy CPU can exceed 400s under
+        # contention, so PW_JUDGE_TIMEOUT (then PW_OLLAMA_TIMEOUT) is configurable. PW_OLLAMA_BASE honored.
+        text, _ = _ollama.generate(prompt, model=self.model, base_url=self.ollama_base,
+                                   temperature=0.0, num_predict=num_predict or self.num_predict,
+                                   timeout_env="PW_JUDGE_TIMEOUT", timeout_default=400)
+        return text
 
     # ------------------------------------------------------------------ 1. SCORE
     def score(self, question: str, answers: list) -> list[ScoredCandidate]:

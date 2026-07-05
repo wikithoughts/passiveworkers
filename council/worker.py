@@ -22,12 +22,10 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-import requests
-
-OLLAMA_BASE = "http://localhost:11434"
+from council import ollama as _ollama
 
 # A small library of lenses — different prompts pull different ideas out of the same model.
 LENSES: dict[str, str] = {
@@ -58,7 +56,7 @@ class PerspectiveWorker:
     country: str = "local"
     temperature: float = 0.7          # natural divergence between workers
     num_predict: int = 500
-    ollama_base: str = OLLAMA_BASE
+    ollama_base: str = field(default_factory=_ollama.base)
     # Optional hook: a function (question) -> retrieved web context string, run by
     # THIS worker's own agent. Left None in the MVP; this is where per-country
     # search plugs in once a second machine abroad joins.
@@ -88,27 +86,13 @@ class PerspectiveWorker:
         )
 
         t0 = time.monotonic()
-        resp = requests.post(
-            f"{self.ollama_base}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": self.temperature, "num_predict": self.num_predict},
-                # keep the model warm across a worker's calls / the session (R17): kills the
-                # 5-30s reload stalls; PW_OLLAMA_KEEP_ALIVE="0" to unload immediately.
-                "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m"),
-            },
-            # On a shared CPU host a concurrent heavy generation (e.g. another job's
-            # baseline) can starve this one; a hard 300s turned brief contention into
-            # empty answers (score 0, perspective lost). Configurable per node.
-            timeout=float(os.environ.get("PW_OLLAMA_TIMEOUT", "300")),
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        # keep the model warm across a worker's calls (R17); PW_OLLAMA_BASE honored. On a shared CPU
+        # host a concurrent heavy generation can starve this one, so PW_OLLAMA_TIMEOUT is tunable.
+        text, tokens = _ollama.generate(prompt, model=self.model, base_url=self.ollama_base,
+                                        temperature=self.temperature, num_predict=self.num_predict,
+                                        timeout_default=300)
         elapsed = time.monotonic() - t0
-        text = (data.get("response") or "").strip()
-        tokens = data.get("eval_count") or len(text.split())
+        tokens = tokens or len(text.split())
         return Answer(
             worker_id=self.worker_id,
             model=self.model,

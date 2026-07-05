@@ -38,4 +38,7 @@ echo ""
 python -m council.net.submit --asker alice "Our two-person startup must pick ONE region to launch in first — Western Europe, the Gulf (GCC), or Southeast Asia. Recommend one, with the single strongest reason and the biggest risk."
 
 echo ""; echo "=== LEDGER / TELEMETRY ==="
-curl -s "$URL/status" | python -c "import sys,json; d=json.load(sys.stdin); print('conserved:', d['ledger_conserved'], '| total:', d['ledger_total']); print('balances:', d['accounts'])"
+curl -s "$URL/status" | python -c "import sys,json; d=json.load(sys.stdin); print('conserved:', d['ledger_conserved'], '| total:', d['ledger_total'])"
+# D48: /status no longer exposes a per-account balance sheet (privacy). Pseudonymous operator
+# rankings are at /leaderboard; a user reads their own balance at /me with their X-User-Secret.
+curl -s "$URL/leaderboard?sort=credits" | python -c "import sys,json; d=json.load(sys.stdin); print('top operators:', [(o['owner'], o.get('credits_earned')) for o in d.get('operators', [])][:5])"

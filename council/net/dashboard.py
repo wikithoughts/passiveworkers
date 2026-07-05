@@ -119,11 +119,14 @@ async function tick(){
       `<span class="muted">load ${(100*(n.load||0)).toFixed(0)}% · ${(+n.age_s||0)}s</span></div></div>`);
   }
   const jobs=d.recent_jobs||[]; const jb=document.getElementById('jobs'); jb.innerHTML='';
+  const JT={chat:'💬 ask',research_report:'🔬 research',shard_map:'⚙️ batch',assisted:'🤝 assisted',
+    download_extract:'📥 extract',code_generation:'💻 code'};
   for(const j of jobs.slice(0,8)){
     const col=j.status==='done'?'#36d399':j.status==='failed'?'#f87272':'#fbbd23';
+    const ago=(j.age_s!=null)?(j.age_s<90?Math.round(j.age_s)+'s':Math.round(j.age_s/60)+'m')+' ago':'';
     jb.insertAdjacentHTML('beforeend',
-      `<div class="job" style="border-left-color:${col}"><b>${esc(j.asker)}</b> `+
-      `<span class="muted">${esc(j.status)}</span></div>`);
+      `<div class="job" style="border-left-color:${col}"><b>${esc(JT[j.type]||j.type||'job')}</b> `+
+      `<span class="muted">${esc(j.status)}${ago?' · '+ago:''}</span></div>`);
   }
   document.getElementById('updated').textContent='updated '+new Date().toLocaleTimeString();
 }

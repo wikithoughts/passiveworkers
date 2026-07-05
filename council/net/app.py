@@ -385,7 +385,9 @@ function renderAnswer(v){
 }
 
 async function poll(id){
-  let v;try{v=await (await fetch('/jobs/'+id)).json()}catch(e){return}
+  // send the user secret so the asker gets their OWN full view (identity + credit receipt);
+  // a share-link viewer without the secret still sees the answer, just not the private receipt.
+  let v;try{v=await (await fetch('/jobs/'+id,{headers:uHeaders()})).json()}catch(e){return}
   drawMap(v);renderLive(v);
   if(v.status==='done'){
     // re-render only when content changes (the independent baseline may land a bit later)

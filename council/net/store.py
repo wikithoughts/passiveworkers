@@ -211,53 +211,92 @@ class Store:
         return {"enroll_token": token, "owner": owner, "kind": kind,
                 "grant": amount, "max_uses": max_uses}
 
+    def _redeem_enrollment_locked(self, token: str, kind: str = "any") -> dict:
+        """Consume one use of an enrollment token WITHOUT committing — the caller already holds
+        `self.lock` and owns the commit, so a redemption can be made atomic with the node INSERT it
+        gates (a failed register then rolls the `uses+1` back, instead of burning a single-use token
+        without producing a node). See redeem_enrollment for the standalone/committing wrapper."""
+        if not token:
+            return {"ok": False, "error": "missing enrollment token"}
+        row = self.conn.execute(
+            "SELECT * FROM enroll_tokens WHERE token_hash=?", (_hash(token),)).fetchone()
+        if not row:
+            return {"ok": False, "error": "invalid enrollment token"}
+        if (row["uses"] or 0) >= (row["max_uses"] or 1):
+            return {"ok": False, "error": "enrollment token exhausted"}
+        if row["kind"] not in ("any", kind):
+            return {"ok": False, "error": f"enrollment token is for '{row['kind']}', not '{kind}'"}
+        self.conn.execute("UPDATE enroll_tokens SET uses=uses+1 WHERE token_hash=?", (_hash(token),))
+        return {"ok": True, "owner": row["owner"], "grant": row["grant_amount"]}
+
     def redeem_enrollment(self, token: str, kind: str = "any") -> dict:
         """Consume one use of an enrollment token (atomic). Returns {ok, owner, grant} on success,
         else {ok:False, error}. Validates existence, remaining uses, and kind match."""
-        if not token:
-            return {"ok": False, "error": "missing enrollment token"}
         with self.lock:
-            row = self.conn.execute(
-                "SELECT * FROM enroll_tokens WHERE token_hash=?", (_hash(token),)).fetchone()
-            if not row:
-                return {"ok": False, "error": "invalid enrollment token"}
-            if (row["uses"] or 0) >= (row["max_uses"] or 1):
-                return {"ok": False, "error": "enrollment token exhausted"}
-            if row["kind"] not in ("any", kind):
-                return {"ok": False, "error": f"enrollment token is for '{row['kind']}', not '{kind}'"}
-            self.conn.execute("UPDATE enroll_tokens SET uses=uses+1 WHERE token_hash=?",
-                              (_hash(token),))
-            self.conn.commit()
-            return {"ok": True, "owner": row["owner"], "grant": row["grant_amount"]}
+            r = self._redeem_enrollment_locked(token, kind)
+            if r.get("ok"):
+                self.conn.commit()
+            return r
+
+    def _open_account_reversible(self, owner: str, grant_amount):
+        """open_account (an IN-MEMORY ledger mutation), returning a `revert()` that undoes it if the
+        surrounding DB transaction rolls back. A bare conn.rollback() would leave the ledger holding a
+        phantom granted account never written to the DB (D48 review: ledger==DB divergence)."""
+        new = owner not in self.ledger.accounts
+        granted_before = self.ledger._granted_total
+        self.ledger.open_account(owner, grant_amount=grant_amount)
+
+        def _revert():
+            if new:
+                self.ledger.accounts.pop(owner, None)
+                self.ledger._granted_total = granted_before
+        return _revert
 
     # ------------------------------------------------------------------ nodes
     def register_node(self, body: dict, ip: str = "", grant_amount: float | None = None,
-                      geo_country: str = "") -> dict:
+                      geo_country: str = "", enroll_token: str | None = None,
+                      enroll_kind: str = "node") -> dict:
         """Returns {node_id, node_secret}. The secret is shown ONCE; only its hash is stored.
         `grant_amount` (D37): the owner's starter credit — None → STARTER_ALLOWANCE (default), 0 →
         none (enrollment-gated callers pass 0 / the token's amount). `geo_country` (D43): the
         coordinator's offline IP→country lookup ("" when unavailable → falls back to self-reported).
-        Named-column INSERT (NOT positional) so migration-added columns can't be silently skipped."""
+        Named-column INSERT (NOT positional) so migration-added columns can't be silently skipped.
+
+        `enroll_token` (D37/D48): when given, the token is redeemed IN THE SAME transaction as the
+        node INSERT and supplies `grant_amount`. If the INSERT fails the redemption is rolled back
+        with it — so a single-use enrollment token is never burned without producing a node. Returns
+        {"error": ...} (no node) if the token is invalid/exhausted."""
         with self.lock:
-            node_id = str(uuid.uuid4())
-            secret = _secrets.token_urlsafe(24)
-            self.ledger.open_account(_clip(body["owner"]), grant_amount=grant_amount)
-            self.conn.execute(
-                "INSERT INTO nodes(node_id, name, country, owner, answer_model, lens, can_judge, "
-                "judge_model, profile, last_seen, load, status, ip, secret_hash, machine_id, "
-                "geo_country) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    node_id, _clip(body.get("name", "node")), _clip(body.get("country", "?")),
-                    _clip(body["owner"]), _clip(body.get("answer_model", "")),
-                    _clip(body.get("lens", "neutral")), int(bool(body.get("can_judge", False))),
-                    _clip(body.get("judge_model", "")), json.dumps(body.get("profile", {})),
-                    _now(), 0.0, "online", ip, _hash(secret), _clip(body.get("machine_id", "?")),
-                    _clip((geo_country or "").upper()),
-                ),
-            )
-            self._save_ledger()
-            self.conn.commit()
-            return {"node_id": node_id, "node_secret": secret}
+            if enroll_token is not None:
+                red = self._redeem_enrollment_locked(enroll_token, enroll_kind)
+                if not red.get("ok"):
+                    return {"error": red.get("error", "valid enrollment token required")}
+                grant_amount = red.get("grant")
+            owner = _clip(body["owner"])
+            revert = self._open_account_reversible(owner, grant_amount)
+            try:
+                node_id = str(uuid.uuid4())
+                secret = _secrets.token_urlsafe(24)
+                self.conn.execute(
+                    "INSERT INTO nodes(node_id, name, country, owner, answer_model, lens, can_judge, "
+                    "judge_model, profile, last_seen, load, status, ip, secret_hash, machine_id, "
+                    "geo_country) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        node_id, _clip(body.get("name", "node")), _clip(body.get("country", "?")),
+                        owner, _clip(body.get("answer_model", "")),
+                        _clip(body.get("lens", "neutral")), int(bool(body.get("can_judge", False))),
+                        _clip(body.get("judge_model", "")), json.dumps(body.get("profile", {})),
+                        _now(), 0.0, "online", ip, _hash(secret), _clip(body.get("machine_id", "?")),
+                        _clip((geo_country or "").upper()),
+                    ),
+                )
+                self._save_ledger()
+                self.conn.commit()
+                return {"node_id": node_id, "node_secret": secret}
+            except Exception:
+                self.conn.rollback()   # roll the enrollment redemption + node INSERT back…
+                revert()               # …and the in-memory ledger open_account (D48 review)
+                raise
 
     def node_for_secret(self, secret: str) -> Optional[str]:
         """Resolve the authenticated node_id from its secret (None if unknown)."""
@@ -289,20 +328,32 @@ class Store:
             return self.conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
 
     # ------------------------------------------------------------------ users (askers)
-    def register_user(self, handle: str, grant_amount: float | None = None) -> dict:
+    def register_user(self, handle: str, grant_amount: float | None = None,
+                      enroll_token: str | None = None, enroll_kind: str = "user") -> dict:
         """`grant_amount` (D37): None → STARTER_ALLOWANCE (default); 0 → account with no starter
-        credit (an un-enrolled signup gets zero, so it can't be Sybil-farmed for free credits)."""
+        credit (an un-enrolled signup gets zero, so it can't be Sybil-farmed for free credits).
+        `enroll_token` (D48): redeemed IN THE SAME transaction and only AFTER the handle-availability
+        check, so a 'handle taken' 409 (or an insert failure) can't burn a single-use signup token.
+        An invalid/absent token keeps signup OPEN with a 0 grant (D37) — it is not an error."""
         handle = _clip(handle).strip() or "anon"
         with self.lock:
             if self.conn.execute("SELECT 1 FROM users WHERE handle=?", (handle,)).fetchone():
-                return {"error": "handle taken"}
+                return {"error": "handle taken"}   # checked BEFORE any redeem → no token burn (D48)
+            if enroll_token is not None:
+                red = self._redeem_enrollment_locked(enroll_token, enroll_kind)
+                grant_amount = red.get("grant") if red.get("ok") else 0.0   # bad token → 0 grant, still open
             secret = _secrets.token_urlsafe(24)
-            self.conn.execute("INSERT INTO users(handle, secret_hash, created) VALUES(?,?,?)",
-                              (handle, _hash(secret), _now()))
-            self.ledger.open_account(handle, grant_amount=grant_amount)
-            self._save_ledger()
-            self.conn.commit()
-            return {"handle": handle, "user_secret": secret, **self.user_balance(handle)}
+            revert = self._open_account_reversible(handle, grant_amount)
+            try:
+                self.conn.execute("INSERT INTO users(handle, secret_hash, created) VALUES(?,?,?)",
+                                  (handle, _hash(secret), _now()))
+                self._save_ledger()
+                self.conn.commit()
+                return {"handle": handle, "user_secret": secret, **self.user_balance(handle)}
+            except Exception:
+                self.conn.rollback()   # roll the redeem + user INSERT back…
+                revert()               # …and the in-memory ledger open_account (D48 review)
+                raise
 
     def user_for_secret(self, secret: str) -> Optional[str]:
         if not secret:
@@ -1057,6 +1108,32 @@ class Store:
                     s = 5.0
             per_answer.append((a["task_id"], a["owner"], s, rep))
 
+        # D48: if NO answer produced usable output (workers crashed or returned empty), there is
+        # nothing to pay for. Skip settlement entirely — otherwise settle_job charges the asker for a
+        # blank result AND the degenerate even-split pays the failed workers. Mark the job failed,
+        # uncharged. (A regular council job is charged only here at settle time, so skipping = no
+        # charge; assisted escrow is handled separately by the reaper's refund path.) "Usable" is
+        # type-aware: answer/report answers carry `text`; sharded answers (shard_map/download_extract/
+        # code_generation) carry `results` and legitimately have no `text`, so must not be misflagged.
+        sharded = task_behavior(job["type"]).assemble == "shards"
+
+        def _produced(row) -> bool:
+            r = json.loads(row["result"]) if row["result"] else {}
+            if r.get("error"):
+                return False
+            if sharded:
+                # a sharded worker returns a NON-EMPTY results list even when every item failed
+                # (each item carries {"error": True, "output": "(error: …)"}), so bool(results) is
+                # not enough — require at least one item that actually produced output (D48 review).
+                return any(not it.get("error") for it in (r.get("results") or []))
+            return bool((r.get("text") or "").strip())
+
+        if answers and not any(_produced(a) for a in answers):
+            self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
+                              ("all answers failed — the job was not charged", job_id))
+            self.conn.commit()
+            return
+
         score_by_owner: dict[str, float] = {}
         for _, owner, s, _rep in per_answer:
             score_by_owner[owner] = score_by_owner.get(owner, 0.0) + s
@@ -1367,11 +1444,14 @@ class Store:
                     "geo_country": geo,
                     "geo_mismatch": bool(geo and n["country"] and geo.upper() != (n["country"] or "").upper()),
                 })
-            jobs = [dict(j) for j in self.conn.execute(
-                "SELECT job_id, asker, status, created FROM jobs ORDER BY created DESC LIMIT 10")]
-            from council.ledger import ESCROW_ID
-            accounts = [(u, a) for u, a in self.ledger.accounts.items()
-                        if u != ESCROW_ID]   # hide the internal escrow holding account
+            # D48 privacy: the recent-jobs pulse is PSEUDONYMOUS — no asker handle and no job_id
+            # (a job_id would be a readable capability into /jobs/{id}). Just the kind of work + its
+            # state + how long ago, so the public map can breathe without leaking who asked what.
+            now = _now()
+            jobs = [{"type": (j["type"] or "chat"), "status": j["status"],
+                     "age_s": round(now - (j["created"] or now), 0)}
+                    for j in self.conn.execute(
+                        "SELECT type, status, created FROM jobs ORDER BY created DESC LIMIT 10")]
             return {
                 "online_nodes": nodes,
                 "machines": len(machines),          # distinct physical computers online
@@ -1379,9 +1459,9 @@ class Store:
                 "recent_jobs": jobs,
                 "ledger_total": self.ledger.total_credit(),
                 "ledger_conserved": self.ledger.conservation_ok(),
-                "accounts": {u: {"balance": round(a.balance, 1), "reputation": a.avg_quality,
-                                 "helped": a.jobs_helped, "asked": a.jobs_asked}
-                             for u, a in accounts},
+                # D48: the raw per-account balance sheet (every handle's balance/reputation/jobs) is
+                # NOT public. Pseudonymous OPERATOR rankings live at /leaderboard; a user reads their
+                # OWN balance at /me. /status stays a public, non-identifying view of the network.
             }
 
     def leaderboard(self, limit: int = 20, sort: str = "reputation") -> dict:

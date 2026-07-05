@@ -39,6 +39,7 @@ _OVERLAP = 256               # light boundary insurance; parent-window supplies 
 _CONTEXTUAL = os.environ.get("PW_CONTEXTUAL_CHUNKS", "") not in ("", "0", "false")
 _CTX_MODEL = os.environ.get("PW_CONTEXT_MODEL", "")   # small chat model for situating blurbs
 _RERANK = os.environ.get("PW_RERANK", "") not in ("", "0", "false")   # opt-in listwise rerank
+_SEARCH_WARNED = False       # print the "search unavailable" hint at most once per process
 _TEXT_EXT = {".txt", ".md", ".markdown", ".rst", ".csv", ".log"}
 # Ingest guards (resource exhaustion): per-file size, file count, total bytes per add().
 _MAX_FILE_BYTES = int(os.environ.get("PW_MAX_FILE_MB", "30")) * 1_000_000
@@ -362,7 +363,14 @@ class Library:
             if _RERANK and len(fused) > k:
                 fused = self._rerank(query, rows, fused, k)
             return [self._hit(rows, i, float(sims[i]), window) for i in fused[:k]]
-        except Exception:
+        except Exception as exc:
+            # Don't crash a research run on a retrieval hiccup — but don't fail SILENTLY either
+            # (the usual cause is the embedder not being pulled). Warn ONCE per process, then [].
+            global _SEARCH_WARNED
+            if not _SEARCH_WARNED:
+                _SEARCH_WARNED = True
+                print(f"  library search unavailable ({type(exc).__name__}) — is Ollama running "
+                      f"and the embedder pulled?  ollama pull nomic-embed-text", file=sys.stderr)
             return []
 
     def _rerank(self, query: str, rows, ids: list[int], k: int) -> list[int]:

@@ -147,6 +147,12 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
     brief = sanitize_brief(brief)                      # the one user input → clean + length-bound
     if not brief:
         raise ValueError("empty brief — give something to research")
+    # Pre-flight the paid editor path BEFORE spending 5-15 min on local research, not after (D48):
+    # `--editor api` with no key used to burn the whole local run and only then raise.
+    if editor_mode == "api" and not (os.environ.get("OPENROUTER_API_KEY")
+                                     or os.environ.get("PW_BASELINE_API_KEY")):
+        raise SystemExit("--editor api needs OPENROUTER_API_KEY (or PW_BASELINE_API_KEY) — "
+                         "set it before the run")
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")   # live web ON — the whole point
 
     models = detect_models()
@@ -168,7 +174,8 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         t = time.monotonic()
         rw = ResearchWorker(worker_id=model, model=model, lens="independent analyst",
                             country=os.environ.get("PW_COUNTRY", "your location"),
-                            depth=depth, angle=angle, page_evidence=page_evidence, scope=scope)
+                            depth=depth, angle=angle, page_evidence=page_evidence, scope=scope,
+                            ollama_base=OLLAMA)   # same endpoint as detection (honors PW_OLLAMA_BASE)
         out = rw.research(brief)
         text = fix_dangling_citations(out["text"])
         nsrc = len(out["research"]["sources"])
@@ -182,7 +189,7 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
 
     emit("blind judge + editor compiling the report…")
     if editor_mode == "local":
-        judge = Judge(model=editor_model)
+        judge = Judge(model=editor_model, ollama_base=OLLAMA)   # honors PW_OLLAMA_BASE
     else:
         key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("PW_BASELINE_API_KEY")
         if not key:
@@ -194,8 +201,9 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
     report = judge.compile_report(brief, contributions, read, local=True)
 
     out_path = pathlib.Path(out_dir)
-    out_path.mkdir(exist_ok=True)
-    slug = re.sub(r"[^a-z0-9]+", "-", brief.lower())[:60].strip("-")
+    out_path.mkdir(parents=True, exist_ok=True)   # allow nested --out a/b/c
+    # a non-Latin brief (Arabic/CJK/Cyrillic) slugs to empty → fall back to a dated 'report' name
+    slug = re.sub(r"[^a-z0-9]+", "-", brief.lower())[:60].strip("-") or "report"
     fname = out_path / f"{datetime.date.today().isoformat()}-{slug}.md"
     n = 1
     while fname.exists():
@@ -225,8 +233,12 @@ def main() -> int:
     a = p.parse_args()
     depth = "quick" if a.quick else "deep" if a.deep else "standard"
     scope = "local" if a.local else "web" if a.web else "both"
-    run(a.brief, depth=depth, editor_mode=a.editor, out_dir=a.out,
-        n_analysts=max(1, min(4, a.analysts)), scope=scope)
+    try:
+        run(a.brief, depth=depth, editor_mode=a.editor, out_dir=a.out,
+            n_analysts=max(1, min(4, a.analysts)), scope=scope)
+    except KeyboardInterrupt:
+        print("\n  interrupted — partial research discarded.", file=sys.stderr)
+        return 130
     return 0
 
 

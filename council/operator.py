@@ -268,7 +268,7 @@ def fetch(job_id: str, out_dir: str) -> int:
     if not base or not sec:
         print("✗ set PW_COORDINATOR and PW_USER_SECRET (the asker's secret)"); return 2
     uh = {"X-User-Secret": sec}
-    view = requests.get(f"{base}/jobs/{job_id}", timeout=15).json()
+    view = requests.get(f"{base}/jobs/{job_id}", headers=uh, timeout=15).json()
     merged = view.get("merged") or ""
     ok, code = _verify_delivery_signature(view, merged)
     if not ok:

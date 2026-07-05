@@ -61,6 +61,7 @@ class _FakeResp:
 
 
 def test_worker_sends_keep_alive(monkeypatch):
+    import council.ollama as O   # the POST now lives in the one shared Ollama client (D48)
     import council.worker as W
     captured = {}
 
@@ -68,12 +69,13 @@ def test_worker_sends_keep_alive(monkeypatch):
         captured["body"] = json
         return _FakeResp({"response": "ok", "eval_count": 2})
 
-    monkeypatch.setattr(W.requests, "post", fake_post)
+    monkeypatch.setattr(O.requests, "post", fake_post)
     W.PerspectiveWorker(worker_id="w", model="m").answer("q?")
     assert "keep_alive" in captured["body"] and captured["body"]["keep_alive"]
 
 
 def test_keep_alive_is_env_overridable(monkeypatch):
+    import council.ollama as O
     import council.researcher as RW
     captured = {}
 
@@ -82,15 +84,16 @@ def test_keep_alive_is_env_overridable(monkeypatch):
         return _FakeResp({"response": "x", "eval_count": 1})
 
     monkeypatch.setenv("PW_OLLAMA_KEEP_ALIVE", "0")
-    monkeypatch.setattr(RW.requests, "post", fake_post)
+    monkeypatch.setattr(O.requests, "post", fake_post)
     RW.ResearchWorker(worker_id="m", model="m")._generate("p", num_predict=10)
     assert captured["body"]["keep_alive"] == "0"
 
 
 def test_judge_sends_keep_alive(monkeypatch):
     import council.judge as J
+    import council.ollama as O
     captured = {}
-    monkeypatch.setattr(J.requests, "post",
+    monkeypatch.setattr(O.requests, "post",
                         lambda url, json=None, timeout=None: captured.update(body=json) or _FakeResp({"response": "{}"}))
     J.Judge(model="m")._generate("p")
     assert "keep_alive" in captured["body"]
@@ -98,11 +101,33 @@ def test_judge_sends_keep_alive(monkeypatch):
 
 def test_batch_worker_sends_keep_alive(monkeypatch):
     import council.batch as B
+    import council.ollama as O
     captured = {}
-    monkeypatch.setattr(B.requests, "post",
+    monkeypatch.setattr(O.requests, "post",
                         lambda url, json=None, timeout=None: captured.update(body=json) or _FakeResp({"response": "x", "eval_count": 1}))
     B.BatchWorker(worker_id="w", model="m")._generate("p")
     assert "keep_alive" in captured["body"]            # review R17-001: batch was missed in the first cut
+
+
+def test_pw_ollama_base_reaches_every_generation_call(monkeypatch):
+    # D48 regression: PW_OLLAMA_BASE must reach the ANALYST/EDITOR/WORKER/BATCH generation calls,
+    # not just model detection. Before the shared client these hardcoded localhost, so pointing at a
+    # GPU box listed its models then failed every generation against localhost.
+    import council.batch as B
+    import council.judge as J
+    import council.ollama as O
+    import council.researcher as RW
+    import council.worker as W
+    monkeypatch.setenv("PW_OLLAMA_BASE", "http://gpu-box:11434")
+    urls = []
+    monkeypatch.setattr(O.requests, "post",
+                        lambda url, json=None, timeout=None: urls.append(url) or _FakeResp({"response": "x", "eval_count": 1}))
+    RW.ResearchWorker(worker_id="m", model="m")._generate("p", num_predict=5)
+    J.Judge(model="m")._generate("p")
+    W.PerspectiveWorker(worker_id="w", model="m").answer("q?")
+    B.BatchWorker(worker_id="w", model="m")._generate("p")
+    assert len(urls) == 4
+    assert all(u == "http://gpu-box:11434/api/generate" for u in urls)
 
 
 def test_baseline_ollama_sends_keep_alive(monkeypatch):
