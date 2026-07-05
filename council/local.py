@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import os
 import pathlib
 import re
@@ -145,9 +146,36 @@ def fix_dangling_citations(text: str) -> str:
                   lambda m: m.group(0) if m.group(1) in listed else "", text)
 
 
+def _report_payload(brief, depth, editor_label, report, contributions, total_src) -> dict:
+    """Machine-readable view of a finished run (report + dedup'd sources + per-analyst stats). Every
+    field is already in memory — this just shapes it for `--json`/`--html` and programmatic callers."""
+    seen: set[str] = set()
+    sources: list[dict] = []
+    for c in contributions:
+        for s in c["research"]["sources"]:
+            u = s.get("url")
+            if u and u not in seen:
+                seen.add(u)
+                sources.append({"id": s.get("id"), "title": s.get("title"),
+                                "url": u, "host": s.get("host")})
+    return {
+        "brief": brief,
+        "generated": datetime.date.today().isoformat(),
+        "depth": depth,
+        "editor": editor_label,
+        "words": len(report.split()),
+        "n_sources": total_src,
+        "analysts": [{"model": c["model"], "words": len(c["text"].split()),
+                      "n_sources": len(c["research"]["sources"])} for c in contributions],
+        "sources": sources,
+        "report": report,
+    }
+
+
 def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         out_dir: str | None = None, n_analysts: int = 3, scope: str = "both",
-        on_progress=None, should_cancel=None) -> pathlib.Path:
+        on_progress=None, should_cancel=None, as_json: bool = False,
+        as_html: bool = False) -> pathlib.Path:
     t0 = time.monotonic()
     emit = _make_emit(on_progress)
     brief = sanitize_brief(brief)                      # the one user input → clean + length-bound
@@ -222,6 +250,16 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
     fname.write_text(report)
     mins = (time.monotonic() - t0) / 60
     total_src = sum(len(c["research"]["sources"]) for c in contributions)
+    if as_json or as_html:
+        editor_label = editor_model if editor_mode == "local" else editor_mode
+        payload = _report_payload(brief, depth, editor_label, report, contributions, total_src)
+        if as_json:
+            fname.with_suffix(".json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+            emit(f"🧾 JSON → {fname.with_suffix('.json')}")
+        if as_html:
+            from council import render
+            fname.with_suffix(".html").write_text(render.report_html(brief, report, payload))
+            emit(f"🖨  HTML (printable) → {fname.with_suffix('.html')}")
     emit(f"📄 Report ready in {mins:.1f} min · {len(report.split())} words · "
          f"{total_src} sources → {fname}")
     return fname
@@ -241,15 +279,22 @@ def main() -> int:
     g = p.add_mutually_exclusive_group()
     g.add_argument("--local", action="store_true", help="research ONLY your library (no web)")
     g.add_argument("--web", action="store_true", help="research ONLY the live web (no library)")
+    p.add_argument("--json", action="store_true",
+                   help="also write <report>.json (report + sources + per-analyst) and print it to stdout")
+    p.add_argument("--html", action="store_true", help="also write a styled, printable <report>.html")
     a = p.parse_args()
     depth = "quick" if a.quick else "deep" if a.deep else "standard"
     scope = "local" if a.local else "web" if a.web else "both"
     try:
-        run(a.brief, depth=depth, editor_mode=a.editor, out_dir=a.out,
-            n_analysts=max(1, min(4, a.analysts)), scope=scope)
+        path = run(a.brief, depth=depth, editor_mode=a.editor, out_dir=a.out,
+                   n_analysts=max(1, min(4, a.analysts)), scope=scope,
+                   as_json=a.json, as_html=a.html)
     except KeyboardInterrupt:
         print("\n  interrupted — partial research discarded.", file=sys.stderr)
         return 130
+    if a.json:
+        # progress goes to stderr, so stdout is clean → `pw research "…" --json > out.json` works
+        print(pathlib.Path(path).with_suffix(".json").read_text())
     return 0
 
 

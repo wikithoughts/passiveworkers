@@ -162,6 +162,7 @@ button.go{background:var(--btn);border-color:var(--btn-edge);font-weight:600;mar
 .pwfoot a{color:var(--acc)}
 @media(max-width:820px){.wrap{padding:20px 12px}}
 @media(max-width:480px){.row{gap:8px}.go{margin-left:0;width:100%}select{flex:1 1 auto}}
+@media print{body *{visibility:hidden}#out,#out *{visibility:visible}#out{position:absolute;left:0;top:0;width:100%;border:0}.noprint{display:none!important}}
 </style></head><body><div class="wrap">
 <h1><span aria-hidden="true">🌍</span> Passive Workers</h1>
 <div class="sub">Research desk · your models, your connection, your disk — nothing leaves this machine but the web searches.</div>
@@ -198,7 +199,8 @@ async function refreshHist(){
 }
 async function openReport(name){
   const t=await (await fetch('/report/'+encodeURIComponent(name))).text();
-  const o=document.getElementById('out');o.style.display='';o.innerHTML=md(t);
+  const o=document.getElementById('out');o.style.display='';
+  o.innerHTML='<button class="noprint" onclick="window.print()" style="float:right;padding:4px 10px" aria-label="Save as PDF">🖨 Save as PDF</button>'+md(t);
   o.scrollIntoView({behavior:'smooth'});
 }
 let timer=null,jobId=null;

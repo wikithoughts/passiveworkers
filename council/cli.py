@@ -5,7 +5,7 @@ council/cli.py — the `pw` command
 Make your computer work for you (and, opt-in, for others). Research is the flagship task.
 
   Single-player — run jobs on your own machine:
-    pw research "your brief" [--quick|--deep] [--editor api] [--analysts N] [--local|--web] [--json]
+    pw research "your brief" [--quick|--deep] [--editor api] [--analysts N] [--local|--web] [--json] [--html]
     pw serve                       # local research desk at http://127.0.0.1:8770
     pw status                      # is Ollama up? which models? library? joined?  (alias: pw doctor)
     pw reports                     # list past reports
