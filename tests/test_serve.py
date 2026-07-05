@@ -88,3 +88,42 @@ def test_research_systemexit_does_not_hang_the_job(client, reports, monkeypatch)
     jid = client.post("/research", json={"brief": "x", "depth": "quick", "analysts": 1}).json()["job_id"]
     p = _drain(client, jid)
     assert p["done"] and "ollama serve" in p["error"].lower()
+
+
+def test_research_concurrency_cap_returns_429(client):
+    # drain every free slot, then a new research must be rejected (not spawn an Ollama-thrashing run)
+    got = []
+    while serve._sem.acquire(blocking=False):
+        got.append(1)
+    try:
+        assert client.post("/research", json={"brief": "hi"}).status_code == 429
+    finally:
+        for _ in got:
+            serve._sem.release()
+
+
+def test_cancel_sets_flag_and_unknown_is_404(client):
+    serve._jobs["job-xyz"] = {"log": [], "done": False, "file": None, "error": None, "cancel": False}
+    try:
+        assert client.post("/cancel/job-xyz").status_code == 200
+        assert serve._jobs["job-xyz"]["cancel"] is True
+        assert client.post("/cancel/nope-nope").status_code == 404
+    finally:
+        serve._jobs.pop("job-xyz", None)
+
+
+def test_research_accepts_scope_and_rejects_bad(client, reports, monkeypatch):
+    monkeypatch.setattr(serve, "run_research",
+                        lambda *a, **k: (_ for _ in ()).throw(SystemExit("no ollama")))
+    r = client.post("/research", json={"brief": "x", "scope": "local"})   # library-only research
+    assert r.status_code == 200 and "job_id" in r.json()
+    assert client.post("/research", json={"brief": "x", "scope": "bogus"}).status_code == 422
+
+
+def test_cancelled_run_reports_cancelled(client, reports, monkeypatch):
+    from council.local import Cancelled
+    monkeypatch.setattr(serve, "run_research",
+                        lambda *a, **k: (_ for _ in ()).throw(Cancelled()))
+    jid = client.post("/research", json={"brief": "x"}).json()["job_id"]
+    p = _drain(client, jid)
+    assert p["done"] and p["error"] == "cancelled"

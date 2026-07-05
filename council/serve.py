@@ -21,18 +21,23 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from council.local import run as run_research
+from council.local import Cancelled, run as run_research
+from council import paths
 
 app = FastAPI(title="Passive Workers — local research desk")
-REPORTS = pathlib.Path("reports")
-_jobs: dict = {}          # id → {"log": [..], "done": bool, "file": str|None, "error": str|None}
+REPORTS = paths.reports_dir()   # shared ~/.passiveworkers/reports (see council/paths.py)
+_jobs: dict = {}          # id → {"log":[..],"done":bool,"file":str|None,"error":str|None,"cancel":bool}
 _lock = threading.Lock()
+_MAX_JOBS = max(1, int(os.environ.get("PW_SERVE_MAX_JOBS", "2") or 2))   # concurrent research runs
+_sem = threading.BoundedSemaphore(_MAX_JOBS)   # cap concurrency so two heavy runs don't thrash Ollama
+_JOB_HISTORY = 50         # cap the in-memory job map so a long-running desk doesn't leak
 
 
 class Brief(BaseModel):
     brief: str = Field(..., max_length=4000)
     depth: str = Field(default="standard", pattern="^(quick|standard|deep)$")
     analysts: int = Field(default=3, ge=1, le=4)
+    scope: str = Field(default="both", pattern="^(both|web|local)$")   # library-only research (D19)
 
 
 def _work(job_id: str, b: Brief) -> None:
@@ -43,24 +48,55 @@ def _work(job_id: str, b: Brief) -> None:
             j["log"].append(msg)
 
     try:
-        path = run_research(b.brief, depth=b.depth, n_analysts=b.analysts,
-                            on_progress=progress)
+        path = run_research(b.brief, depth=b.depth, n_analysts=b.analysts, scope=b.scope,
+                            on_progress=progress,
+                            should_cancel=lambda: _jobs.get(job_id, {}).get("cancel"))
         with _lock:
             j["file"], j["done"] = path.name, True
+    except Cancelled:
+        with _lock:
+            j["error"], j["done"] = "cancelled", True
     except (Exception, SystemExit) as e:
         # run_research raises SystemExit on the common first-run failures (Ollama down, no models).
         # SystemExit is a BaseException, NOT caught by `except Exception` — without it the job would
         # hang at done=False forever. Record the error and mark done so the desk shows it cleanly.
         with _lock:
             j["error"], j["done"] = f"{type(e).__name__}: {e}", True
+    finally:
+        _sem.release()
+
+
+def _prune_jobs() -> None:
+    """Evict the oldest DONE jobs once the map exceeds its cap (caller holds _lock). At most
+    _MAX_JOBS jobs are ever in-flight, so there are always enough finished ones to drop."""
+    if len(_jobs) < _JOB_HISTORY:
+        return
+    done = [k for k, v in _jobs.items() if v.get("done")]
+    for k in done[:len(_jobs) - _JOB_HISTORY + 1]:
+        _jobs.pop(k, None)
 
 
 @app.post("/research")
 def research(b: Brief):
+    # bound concurrency: two heavy multi-model runs would fight for the same Ollama and both crawl
+    if not _sem.acquire(blocking=False):
+        raise HTTPException(429, f"{_MAX_JOBS} research run(s) already in progress — wait for one to finish")
     job_id = uuid.uuid4().hex[:12]
-    _jobs[job_id] = {"log": [], "done": False, "file": None, "error": None}
+    with _lock:
+        _prune_jobs()
+        _jobs[job_id] = {"log": [], "done": False, "file": None, "error": None, "cancel": False}
     threading.Thread(target=_work, args=(job_id, b), daemon=True).start()
     return {"job_id": job_id}
+
+
+@app.post("/cancel/{job_id}")
+def cancel(job_id: str):
+    j = _jobs.get(job_id)
+    if not j:
+        raise HTTPException(404)
+    with _lock:
+        j["cancel"] = True   # picked up at the next analyst boundary (run raises Cancelled)
+    return {"ok": True}
 
 
 @app.get("/progress/{job_id}")
@@ -135,10 +171,11 @@ button.go{background:var(--btn);border-color:var(--btn-edge);font-weight:600;mar
     <option value="standard" selected>standard (~5–15 min)</option>
     <option value="deep">deep (~15–30 min)</option></select>
   <select id="analysts" aria-label="Number of analysts"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
+  <select id="scope" aria-label="Sources"><option value="both" selected>web + library</option><option value="web">web only</option><option value="local">my library only</option></select>
   <span class="muted">local models as independent analysts</span>
   <button class="go" id="go" aria-label="Start research">Research →</button>
 </div>
-<div class="card" id="live" style="display:none" aria-live="polite"><span class="spin" id="spin" aria-hidden="true"></span><b id="status">working…</b><div class="log" id="log" role="log" aria-label="Research progress"></div></div>
+<div class="card" id="live" style="display:none" aria-live="polite"><span class="spin" id="spin" aria-hidden="true"></span><b id="status">working…</b><button id="cancel" style="display:none;float:right;padding:4px 10px" aria-label="Cancel research">Cancel</button><div class="log" id="log" role="log" aria-label="Research progress"></div></div>
 <div class="card report" id="out" style="display:none"></div>
 <div class="card hist"><b><span aria-hidden="true">📄</span> Past reports</b><div id="hist" class="muted">none yet</div></div>
 <footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
@@ -164,28 +201,36 @@ async function openReport(name){
   const o=document.getElementById('out');o.style.display='';o.innerHTML=md(t);
   o.scrollIntoView({behavior:'smooth'});
 }
-let timer=null;
+let timer=null,jobId=null;
 document.getElementById('go').onclick=async()=>{
   const brief=document.getElementById('brief').value.trim();if(!brief)return;
   const body={brief:brief,depth:document.getElementById('depth').value,
-              analysts:+document.getElementById('analysts').value};
+              analysts:+document.getElementById('analysts').value,
+              scope:document.getElementById('scope').value};
   const r=await fetch('/research',{method:'POST',headers:{'Content-Type':'application/json'},
                                    body:JSON.stringify(body)});
-  const j=await r.json();
-  document.getElementById('live').style.display='';document.getElementById('out').style.display='none';
-  document.getElementById('log').innerHTML='';
-  const st=document.getElementById('status'),sp=document.getElementById('spin');
+  const live=document.getElementById('live');live.style.display='';
+  document.getElementById('out').style.display='none';document.getElementById('log').innerHTML='';
+  const st=document.getElementById('status'),sp=document.getElementById('spin'),cb=document.getElementById('cancel');
+  if(!r.ok){const e=await r.json().catch(()=>({}));sp.style.display='none';cb.style.display='none';
+    st.className='err';st.textContent='✗ '+(e.detail||'busy — a run is already in progress');return}
+  const j=await r.json();jobId=j.job_id;
+  cb.style.display='';cb.disabled=false;cb.textContent='Cancel';
   st.className='';st.textContent='working…';sp.style.display='inline-block';
   if(timer)clearInterval(timer);
   timer=setInterval(async()=>{
     const p=await (await fetch('/progress/'+j.job_id)).json();
     document.getElementById('log').innerHTML=p.log.map(l=>'<div>'+esc(l)+'</div>').join('');
-    if(p.done){clearInterval(timer);timer=null;sp.style.display='none';
+    if(p.done){clearInterval(timer);timer=null;sp.style.display='none';cb.style.display='none';
       st.className=p.error?'err':'';st.textContent=p.error?('✗ '+p.error):'done ✓';
       if(p.file){openReport(p.file)}
       refreshHist();
     }
   },1500);
+};
+document.getElementById('cancel').onclick=async()=>{
+  if(!jobId)return;const cb=document.getElementById('cancel');cb.disabled=true;cb.textContent='cancelling…';
+  try{await fetch('/cancel/'+jobId,{method:'POST'})}catch(e){}
 };
 refreshHist();
 </script></div></body></html>
@@ -195,8 +240,9 @@ refreshHist();
 def main() -> None:
     import uvicorn
     host = os.environ.get("PW_SERVE_HOST", "127.0.0.1")  # 0.0.0.0 only inside containers
-    print(f"🔬 Research desk → http://{host}:8770  (Ctrl-C to stop)", flush=True)
-    uvicorn.run(app, host=host, port=8770, log_level="warning")
+    port = int(os.environ.get("PW_SERVE_PORT", "8770") or 8770)
+    print(f"🔬 Research desk → http://{host}:{port}  (Ctrl-C to stop)", flush=True)
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -31,6 +31,12 @@ from council.judge import Judge, _extract_json
 from council.researcher import ResearchWorker
 from council.sanitize import sanitize_brief
 from council.worker import Answer
+from council import paths
+
+
+class Cancelled(Exception):
+    """Raised to stop a run at an analyst boundary when the caller (e.g. the desk) cancels."""
+
 
 OLLAMA = os.environ.get("PW_OLLAMA_BASE", "http://localhost:11434")
 # families give genuinely different inference trajectories — pick analysts across them
@@ -140,8 +146,8 @@ def fix_dangling_citations(text: str) -> str:
 
 
 def run(brief: str, depth: str = "standard", editor_mode: str = "local",
-        out_dir: str = "reports", n_analysts: int = 3, scope: str = "both",
-        on_progress=None) -> pathlib.Path:
+        out_dir: str | None = None, n_analysts: int = 3, scope: str = "both",
+        on_progress=None, should_cancel=None) -> pathlib.Path:
     t0 = time.monotonic()
     emit = _make_emit(on_progress)
     brief = sanitize_brief(brief)                      # the one user input → clean + length-bound
@@ -168,6 +174,8 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
 
     contributions, answers = [], []
     for i, model in enumerate(analysts, 1):
+        if should_cancel and should_cancel():          # cooperative cancel at each analyst boundary
+            raise Cancelled()
         angle = angles[i - 1] if i <= len(angles) else ""
         emit(f"[{i}/{len(analysts)}] {model} researching the live web…"
              + (f" (angle: {angle})" if angle else ""))
@@ -187,6 +195,8 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
                               country=model.split(":")[0], text=text, tokens=out["tokens"],
                               elapsed_s=out["elapsed_s"]))
 
+    if should_cancel and should_cancel():
+        raise Cancelled()
     emit("blind judge + editor compiling the report…")
     if editor_mode == "local":
         judge = Judge(model=editor_model, ollama_base=OLLAMA)   # honors PW_OLLAMA_BASE
@@ -200,8 +210,8 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
     read = judge.deliberate(brief, answers)
     report = judge.compile_report(brief, contributions, read, local=True)
 
-    out_path = pathlib.Path(out_dir)
-    out_path.mkdir(parents=True, exist_ok=True)   # allow nested --out a/b/c
+    out_path = pathlib.Path(out_dir) if out_dir else paths.reports_dir()
+    out_path.mkdir(parents=True, exist_ok=True)   # allow nested --out a/b/c; shared ~/.passiveworkers/reports
     # a non-Latin brief (Arabic/CJK/Cyrillic) slugs to empty → fall back to a dated 'report' name
     slug = re.sub(r"[^a-z0-9]+", "-", brief.lower())[:60].strip("-") or "report"
     fname = out_path / f"{datetime.date.today().isoformat()}-{slug}.md"
@@ -226,7 +236,8 @@ def main() -> int:
     p.add_argument("--editor", choices=["local", "api"], default="local",
                    help="api = BYOK frontier editor over local findings (OPENROUTER_API_KEY)")
     p.add_argument("--analysts", type=int, default=3, help="how many local models analyze (1-4)")
-    p.add_argument("--out", default="reports", help="output directory")
+    p.add_argument("--out", default=None,
+                   help="output directory (default: ~/.passiveworkers/reports, shared with the desk)")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--local", action="store_true", help="research ONLY your library (no web)")
     g.add_argument("--web", action="store_true", help="research ONLY the live web (no library)")
