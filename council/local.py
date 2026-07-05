@@ -152,21 +152,29 @@ def _report_payload(brief, depth, editor_label, report, contributions, total_src
     seen: set[str] = set()
     sources: list[dict] = []
     for c in contributions:
-        for s in c["research"]["sources"]:
+        research = c["research"]
+        for s in research.get("sources", []):              # web sources (carry a url + host)
             u = s.get("url")
             if u and u not in seen:
                 seen.add(u)
                 sources.append({"id": s.get("id"), "title": s.get("title"),
-                                "url": u, "host": s.get("host")})
+                                "url": u, "host": s.get("host"), "kind": "web"})
+        for s in research.get("local_sources", []):        # library [L#] provenance (no url, D48 review)
+            key = s.get("source") or s.get("title")
+            if key and key not in seen:
+                seen.add(key)
+                sources.append({"id": s.get("id"), "title": s.get("title"),
+                                "source": s.get("source"), "kind": "library"})
     return {
         "brief": brief,
         "generated": datetime.date.today().isoformat(),
         "depth": depth,
         "editor": editor_label,
         "words": len(report.split()),
-        "n_sources": total_src,
+        "n_sources": len(sources),                         # web + library, deduped
         "analysts": [{"model": c["model"], "words": len(c["text"].split()),
-                      "n_sources": len(c["research"]["sources"])} for c in contributions],
+                      "n_sources": len(c["research"].get("sources", []))
+                      + len(c["research"].get("local_sources", []))} for c in contributions],
         "sources": sources,
         "report": report,
     }
@@ -237,6 +245,11 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
                                           "https://openrouter.ai/api/v1/chat/completions"))
     read = judge.deliberate(brief, answers)
     report = judge.compile_report(brief, contributions, read, local=True)
+    if should_cancel and should_cancel():
+        # cancel arrived during the (often longest) editor/judge phase — honor it by discarding the
+        # report rather than persisting and returning a run the user explicitly cancelled. (Interrupting
+        # the editor call mid-generation would need a cancel hook inside Judge — a later refinement.)
+        raise Cancelled()
 
     out_path = pathlib.Path(out_dir) if out_dir else paths.reports_dir()
     out_path.mkdir(parents=True, exist_ok=True)   # allow nested --out a/b/c; shared ~/.passiveworkers/reports

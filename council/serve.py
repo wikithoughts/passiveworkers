@@ -81,11 +81,15 @@ def research(b: Brief):
     # bound concurrency: two heavy multi-model runs would fight for the same Ollama and both crawl
     if not _sem.acquire(blocking=False):
         raise HTTPException(429, f"{_MAX_JOBS} research run(s) already in progress — wait for one to finish")
-    job_id = uuid.uuid4().hex[:12]
-    with _lock:
-        _prune_jobs()
-        _jobs[job_id] = {"log": [], "done": False, "file": None, "error": None, "cancel": False}
-    threading.Thread(target=_work, args=(job_id, b), daemon=True).start()
+    try:
+        job_id = uuid.uuid4().hex[:12]
+        with _lock:
+            _prune_jobs()
+            _jobs[job_id] = {"log": [], "done": False, "file": None, "error": None, "cancel": False}
+        threading.Thread(target=_work, args=(job_id, b), daemon=True).start()
+    except Exception:
+        _sem.release()   # never leak the permit if setup / thread-start fails before _work can run
+        raise
     return {"job_id": job_id}
 
 
@@ -221,7 +225,11 @@ document.getElementById('go').onclick=async()=>{
   st.className='';st.textContent='working…';sp.style.display='inline-block';
   if(timer)clearInterval(timer);
   timer=setInterval(async()=>{
-    const p=await (await fetch('/progress/'+j.job_id)).json();
+    const rp=await fetch('/progress/'+j.job_id);
+    if(!rp.ok){clearInterval(timer);timer=null;sp.style.display='none';cb.style.display='none';
+      st.className='err';st.textContent='✗ lost track of this job (server restarted?) — see Past reports';
+      refreshHist();return}
+    const p=await rp.json();
     document.getElementById('log').innerHTML=p.log.map(l=>'<div>'+esc(l)+'</div>').join('');
     if(p.done){clearInterval(timer);timer=null;sp.style.display='none';cb.style.display='none';
       st.className=p.error?'err':'';st.textContent=p.error?('✗ '+p.error):'done ✓';

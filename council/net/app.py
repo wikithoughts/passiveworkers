@@ -160,11 +160,21 @@ const ambient=L.layerGroup().addTo(map), jobLayer=L.layerGroup().addTo(map);
 // ---- auth ----
 let handle=localStorage.getItem('pw_handle'), secret=localStorage.getItem('pw_secret');
 function uHeaders(){return secret?{'X-User-Secret':secret,'Content-Type':'application/json'}:{'Content-Type':'application/json'}}
+function _showAuth(){const a=document.getElementById('auth');a.style.display='block';
+  document.getElementById('askbox').style.display='none';document.getElementById('me').textContent='';}
 async function refreshMe(){
   const auth=document.getElementById('auth'),askbox=document.getElementById('askbox');
-  if(!secret){auth.style.display='block';askbox.style.display='none';document.getElementById('me').textContent='';return}
-  auth.style.display='none';askbox.style.display='';
-  try{const m=await (await fetch('/me',{headers:uHeaders()})).json();
+  if(!secret){_showAuth();return}
+  // never dismiss the auth card while the one-time account key is still shown (unacknowledged) — a
+  // background poll must not wipe the key before the user saved it (there is no password reset)
+  if(auth.style.display!=='none' && document.getElementById('authkey').style.display===''){return}
+  try{
+    const r=await fetch('/me',{headers:uHeaders()});
+    if(!r.ok){   // a stale/invalidated secret (e.g. the coordinator was reset) — drop it, offer sign-in/restore
+      secret=null;localStorage.removeItem('pw_secret');_showAuth();return;
+    }
+    auth.style.display='none';askbox.style.display='';
+    const m=await r.json();
     document.getElementById('me').innerHTML='@'+esc(m.handle)+' · <b>'+m.balance+'</b> cr';
     document.getElementById('contribute').textContent=
       '# ask whoever runs this coordinator for an enrollment token, then:\n'+

@@ -14,12 +14,25 @@ import html as _html
 import re
 
 _BOLD = re.compile(r"\*\*([^*]+)\*\*")
-_LINK = re.compile(r"(https?://[^\s<)\]]+)")
+_URL = re.compile(r"https?://[^\s<\]]+")
+
+
+def _linkify(m: "re.Match") -> str:
+    url = m.group(0)
+    trail = ""
+    # A URL may legitimately END in ')' — Wikipedia disambiguation pages like Mercury_(planet) —
+    # so trim only an UNBALANCED trailing ')' and ordinary sentence punctuation, keeping balanced parens.
+    while url and url[-1] in ").,;:!?":
+        if url[-1] == ")" and url.count("(") >= url.count(")"):
+            break
+        trail = url[-1] + trail
+        url = url[:-1]
+    return f'<a href="{url}" target="_blank" rel="noopener">{url}</a>{trail}'
 
 
 def _inline(escaped: str) -> str:
     s = _BOLD.sub(r"<strong>\1</strong>", escaped)
-    return _LINK.sub(r'<a href="\1" target="_blank" rel="noopener">\1</a>', s)
+    return _URL.sub(_linkify, s)
 
 
 def md_to_html(text: str) -> str:
@@ -79,6 +92,9 @@ def report_html(title: str, report_md: str, meta: dict | None = None) -> str:
     meta = meta or {}
     sub = (f"{meta.get('n_sources', '?')} sources · {meta.get('words', '?')} words"
            f" · {meta.get('generated', '')}").strip(" ·")
-    return (_DOC.replace("__TITLE__", _html.escape((title or "report")[:120]))
-                .replace("__META__", _html.escape(sub))
-                .replace("__BODY__", md_to_html(report_md)))
+    parts = {"__TITLE__": _html.escape((title or "report")[:120]),
+             "__META__": _html.escape(sub),
+             "__BODY__": md_to_html(report_md)}
+    # single-pass substitution: a value that itself contains a placeholder (e.g. a brief with the
+    # literal "__BODY__") can't leak the report into the <title>, because replacements aren't re-scanned.
+    return re.sub("__TITLE__|__META__|__BODY__", lambda m: parts[m.group(0)], _DOC)
