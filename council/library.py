@@ -448,7 +448,21 @@ def main() -> int:
     if cmd == "clear":
         lib.clear(); print("✓ library cleared.")
         return 0
-    print(f"unknown: pw library {cmd}  (add | list | remove | clear)")
+    if cmd == "search":
+        if len(args) < 2:
+            print("usage: pw library search <query>"); return 2
+        if lib.is_empty():
+            print("library empty — add files with: pw library add <path>"); return 0
+        hits = lib.search(" ".join(args[1:]), k=5)
+        if not hits:
+            print("no matches (if this is unexpected, check that the embedder is pulled: "
+                  "ollama pull nomic-embed-text)")
+            return 0
+        for h in hits:
+            snippet = " ".join((h["text"] or "").split())[:200]
+            print(f"  [{h['score']:.3f}] {h['title']}  ({h['source']})\n      {snippet}…\n")
+        return 0
+    print(f"unknown: pw library {cmd}  (add | list | search | remove | clear)")
     return 2
 
 
