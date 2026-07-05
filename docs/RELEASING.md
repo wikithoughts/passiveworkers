@@ -1,12 +1,14 @@
 # Releasing to PyPI
 
-## Current state — **0.1.5 shipped (last release) 2026-06-14**
-`passiveworkers` **0.1.0 through 0.1.5 are all live** on https://pypi.org/project/passiveworkers/ and
-each is git-tagged (`v0.1.0`…`v0.1.5`) so every published version is checkout-able. **0.1.5** was the
-last release: it ships the `pw join` end-to-end fixes (enrollment auth + judge default, D47/R31) found
-by dogfooding the real operator flow on the VPS — making the headline onboarding feature actually work.
+## Current state — **0.2.0 prepared, publish HELD (2026-07-05)**
+`passiveworkers` **0.1.0 through 0.1.5 are live** on https://pypi.org/project/passiveworkers/, each
+git-tagged (`v0.1.0`…`v0.1.5`). **0.2.0** (the R32/D48 "usable, trustworthy, competitive" round — security/
+privacy hardening, engine reliability, `pw status`/`--json`/`--html`, marketplace account recovery, CI
+matrix; see the CHANGELOG) is bumped in `pyproject.toml` and committed on `main`, but is **NOT yet
+published**: the PyPI upload + `v0.2.0` tag are held for the founder's explicit go. To ship it, run the
+numbered steps below (they are ready to execute; nothing else is pending).
 
-The **next** release will be **0.2.0** (new features — not yet released). Token: 1Password item
+Token: 1Password item
 **"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time — never written
 to `~/.pypirc` or any file.
 

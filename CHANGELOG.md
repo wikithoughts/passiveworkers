@@ -5,6 +5,41 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [0.2.0] — 2026-07-05
+A broad "usable, trustworthy, competitive" pass (R32 / D48): security/privacy hardening, engine
+reliability, new CLI + export features, marketplace UX, and a hardened trust surface. Every phase was
+adversarially reviewed before commit — which caught 15 real defects the green test suite had missed.
+### Security
+- **`/status` privacy:** the public dashboard feed no longer exposes the per-account balance sheet or
+  asker handles / job-ids — only a de-identified pulse (type · status · age). Pseudonymous operator
+  ranking stays at `/leaderboard`; a user reads their own balance at `/me`.
+- **`GET /jobs/{id}` is now a capability URL:** the result stays readable by the unguessable id (the
+  shareable link), but the asker's identity, credit receipt, settlement error, and pipeline chain-ids
+  are returned only to the authenticated asker.
+- Constant-time admin-token compare (was a timing side channel; a non-ASCII token now 401s, not 500s).
+- Enrollment/signup tokens redeem atomically with the node/user they gate — a failed insert or a
+  "handle taken" collision no longer burns a single-use token or leaves a phantom ledger account.
+### Added
+- **`pw status` / `pw doctor`** — a one-second preflight (Ollama up? which models? library? joined?).
+- **`pw version`**, **`pw reports`**, **`pw library search <query>`**.
+- **`pw research --json`** (report + deduped web+library sources + per-analyst stats) and **`--html`**
+  (a self-contained, printable page) — plus a "Save as PDF" button on the research desk.
+- Research desk: a sources selector (web / library / both), a **Cancel** button, and `PW_SERVE_PORT`.
+- Marketplace: **account recovery** ("I have a key") + show-key-once on signup.
+### Changed
+- **Remote Ollama actually works:** one shared `council/ollama.py` so `PW_OLLAMA_BASE` reaches the
+  analysts, editor, worker, and batch (they had hardcoded localhost) — four duplicate clients become one.
+- Reports default to a shared `~/.passiveworkers/reports` so `pw research`, `pw serve`, and `pw mcp`
+  share one history regardless of directory (`PW_REPORTS_DIR` / `--out` override).
+- `--editor api` validates the key BEFORE the multi-minute run; the marketplace cost preview reads real
+  prices from `GET /job-types`; the "contribute your computer" snippet uses `pw join`.
+- CI gains a `ruff` lint gate, a Python 3.10–3.13 matrix, coverage, and a core-only-install job; the
+  README gains badges, an architecture diagram, and a comparison table.
+### Fixed
+- All-errored council **or batch** jobs are marked failed and the asker is not charged.
+- Bounded desk concurrency + job-map pruning (+ 404-safe polling); nested `--out` dirs; non-Latin report
+  filenames; Ctrl-C handling; balanced parens in exported citation links.
+
 ## [0.1.5] — 2026-06-14
 `pw join` actually works now — two bugs found by dogfooding the real operator flow on a VPS (R31 / D47).
 ### Fixed
@@ -79,6 +114,7 @@ Initial public release — the single-player deep-research engine.
   (`council/net/`) with a live two-country deployment.
 - Eval instruments: SimpleQA bench, citation-fidelity, and currency-gap scripts.
 
+[0.2.0]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.2.0
 [0.1.5]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.5
 [0.1.4]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.4
 [0.1.3]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.3
