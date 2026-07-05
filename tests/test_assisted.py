@@ -1,6 +1,4 @@
 """Assisted task lifecycle (D21): open offer → consent/accept → deliver → conserved settle."""
-import os
-import pathlib
 
 import pytest
 

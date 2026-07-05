@@ -1,7 +1,7 @@
 """R14 input/output hardening (D26): the brief, batch instruction/items, and synthesized output
 are all scrubbed of invisible/bidi injection vectors and bounded — no hidden payload reaches a
 model-facing prompt or survives into the compiled report."""
-from council.sanitize import sanitize_brief, strip_invisible, clean
+from council.sanitize import sanitize_brief, strip_invisible
 
 ZW = "​"          # zero-width space
 BIDI = "‮"        # right-to-left override

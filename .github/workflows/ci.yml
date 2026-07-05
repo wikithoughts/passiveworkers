@@ -11,7 +11,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Ruff (pyflakes + syntax)
+        run: ruff check .
+
   test:
+    # exercise the whole 3.10–3.14 support matrix the classifiers advertise (was single-version 3.12)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (all extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[all]' pytest pytest-cov
+      - name: Compile
+        run: python -m compileall council scripts
+      - name: Unit tests + coverage
+        run: pytest tests/ -q --cov=council --cov-report=term-missing
+
+  frontend:
+    # the served inline JS is Python-version-independent, so run the guards once
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -21,15 +54,31 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[all]' pytest
-      - name: Compile
-        run: python -m compileall council scripts
-      - name: Unit tests
-        run: pytest tests/ -q
+      - run: pip install -e .
       - name: Inline-JS guard (served pages)
         run: bash scripts/check_app_js.sh
       - name: Front-end harness
         run: node scripts/fe_test.js
+
+  core-install:
+    # verify the package installs and RUNS with NO optional extras. Graceful degradation when an
+    # extra (trafilatura/pypdf/mcp/pynacl/geoip2) is absent is a headline design point that was
+    # never CI-checked — every extra import must stay lazy/optional, or this job fails.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install core only (no extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest
+      - name: CLI runs without extras
+        run: |
+          python -c "import council, council.local, council.serve, council.render; print('version', council.get_version())"
+          pw --help
+          pw version
+          pw reports
+      - name: Core-safe tests
+        run: pytest tests/test_cli.py tests/test_export.py tests/test_sanitize.py tests/test_citations.py -q

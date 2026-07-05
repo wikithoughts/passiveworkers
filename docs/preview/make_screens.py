@@ -3,7 +3,6 @@ Not part of the package. Requires local servers: pw serve (:8770) + coordinator 
 Run: python docs/preview/make_screens.py
 """
 import pathlib
-import time
 
 from playwright.sync_api import sync_playwright
 

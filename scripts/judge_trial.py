@@ -21,7 +21,6 @@ import json
 import pathlib
 import re
 import sys
-import time
 import urllib.request
 
 import requests

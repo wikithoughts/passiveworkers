@@ -17,7 +17,6 @@ batch continues (the judge's spot-check and score reflect quality).
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
 

@@ -1,5 +1,4 @@
 """Local document library: chunk → (mocked) embed → cosine retrieval, with isolation."""
-import pathlib
 
 import council.library as L
 

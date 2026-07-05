@@ -1,8 +1,14 @@
 # Passive Workers — Python deps for the spikes and the Council MVP.
+#
+# SOURCE OF TRUTH: pyproject.toml. This file is a convenience mirror only — the supported
+# install is `pip install -e .` (dev) or `pip install passiveworkers` (release). If any pin
+# here ever disagrees with pyproject.toml's `dependencies`, pyproject.toml wins.
+#
 # Inference is served by a local Ollama (https://ollama.com) — not a pip package.
 requests>=2.32
-numpy>=2.0
+numpy>=1.26
 psutil>=7.0
 fastapi>=0.115
-uvicorn[standard]>=0.30
+uvicorn>=0.30
+pydantic>=2.0
 ddgs>=9.0          # M4 per-country web research (optional; PW_WEB_BACKEND=ddgs)

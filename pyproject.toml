@@ -70,3 +70,18 @@ pw = "council.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["council*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# The CI gate is the high-signal subset: pyflakes (F — undefined names, unused imports/vars) plus
+# syntax errors (E9). Style-only rules are intentionally not enforced yet (the codebase favours long
+# explanatory comments). Widen this set over time.
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Unused locals in tests are frequently intentional (binding a result for readability / a side effect).
+"tests/**" = ["F841"]
+"scripts/**" = ["F841"]

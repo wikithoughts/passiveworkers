@@ -29,7 +29,6 @@ import pathlib
 try:
     from nacl.public import PrivateKey, PublicKey, SealedBox
     from nacl.signing import SigningKey, VerifyKey
-    from nacl.exceptions import BadSignatureError, CryptoError
     HAVE_CRYPTO = True
 except Exception:                       # pragma: no cover - optional dependency
     HAVE_CRYPTO = False

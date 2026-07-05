@@ -75,8 +75,11 @@ same config seam. This keeps us free to move to cheaper/closer/rented resources 
 The coordinator serves a self-contained dashboard (`council/net/dashboard.py`) that polls `/status`
 and renders the network on a Leaflet world map: each node positioned by **country**, coloured by load,
 with model, **reputation**, last-seen, and the recent job flow. It's the "see the network breathing"
-view. v0 uses self-reported country; the next step is **real GeoIP on the connection's source IP**
-(captured at registration as `nodes.ip`) plus animated asker→worker→judge arcs as jobs flow.
+view. Country starts as self-reported, but **offline GeoIP verification shipped (D43)**: the coordinator
+checks a node's self-reported country against the source IP it saw at registration and surfaces the
+result as `geo_country` / `geo_mismatch` — **never** exposing the raw IP. It's default-off (needs an
+operator-supplied GeoLite2 `.mmdb`) and falls back to self-reported country when unavailable. Still
+ahead: animated asker→worker→judge arcs as jobs flow.
 Reputation shown here is the same rolling mean judge score that drives fleet selection — so the map
 also shows *who is trusted*, not just who is online.
 

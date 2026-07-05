@@ -16,9 +16,11 @@ pw research "test brief" --quick --analysts 1
 ## Before opening a PR
 
 1. `python -m py_compile $(git ls-files '*.py')` — everything compiles.
-2. `bash scripts/check_app_js.sh` — inline JS in served pages parses.
-3. `node scripts/fe_test.js` — the front-end harness passes.
-4. If you touched anything that handles web content: the sanitizer rules in
+2. `ruff check .` — lint gate (matches CI).
+3. `pytest tests/ -q` — the full test suite is green (CI's headline step).
+4. `bash scripts/check_app_js.sh` — inline JS in served pages parses.
+5. `node scripts/fe_test.js` — the front-end harness passes.
+6. If you touched anything that handles web content: the sanitizer rules in
    `council/sanitize.py` are load-bearing (see the Security model in the README).
    Don't weaken them; add tests if you extend them.
 

@@ -41,14 +41,13 @@ isolated in `/opt/passiveworkers`, **reusing the host's existing Ollama**, bound
   The merge now errs *short* (~110w vs ~200w single); next refinement: **target** ≈ best-single length,
   not just cap it.
 
-## Future features (interactivity — founder request)
-- **Real IP-based geo on the map.** Today nodes self-report `country`; place them by **GeoIP of the
-  connection's source IP** instead (works when nodes connect directly rather than via the SSH tunnel,
-  which makes everyone look like `127.0.0.1`). Add a GeoIP lookup at registration.
-- **Animate work distribution.** Draw live arcs from the asker → assigned worker nodes → judge as a job
-  flows, and pulse nodes while they're computing — show the network "thinking" across the world.
-- **Operator leaderboard** on the map (top contributors by reputation / jobs helped) — the BOINC-style
-  mission/competition layer that recruits supply.
+## Future features (interactivity — founder request) — ✅ all shipped
+- ✅ **Real IP-based geo** (D43): offline GeoIP verification at registration — checks the self-reported
+  country against the source IP, surfaced as `geo_country`/`geo_mismatch`, never exposing the raw IP.
+- ✅ **Animated work distribution** (Phase E): live asker → worker → judge arcs, nodes pulse while
+  computing (`council/net/app.py`).
+- ✅ **Operator leaderboard** (D44): `GET /leaderboard` + dashboard card — pseudonymous, ranked by
+  reputation / jobs helped / credits earned.
 
 ## M4 — Real per-country web-research ✅
 `council/research.py`: a node's own agent researches the live web from its egress (DuckDuckGo
@@ -59,8 +58,8 @@ never proxied traffic (D4). Verified live (real 2026 results); wired into the ag
 ## M5 — Scale & harden ⏭ (security done)
 - ✅ **Security/correctness hardening pass** — 25-agent adversarial review → 18 confirmed findings fixed
   (access control, ledger integrity, robustness); see DECISIONS **D11**. Property-tested.
-- ◻︎ **systemd service** for the coordinator + worker (survives reboot; replaces tmux).
-- ◻︎ More nodes / a third country; GeoIP + work-flow arcs on the map; then **consider GitHub publish**.
+- ✅ **systemd service** for the coordinator + worker (`scripts/install_systemd.sh`) — survives reboot; replaces tmux.
+- ✅ GeoIP + work-flow arcs shipped; **GitHub publish done** (public repo, on PyPI). ◻︎ Still open: more nodes / a third country (gated on real operators, not code).
 
 ## Phase E — The Living Council Map (end-user experience) ✅
 The splendid, map-forward product **and** the first real demand test, served at `GET /`.
@@ -89,6 +88,27 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 **live web currency** (both research-currency questions went to the council per the frontier-class
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
+
+## R32 — 0.2.0: usable, trustworthy, competitive (D48, 2026-07-05)
+A full enhancement pass driven by three parallel read-only audits (CLI/engine, federation/UI,
+docs/tests/CI) + a competitive scan (GPT Researcher, Local Deep Research, Perplexity, Petals/Exo).
+Landed as sequenced, individually adversarially-reviewed commits:
+- **Security/privacy (D48 — 7 issues the green suite missed, all fixed):** `/status` no longer leaks
+  the per-account balance sheet or asker handles/job-ids; `GET /jobs/{id}` is a capability URL (answer
+  shareable, but identity + receipt + settlement-error + chain-ids stay private to the asker);
+  constant-time admin-token compare; all-errored council **or batch** jobs fail *uncharged*;
+  enrollment/signup tokens redeem atomically with the node/user they gate (no burned token, no phantom
+  ledger account).
+- **Engine:** one `council/ollama.py` client so `PW_OLLAMA_BASE` reaches the analysts/editor/worker/
+  batch (remote/GPU Ollama was half-broken); shared `~/.passiveworkers/reports`; editor-api key
+  pre-flight; research-desk concurrency cap + job-map prune + Cancel + sources selector + `PW_SERVE_PORT`.
+- **CLI:** `pw status`/`doctor`, `pw version`, `pw reports`, `pw library search`.
+- **Export:** `pw research --json` / `--html` (dependency-free renderer) + desk "Save as PDF".
+- **Marketplace UX:** account recovery (paste your key) + show-key-once; correct `pw join` onboarding
+  snippet (was the insecure admin-token flow); cost preview from `GET /job-types`; connection-lost state.
+- **Trust surface:** README badges + architecture diagram + honest comparison table; CI gains ruff, a
+  3.10–3.13 matrix, coverage, and a core-only-install job (graceful degradation); docs de-staled.
+All UIs verified in a real browser (Playwright). Prepared as **0.2.0 — publish held for the founder's go.**
 
 ## R31 — VPS DOGFOOD: `pw join` made to actually work (D47, 2026-06-14)
 Dogfooded the real operator flow on a Hetzner VPS (fresh `pip install passiveworkers` → `pw join`) —
@@ -448,7 +468,7 @@ with [S#] citations); app: 🔬 Deep research mode, report rendering, "safe to c
 - **R4 ✅ SHIPPED (D15):** `shard_map` batch jobs — items split across capability-matched
   computers, judge spot-checks quality, assembled deliverable + JSONL copy; capability
   profiles (models/RAM) + `requires` gating; guarded public-URL fetch variant.
-- **R2 (next):** founder runs 3 real briefs → per-type win-rate = D14; citation freshness stamps;
+- **R2 (next):** founder runs 3 real briefs → per-type win-rate (the per-type demand signal); citation freshness stamps;
   per-type reputation; report quality tuning on real use.
 - **R3:** machine-submitter API docs (a computer with credits can already POST work — that IS
   "Upwork for computers"); more job types (batch eval, data-gen → the research-commons north star);

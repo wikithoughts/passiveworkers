@@ -131,7 +131,7 @@ countries — one-egress centralized DR cannot copy in-country sources without a
 and D4 keeps ours legal (owned findings, never proxied traffic).
 **Status:** Settled (founder pivot, 2026-06-10) & implemented end-to-end same day. First live
 two-country report verified (FI+AE sources, cited, conserved ledger). Next: founder runs 3 real
-briefs (→ D14 demand signal per type), per-type reputation, then more job types (batch eval,
+briefs (→ the per-type demand signal), per-type reputation, then more job types (batch eval,
 data-gen — the research-commons north star) and Phase H with the category story.
 
 ## D15 — Sharded batch work; what may (and may NOT) be distributed
@@ -1293,6 +1293,39 @@ A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 
   floor to 1.
 Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
 atomic doesn't make the fallback atomic. 300 tests green.
+
+## D48 — 0.2.0 security/privacy hardening + engine/CLI/UX/CI enhancement (R32, 2026-07-05)
+**Context:** three read-only audits (CLI/engine, federation/UI, docs/tests/CI) plus a competitive scan
+surfaced real defects and gaps across the whole surface. This round fixes them, with an adversarial
+Workflow review before each signed commit.
+
+**Security/privacy — 7 issues an adversarial review confirmed that the green 313-test suite had missed:**
+1. `GET /status` returned every account's balance/reputation and cleartext asker handles + job-ids —
+   removed. The public feed is now a de-identified pulse (type · status · age). Pseudonymous operator
+   ranking stays at `/leaderboard`; a user reads their own balance at `/me`.
+2. `GET /jobs/{id}` was fully unauthenticated. Now a capability URL: the RESULT is readable by the
+   unguessable UUID (the intended shareable link), but the asker's identity, the credit receipt, the
+   settlement `error` (which can embed the handle + exact balance), and the `parent`/`child` pipeline
+   chain-ids are returned ONLY to the authenticated asker.
+3. The admin-token compare is now constant-time on bytes (`secrets.compare_digest`) — was a timing side
+   channel; a non-ASCII token now fails closed (401) instead of an unhandled 500.
+4. An all-errored job — council OR batch (batch writes per-item `(error)` outputs into a non-empty
+   `results`, which fooled the first guard) — is marked failed and the asker is NOT charged.
+5. Enrollment (node) and signup (user) tokens are redeemed IN THE SAME transaction as the node/user they
+   gate, after the handle-availability check, and a rolled-back register also reverts the in-memory
+   ledger — so a failed insert or a "handle taken" collision can't burn a single-use token or leave a
+   phantom granted account. Regression tests in `tests/test_security_privacy.py`.
+
+**Engine/CLI/export/UX/CI:** one shared `council/ollama.py` fixes remote `PW_OLLAMA_BASE` (the analysts/
+editor/worker/batch hardcoded localhost) and removes 4 duplicate clients; shared `~/.passiveworkers/
+reports`; `--editor api` key pre-flight; serve concurrency cap + job-map prune + Cancel + sources
+selector + `PW_SERVE_PORT`; `pw status`/`version`/`reports`/`library search`; `--json`/`--html` export +
+desk "Save as PDF"; marketplace account recovery + correct `pw join` snippet + `/job-types` cost preview;
+README badges/comparison/diagram; CI ruff + a 3.10–3.13 matrix + coverage + a core-only-install job.
+
+**Status:** landed on `main` across sequenced commits; ~340 tests green; ruff clean; all UIs
+browser-verified (Playwright). Version bumped to 0.2.0 in-repo — **PyPI publish + `v0.2.0` tag held for
+the founder's explicit go.** See [[passiveworkers-adversarial-review-catches-real-bugs]].
 
 ## D47 — `pw join` made to actually work end-to-end (VPS dogfood fixes, 2026-06-14)
 **Decision:** Fix the two bugs that made `pw join` + enrollment unusable, found by **dogfooding the

@@ -1,5 +1,10 @@
 # Passive Workers — make your computer work for you, and for others
 
+[![CI](https://github.com/wikithoughts/passiveworkers/actions/workflows/ci.yml/badge.svg)](https://github.com/wikithoughts/passiveworkers/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/passiveworkers)](https://pypi.org/project/passiveworkers/)
+[![Python](https://img.shields.io/pypi/pyversions/passiveworkers)](https://pypi.org/project/passiveworkers/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Your models. Your connection. Your disk.** Passive Workers turns any computer with
 [Ollama](https://ollama.com) into a worker that does real jobs locally — for *you* today, and
 (opt-in) for *other people's computers* tomorrow. The flagship — the part you should judge it on — is
@@ -10,10 +15,14 @@ deep research is the first task type, with batch work, extraction, and code gene
 ([see "The network", below](#the-network--computers-doing-real-work-for-each-other); it's invite-only
 while it matures).
 
+**Prerequisite:** install [Ollama](https://ollama.com/download) first (it runs the models locally).
+Then:
+
 ```bash
 pip install 'passiveworkers[all]'   # core + extraction + private-docs + MCP
 ollama serve &                      # make sure Ollama is running (skip if it already is)
 ollama pull qwen3:14b               # any decent models you like — it auto-detects what you have
+pw status                           # ✓ Ollama up? which models? library? — a 1-second preflight
 pw research "What changed in EU AI Act enforcement this quarter, and who has been fined?"
 ```
 
@@ -68,6 +77,25 @@ our multi-model, live-web + private-library engine is the capability it reaches 
 docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
 ```
 
+## How it works
+
+```text
+Single-player  ·  pw research "…"
+   brief ─▶ planner ─▶ N distinct angles
+        ├─▶ analyst A (own model, own angle) ─┐   each researches the LIVE WEB
+        ├─▶ analyst B (own model, own angle) ─┼─▶ blind judge: scores + MERGE
+        └─▶ analyst C (own model, own angle) ─┘     (keeps agree / differ / unique)
+                                                 └─▶ editor ─▶ one cited report
+                                                       → ./reports/*.md · --json · --html
+Network (opt-in)  ·  pw join <url> <token>
+   asker ─▶ coordinator ─▶ splits the job across worker nodes (each researches from its
+   own country / egress) ─▶ judge ─▶ reassembled, cited, credit-settled deliverable
+```
+
+Models hold **zero tool privileges** — they only return text; Python does every search, fetch, and
+file write. See the three surfaces (research desk · marketplace · operator map) in
+[docs/preview/](docs/preview/) and the measured evidence in [docs/BENEFIT.md](docs/BENEFIT.md).
+
 ## Why this exists
 
 - **Currency beats memory.** Frontier chatbots answer from training data that is months or
@@ -94,6 +122,27 @@ docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
   switch it on) yours for others. A commons of machines, not a data-harvesting cloud: you always
   see and consent to what your machine does, and it returns work it produced — never proxied
   traffic. Deep research is the first task type; more are on the roadmap. See *The network*, below.
+
+## How it compares
+
+An honest read of where Passive Workers sits — verify it yourself; we publish our methods and our losses.
+
+| | Passive Workers | GPT Researcher | Local Deep Research | Perplexity | Petals / Exo |
+|---|---|---|---|---|---|
+| Runs fully local, no API key | ✅ | optional | ✅ | ❌ cloud | ✅ |
+| Nothing leaves but the web searches | ✅ | depends on LLM | ✅ | ❌ | ✅ |
+| Multi-model council + **preserved dissent** | ✅ | ✖ single agent | ✖ | ✖ | n/a |
+| Live-web currency + cited report | ✅ | ✅ | ✅ | ✅ | ✖ |
+| Private-document RAG | ✅ | ✅ | ✅ | limited | ✖ |
+| Report export | md · json · html/PDF | md · PDF · Docx | md | ✖ | ✖ |
+| Opt-in compute network **with incentives** | ✅ credits + reputation | ✖ | ✖ | ✖ | shards 1 model, **no incentive layer** |
+| Price | free (your hardware) | API $/run | free | subscription | free |
+
+Where others lead today, plainly: **GPT Researcher** has more export formats and a recursive
+breadth/depth tree; **Local Deep Research** wires in 10+ search engines (arXiv, PubMed, …) and encrypts
+its store; **Perplexity** is faster on a bigger model. Our bet is the combination nobody else makes —
+*local privacy + multi-model dissent + live-web currency + an opt-in commons of machines* — and we
+measure the parts (`scripts/eval_currency_gap.py`, `eval_citation_fidelity.py`, `bench_rag.py`).
 
 ## Who this is for / why it matters
 
