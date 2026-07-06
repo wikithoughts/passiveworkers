@@ -5,10 +5,12 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
-## [0.2.0] — 2026-07-05
+## [0.2.0] — 2026-07-05 – 07-06
 A broad "usable, trustworthy, competitive" pass (R32 / D48): security/privacy hardening, engine
-reliability, new CLI + export features, marketplace UX, and a hardened trust surface. Every phase was
-adversarially reviewed before commit — which caught 15 real defects the green test suite had missed.
+reliability, new CLI + export features, marketplace UX, and a hardened trust surface — plus a
+configuration & connectivity round (R33 / D49): persistent `pw config` and keyed search backends.
+Every phase was adversarially reviewed before commit — which caught 15 real defects the green test
+suite had missed.
 ### Security
 - **`/status` privacy:** the public dashboard feed no longer exposes the per-account balance sheet or
   asker handles / job-ids — only a de-identified pulse (type · status · age). Pseudonymous operator
@@ -20,7 +22,15 @@ adversarially reviewed before commit — which caught 15 real defects the green 
 - Enrollment/signup tokens redeem atomically with the node/user they gate — a failed insert or a
   "handle taken" collision no longer burns a single-use token or leaves a phantom ledger account.
 ### Added
-- **`pw status` / `pw doctor`** — a one-second preflight (Ollama up? which models? library? joined?).
+- **`pw config`** — persist any setting (Ollama URL, models, web backend, API keys) once to an
+  owner-only (0600) `~/.passiveworkers/config.json` instead of re-`export`-ing env vars each shell;
+  `get`/`set`/`unset`/`list` with secrets masked. Precedence: explicit env var > config file > default.
+- **Keyed web search (Brave / Tavily / Serper)** — opt-in alternatives to DuckDuckGo, which
+  rate-limits at scale. A configured keyed backend is also used **automatically as a fallback** when
+  DDG fails, so research stays reliable. Honest tradeoff: keyed engines are central APIs and do not
+  geo-localize on your egress like DDG/SearXNG (documented; default stays DDG).
+- **`pw status` / `pw doctor`** — a one-second preflight (Ollama up? which models? library? joined?
+  which search backend, and is its key set?).
 - **`pw version`**, **`pw reports`**, **`pw library search <query>`**.
 - **`pw research --json`** (report + deduped web+library sources + per-analyst stats) and **`--html`**
   (a self-contained, printable page) — plus a "Save as PDF" button on the research desk.

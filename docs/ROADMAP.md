@@ -89,6 +89,23 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R33 — Configuration & connectivity: `pw config` + keyed search backends (D49, 2026-07-06)
+Two file-confirmed gaps closed, folded into the still-unpublished 0.2.0 (no version bump — it never hit
+PyPI, so it's still being assembled):
+- **`pw config` — persistent settings.** Every one of ~60 `PW_*` knobs was read live from `os.environ`,
+  so a user had to re-`export` preferences each shell. A new owner-only (0600) `~/.passiveworkers/
+  config.json` + `pw config get|set|unset|list` persists them; a single `apply_to_env()` at the top of
+  `cli.main` seeds `os.environ` via `setdefault`, so **explicit env > config file > code default** with
+  zero changes to the ~60 read sites. Secrets are masked in `list`; unknown keys get a "did you mean" hint.
+- **Keyed web search (Brave / Tavily / Serper).** The search layer was a single, rate-limited engine
+  (DDG default). Added three keyed backends as peers of `_ddgs`/`_searxng`, collapsed the duplicated
+  dispatch into one `_web_rows` seam, and added an automatic fallback chain: a configured keyed backend
+  is used when DDG fails (reliability), while default users keep the egress-localized DDG moat. Honest
+  framing kept: keyed engines are central APIs — no geo-localization — same caveat as arXiv/Wikipedia.
+- **`pw status`** now reports the active backend + whether its key is set (misconfig caught in the
+  1-second preflight, not mid-run). New `tests/test_config.py` + keyed-dispatch/fallback/SSRF tests.
+Adversarially reviewed before commit (project norm). Still **publish-held** as part of 0.2.0.
+
 ## R32 — 0.2.0: usable, trustworthy, competitive (D48, 2026-07-05)
 A full enhancement pass driven by three parallel read-only audits (CLI/engine, federation/UI,
 docs/tests/CI) + a competitive scan (GPT Researcher, Local Deep Research, Perplexity, Petals/Exo).

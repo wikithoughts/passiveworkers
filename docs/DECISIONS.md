@@ -1294,6 +1294,42 @@ A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 
 Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
 atomic doesn't make the fallback atomic. 300 tests green.
 
+## D49 — Persistent `pw config` + keyed search backends (R33, 2026-07-06)
+**Context:** the founder asked "what's next" after the 0.2.0 round and chose *config + keyed search*.
+Two exploration passes confirmed two real gaps: (a) all ~60 `PW_*` knobs are read live from
+`os.environ`, with no persistence — a daily "re-`export` everything" tax; (b) web search was one
+rate-limited engine (DDG), where a competitor (Local Deep Research) wires in many.
+
+**Decision 1 — persist via the environment, not a plumbed config object.** A new stdlib-only
+`council/config.py` stores settings in an owner-only (0600) `~/.passiveworkers/config.json` and exposes
+`apply_to_env()`, called as the FIRST statement of `cli.main` (before any subcommand module is imported,
+so import-time reads like `research._TIMEOUT` see it). It seeds `os.environ` with **`setdefault`**, which
+gives exactly the precedence we want — **explicit shell env > config file > code default** — and needs
+**zero changes to the ~60 existing read sites**. The alternative (thread a config object through the
+codebase) would have touched every module for no added capability. Keys are a curated allowlist with a
+"did you mean" hint for typos, but any well-formed `PW_*` key is still settable (power users / ops vars).
+Secrets are masked on display and written 0600 from creation (same pattern as `agent._save_join`).
+
+**Decision 2 — keyed backends as opt-in reliability, DDG stays the default.** `_brave`/`_tavily`/`_serper`
+join `_ddgs`/`_searxng` as peers returning the same row shape; the two duplicated dispatch conditionals
+collapse into one `_web_rows` seam. A best-effort **fallback chain** (`_fallback_chain`) triggers **only on
+exception** (never on a legitimate empty result, so a paid query is never silently burned): when the
+primary backend fails, a configured keyed backend is tried, then DDG as the floor. Net effect: default
+users keep the egress-localized DDG "moat"; anyone who adds a key gets automatic reliability when DDG
+rate-limits, without changing their backend. **Honesty:** keyed engines are central APIs — they do not
+geo-localize on the node's egress, trading the moat for reliability — documented the same way arXiv/
+Wikipedia already are. (Note: Brave dropped its free tier in Feb 2026 — metered; Tavily/Serper have free
+tiers.) Keyed-API results still pass the existing SSRF/host-dedup/sanitize post-processing, so a hostile
+search API cannot inject a loopback URL that later gets fetched (regression-tested).
+
+**Decision 3 — no version bump.** 0.2.0 never hit PyPI and has no `v0.2.0` tag, so it's still being
+assembled; these features fold into it (CHANGELOG `[0.2.0]`) rather than burning a 0.3.0 on unpublished
+work. Rebuild `dist/` before publishing. **Publish remains held for the founder's go.**
+
+**Status:** landed on `main`; `pw config` + keyed dispatch + fallback + SSRF all verified; new
+`tests/test_config.py` + research/CLI test extensions; adversarially reviewed before commit. See
+[[passiveworkers-adversarial-review-catches-real-bugs]] and [[passiveworkers-next-move-decision]].
+
 ## D48 — 0.2.0 security/privacy hardening + engine/CLI/UX/CI enhancement (R32, 2026-07-05)
 **Context:** three read-only audits (CLI/engine, federation/UI, docs/tests/CI) plus a competitive scan
 surfaced real defects and gaps across the whole surface. This round fixes them, with an adversarial

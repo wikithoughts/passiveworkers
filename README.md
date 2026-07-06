@@ -72,10 +72,18 @@ Add to Claude Desktop's `claude_desktop_config.json` so your assistant can call 
 Tools exposed: `research`, `library_search`, `library_add`. Your own agentic AI orchestrates;
 our multi-model, live-web + private-library engine is the capability it reaches for.
 
-**Recommended setup (avoids public-search rate limits, keeps queries private):**
+**Search backends & one-time config.** DuckDuckGo is the keyless default; because it rate-limits at
+scale, you get two opt-in reliability upgrades — a self-hosted SearXNG (auto-detected) or a keyed
+backend (Brave / Tavily / Serper) that's also used *automatically as a fallback* when DDG rate-limits:
 ```bash
-docker compose up -d searxng     # self-hosted meta-search; pw auto-detects it
+docker compose up -d searxng            # self-hosted meta-search; pw auto-detects it
+pw config set PW_TAVILY_KEY tvly-…      # or PW_BRAVE_KEY / PW_SERPER_KEY
 ```
+**`pw config`** persists any setting (Ollama URL, models, web backend, API keys) to an owner-only
+`~/.passiveworkers/config.json`, so you set it once instead of re-`export`-ing env vars every shell —
+`pw config list` shows everything (secrets masked). Keyed backends are *central* APIs: unlike
+DDG/SearXNG they don't geo-localize on your egress, so they trade that privacy edge for reliability —
+opt-in, never on by default.
 
 ## How it works
 
@@ -133,14 +141,16 @@ An honest read of where Passive Workers sits — verify it yourself; we publish 
 | Nothing leaves but the web searches | ✅ | depends on LLM | ✅ | ❌ | ✅ |
 | Multi-model council + **preserved dissent** | ✅ | ✖ single agent | ✖ | ✖ | n/a |
 | Live-web currency + cited report | ✅ | ✅ | ✅ | ✅ | ✖ |
+| Web search backends | DDG · SearXNG · Brave/Tavily/Serper · arXiv/Wikipedia | keyed engines | **10+ engines** | own index | ✖ |
 | Private-document RAG | ✅ | ✅ | ✅ | limited | ✖ |
 | Report export | md · json · html/PDF | md · PDF · Docx | md | ✖ | ✖ |
 | Opt-in compute network **with incentives** | ✅ credits + reputation | ✖ | ✖ | ✖ | shards 1 model, **no incentive layer** |
 | Price | free (your hardware) | API $/run | free | subscription | free |
 
 Where others lead today, plainly: **GPT Researcher** has more export formats and a recursive
-breadth/depth tree; **Local Deep Research** wires in 10+ search engines (arXiv, PubMed, …) and encrypts
-its store; **Perplexity** is faster on a bigger model. Our bet is the combination nobody else makes —
+breadth/depth tree; **Local Deep Research** still wires in more search engines (PubMed, Semantic
+Scholar, …) — though we've now added keyed Brave/Tavily/Serper alongside DDG/SearXNG/arXiv/Wikipedia,
+with automatic fallback when DDG rate-limits; **Perplexity** is faster on a bigger model. Our bet is the combination nobody else makes —
 *local privacy + multi-model dissent + live-web currency + an opt-in commons of machines* — and we
 measure the parts (`scripts/eval_currency_gap.py`, `eval_citation_fidelity.py`, `bench_rag.py`).
 

@@ -12,9 +12,11 @@ it. So the Helsinki VPS and the Gulf Mac get genuinely different result sets fro
 egress — diversity no central API can replicate. The lever: leave region at world
 (`wt-wt`) and let egress drive locale; never force a region.
 
-Config (per node, via env):
-  PW_WEB_BACKEND  off (default) | ddgs | searxng
+Config (per node, via env — persist with `pw config set …`):
+  PW_WEB_BACKEND  off (default) | ddgs | searxng | brave | tavily | serper
   PW_SEARXNG_URL  e.g. http://127.0.0.1:8080   (only used for searxng)
+  PW_BRAVE_KEY / PW_TAVILY_KEY / PW_SERPER_KEY  keyed backends (central APIs — no egress moat;
+      also auto-used as a fallback when DDG rate-limits, if a key is present)
   PW_WEB_RESULTS  max results (default 5) · PW_WEB_TIMEOUT  seconds (default 8)
 
 Wire-in: council/net/agent.py passes search() as PerspectiveWorker(web_search=…) when
@@ -172,6 +174,54 @@ def _searxng(question: str) -> list[dict]:
     return r.json().get("results", [])
 
 
+# ---- keyed web backends (opt-in reliability when DDG rate-limits) ---------------------------
+# These are CENTRAL APIs: unlike DDG/SearXNG they do NOT geo-localize on the node's egress IP,
+# so they trade the "egress moat" for reliability/coverage — the same caveat already documented
+# for arXiv/Wikipedia below. Keys come from PW_BRAVE_KEY / PW_TAVILY_KEY / PW_SERPER_KEY (set them
+# once with `pw config set …`). Each returns the common row shape {title, href/url, body/content}
+# and raises when its key is missing OR the request fails, so `_web_rows` can fall back cleanly.
+def _brave(question: str) -> list[dict]:
+    key = os.environ.get("PW_BRAVE_KEY", "")
+    if not key:
+        raise RuntimeError("PW_BRAVE_KEY not set")
+    import requests
+    r = requests.get("https://api.search.brave.com/res/v1/web/search",
+                     headers={"Accept": "application/json", "X-Subscription-Token": key},
+                     params={"q": question, "count": min(_MAX_RESULTS, 20)}, timeout=_TIMEOUT)
+    r.raise_for_status()
+    return [{"title": x.get("title", ""), "href": x.get("url", ""), "body": x.get("description", "")}
+            for x in r.json().get("web", {}).get("results", [])]
+
+
+def _tavily(question: str) -> list[dict]:
+    key = os.environ.get("PW_TAVILY_KEY", "")
+    if not key:
+        raise RuntimeError("PW_TAVILY_KEY not set")
+    import requests
+    r = requests.post("https://api.tavily.com/search",
+                      headers={"Content-Type": "application/json",
+                               "Authorization": f"Bearer {key}"},   # current auth; api_key-in-body is legacy
+                      json={"query": question, "max_results": min(_MAX_RESULTS, 20),
+                            "search_depth": "basic", "include_answer": False},
+                      timeout=_TIMEOUT)
+    r.raise_for_status()
+    return [{"title": x.get("title", ""), "href": x.get("url", ""), "body": x.get("content", "")}
+            for x in r.json().get("results", [])]
+
+
+def _serper(question: str) -> list[dict]:
+    key = os.environ.get("PW_SERPER_KEY", "")
+    if not key:
+        raise RuntimeError("PW_SERPER_KEY not set")
+    import requests
+    r = requests.post("https://google.serper.dev/search",
+                      headers={"X-API-KEY": key, "Content-Type": "application/json"},
+                      json={"q": question, "num": _MAX_RESULTS}, timeout=_TIMEOUT)
+    r.raise_for_status()
+    return [{"title": x.get("title", ""), "href": x.get("link", ""), "body": x.get("snippet", "")}
+            for x in r.json().get("organic", [])]
+
+
 # ---- keyless routable engines (engine routing v1: web | academic | encyclopedic) ----
 def _arxiv(question: str, max_results: int = 5) -> list[dict]:
     """arXiv's free API — for academic queries. Returns the common row shape."""
@@ -227,12 +277,47 @@ def _wikipedia_fallback(question: str) -> str:
         return ""
 
 
+# ---- unified web-backend dispatch (one seam; both search paths call it) --------------------
+_KEY_ENV = {"brave": "PW_BRAVE_KEY", "tavily": "PW_TAVILY_KEY", "serper": "PW_SERPER_KEY"}
+
+
+def _engine_fn(name: str):
+    """The web-backend function for a name, resolved from module globals at CALL time (so a test —
+    or a future wrapper — that monkeypatches ``_ddgs``/``_brave``/… is honored). Unknown → DDG."""
+    return {"ddgs": _ddgs, "searxng": _searxng, "brave": _brave,
+            "tavily": _tavily, "serper": _serper}.get(name, _ddgs)
+
+
+def _fallback_chain(primary: str) -> list[str]:
+    """Best-effort order to try when the PRIMARY web backend raises: any configured keyed backend
+    (a key is present) first — the reliability win when DDG rate-limits — then DDG as the always-
+    available floor. Excludes the primary. Empty results (not an exception) never trigger this, so a
+    legitimate 'no results' from DDG never silently burns a paid keyed query."""
+    chain = [b for b in ("brave", "tavily", "serper")
+             if b != primary and os.environ.get(_KEY_ENV[b])]
+    if primary != "ddgs":
+        chain.append("ddgs")
+    return chain
+
+
+def _web_rows(question: str, backend: str) -> list[dict]:
+    """Run the selected WEB backend (not academic/encyclopedic), falling back through
+    `_fallback_chain` ONLY on exception. Raises if the primary and every fallback fail — the
+    caller's own try/except turns that into best-effort ''/[]"""
+    try:
+        return _engine_fn(backend)(question)
+    except Exception:
+        for b in _fallback_chain(backend):
+            try:
+                return _engine_fn(b)(question)
+            except Exception:
+                continue
+        raise
+
+
 @lru_cache(maxsize=256)
 def _cached(question: str, _bucket: int, backend: str) -> str:
-    if backend == "searxng":
-        rows = _searxng(question)
-    else:
-        rows = _ddgs(question)
+    rows = _web_rows(question, backend)
     found = _clean(rows)
     return found or _wikipedia_fallback(question)
 
@@ -300,10 +385,8 @@ def search_structured(query: str, max_results: int = 5, engine: str = "web") -> 
             rows = _arxiv(q, max_results)
         elif engine == "encyclopedic":
             rows = _wikipedia(q, max_results)
-        elif backend == "searxng":
-            rows = _searxng(q)
         else:
-            rows = _ddgs(q)
+            rows = _web_rows(q, backend)
     except Exception:
         return []
     from council.sanitize import clean as _sanitize

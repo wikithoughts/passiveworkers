@@ -12,6 +12,7 @@ Make your computer work for you (and, opt-in, for others). Research is the flags
     pw library add <path|dir>      # index your own documents (private, local RAG)
     pw library list | search <query> | remove <path> | clear
     pw mcp                         # run as an MCP server (Claude Desktop, Codex, …)
+    pw config [set <KEY> <VALUE>]  # persist settings (Ollama URL, web backend, API keys) — no more env vars
     pw version                     # print the installed version  (also: pw --version)
 
   The network — do work for / with other computers (opt-in):
@@ -31,6 +32,12 @@ import sys
 
 
 def main() -> int:
+    # FIRST, before any subcommand module is imported: seed os.environ from ~/.passiveworkers/
+    # config.json via setdefault, so a user's persisted settings become the defaults for every
+    # command while an explicitly exported env var still wins. Import-light + crash-safe.
+    from council import config
+    config.apply_to_env()
+
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
         print(__doc__.strip())
@@ -61,6 +68,9 @@ def main() -> int:
         from council.mcp_server import main as mcp_main
         mcp_main()
         return 0
+    if cmd == "config":
+        from council.config import main as config_main
+        return config_main(rest)
     if cmd in ("join", "work"):
         # one-command operator onboarding / resume — starts the long-running worker loop
         from council.net.agent import join as join_main

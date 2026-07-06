@@ -9,6 +9,8 @@ inside. Every check is independent and crash-safe: one broken probe never hides 
 
 from __future__ import annotations
 
+import os
+
 from council import paths
 
 
@@ -31,6 +33,29 @@ def main() -> int:
     except Exception as e:
         healthy = False
         print(f"  ✗ Ollama: {type(e).__name__}: {e}")
+
+    # 1b. Web search backend — grounds every research run. Surface a keyed backend selected
+    #     without its key here (one-second check) rather than only when a run fails deep inside.
+    try:
+        from council import research as _R
+        backend = _R._backend()
+        keyed = [b for b in ("brave", "tavily", "serper") if os.environ.get(_R._KEY_ENV[b])]
+        if backend == "off":
+            print("  · Web search: off — a `pw research` run enables DuckDuckGo automatically")
+        elif backend in _R._KEY_ENV:
+            if os.environ.get(_R._KEY_ENV[backend]):
+                print(f"  ✓ Web search: {backend} (keyed — central API, no egress moat)")
+            else:
+                others = [b for b in keyed if b != backend]     # other keyed backends that DO have a key
+                floor = (", ".join(others) + ", then DuckDuckGo") if others else "DuckDuckGo"
+                print(f"  ⚠ Web search: {backend} selected but {_R._KEY_ENV[backend]} not set "
+                      f"— will fall back to {floor} (`pw config set {_R._KEY_ENV[backend]} …`)")
+        else:
+            print(f"  ✓ Web search: {backend}")
+        if keyed and backend not in _R._KEY_ENV:
+            print(f"      keyed fallback ready: {', '.join(keyed)} (used if DuckDuckGo rate-limits)")
+    except Exception as e:
+        print(f"  · Web search: unavailable ({type(e).__name__})")
 
     # 2. Private document library (local RAG)
     try:

@@ -106,3 +106,85 @@ def test_fetch_extract_happy_path_through_guarded_get(monkeypatch):
     monkeypatch.setattr(requests, "get",
                         lambda url, **kw: _Resp(body=b"<html><body><p>Hello SSRF-safe</p></body></html>"))
     assert "Hello SSRF-safe" in R.fetch_extract("http://good.example/page")
+
+
+# --------------------------------------------------------- keyed web backends (R33/D49)
+def _row(name):
+    return [{"title": name, "href": "https://good.example/x", "body": name}]
+
+
+def test_keyed_backend_selected(monkeypatch):
+    monkeypatch.setenv("PW_WEB_BACKEND", "brave")
+    monkeypatch.setattr(R, "_searxng_alive", lambda: False)
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    seen = []
+    monkeypatch.setattr(R, "_brave", lambda q: (seen.append("brave"), _row("brave"))[1])
+    monkeypatch.setattr(R, "_ddgs", lambda q: (seen.append("ddgs"), _row("ddgs"))[1])
+    out = R.search_structured("q", max_results=5)
+    assert seen == ["brave"] and out[0]["title"] == "brave"     # keyed primary used, DDG untouched
+
+
+def test_ddgs_failure_falls_back_to_configured_keyed(monkeypatch):
+    monkeypatch.setenv("PW_WEB_BACKEND", "ddgs")
+    monkeypatch.setenv("PW_TAVILY_KEY", "tvly-x")               # a key is present → eligible fallback
+    monkeypatch.setattr(R, "_searxng_alive", lambda: False)
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    seen = []
+    monkeypatch.setattr(R, "_ddgs", lambda q: (seen.append("ddgs"), (_ for _ in ()).throw(RuntimeError("429")))[1])
+    monkeypatch.setattr(R, "_tavily", lambda q: (seen.append("tavily"), _row("tavily"))[1])
+    out = R.search_structured("q", max_results=5)
+    assert seen == ["ddgs", "tavily"] and out[0]["title"] == "tavily"
+
+
+def test_empty_result_does_not_trigger_paid_fallback(monkeypatch):
+    # a legitimate EMPTY result (no exception) must NOT cascade to a paid keyed backend
+    monkeypatch.setenv("PW_WEB_BACKEND", "ddgs")
+    monkeypatch.setenv("PW_BRAVE_KEY", "b")
+    monkeypatch.setattr(R, "_searxng_alive", lambda: False)
+    seen = []
+    monkeypatch.setattr(R, "_ddgs", lambda q: (seen.append("ddgs"), [])[1])
+    monkeypatch.setattr(R, "_brave", lambda q: (seen.append("brave"), _row("brave"))[1])
+    R.search_structured("q", max_results=5)
+    assert seen == ["ddgs"]      # brave never called on a legit empty
+
+
+def test_keyed_primary_without_key_degrades_to_ddgs(monkeypatch):
+    monkeypatch.setenv("PW_WEB_BACKEND", "brave")
+    monkeypatch.delenv("PW_BRAVE_KEY", raising=False)           # selected but no key
+    monkeypatch.delenv("PW_TAVILY_KEY", raising=False)
+    monkeypatch.delenv("PW_SERPER_KEY", raising=False)
+    monkeypatch.setattr(R, "_searxng_alive", lambda: False)
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    seen = []
+    monkeypatch.setattr(R, "_ddgs", lambda q: (seen.append("ddgs"), _row("ddgs"))[1])
+    out = R.search_structured("q", max_results=5)
+    assert seen == ["ddgs"] and out[0]["title"] == "ddgs"      # _brave raises (no key) → DDG floor
+
+
+def test_keyed_result_still_ssrf_filtered(monkeypatch):
+    # a hostile keyed API returning a loopback URL must be dropped by the existing post-processing
+    monkeypatch.setenv("PW_WEB_BACKEND", "serper")
+    monkeypatch.setattr(R, "_searxng_alive", lambda: False)
+    monkeypatch.setattr(R, "_serper", lambda q: [
+        {"title": "ok", "href": "https://1.1.1.1/a", "body": "public"},
+        {"title": "evil", "href": "http://127.0.0.1:8080/admin", "body": "ssrf"},
+    ])
+    out = R.search_structured("q", max_results=5)
+    hosts = [r["host"] for r in out]
+    assert hosts == ["1.1.1.1"]        # loopback dropped, public kept (real _host_is_public, offline)
+
+
+def test_keyed_fns_raise_without_key(monkeypatch):
+    import pytest
+    for fn, env in [(R._brave, "PW_BRAVE_KEY"), (R._tavily, "PW_TAVILY_KEY"), (R._serper, "PW_SERPER_KEY")]:
+        monkeypatch.delenv(env, raising=False)
+        with pytest.raises(Exception):
+            fn("q")
+
+
+def test_fallback_chain_ordering(monkeypatch):
+    monkeypatch.setenv("PW_BRAVE_KEY", "b")
+    monkeypatch.setenv("PW_SERPER_KEY", "s")
+    monkeypatch.delenv("PW_TAVILY_KEY", raising=False)
+    assert R._fallback_chain("ddgs") == ["brave", "serper"]        # keyed-with-key, no ddgs (it's primary)
+    assert R._fallback_chain("brave") == ["serper", "ddgs"]        # exclude self; ddgs floor appended

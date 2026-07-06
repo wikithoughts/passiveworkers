@@ -4,9 +4,11 @@
 `passiveworkers` **0.1.0 through 0.1.5 are live** on https://pypi.org/project/passiveworkers/, each
 git-tagged (`v0.1.0`…`v0.1.5`). **0.2.0** (the R32/D48 "usable, trustworthy, competitive" round — security/
 privacy hardening, engine reliability, `pw status`/`--json`/`--html`, marketplace account recovery, CI
-matrix; see the CHANGELOG) is bumped in `pyproject.toml` and committed on `main`, but is **NOT yet
-published**: the PyPI upload + `v0.2.0` tag are held for the founder's explicit go. To ship it, run the
-numbered steps below (they are ready to execute; nothing else is pending).
+matrix — **now also the R33/D49 connectivity round: `pw config` + keyed search backends**; see the
+CHANGELOG) is bumped in `pyproject.toml` and committed on `main`, but is **NOT yet published**: the PyPI
+upload + `v0.2.0` tag are held for the founder's explicit go. Because the 0.2.0 scope kept growing on
+`main` after the first dist was built, **rebuild `dist/` (step 2 below) before publishing** so the
+artifacts match the current commit. To ship it, run the numbered steps below (nothing else is pending).
 
 Token: 1Password item
 **"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time — never written
