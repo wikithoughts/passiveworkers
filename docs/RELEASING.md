@@ -1,14 +1,13 @@
 # Releasing to PyPI
 
-## Current state — **0.2.0 prepared, publish HELD (2026-07-05)**
-`passiveworkers` **0.1.0 through 0.1.5 are live** on https://pypi.org/project/passiveworkers/, each
-git-tagged (`v0.1.0`…`v0.1.5`). **0.2.0** (the R32/D48 "usable, trustworthy, competitive" round — security/
-privacy hardening, engine reliability, `pw status`/`--json`/`--html`, marketplace account recovery, CI
-matrix — **now also the R33/D49 connectivity round: `pw config` + keyed search backends**; see the
-CHANGELOG) is bumped in `pyproject.toml` and committed on `main`, but is **NOT yet published**: the PyPI
-upload + `v0.2.0` tag are held for the founder's explicit go. Because the 0.2.0 scope kept growing on
-`main` after the first dist was built, **rebuild `dist/` (step 2 below) before publishing** so the
-artifacts match the current commit. To ship it, run the numbered steps below (nothing else is pending).
+## Current state — **0.2.0 PUBLISHED (2026-07-07)**
+`passiveworkers` **0.1.0 through 0.2.0 are live** on https://pypi.org/project/passiveworkers/, each
+git-tagged (`v0.1.0`…`v0.2.0`). **0.2.0** bundled three rounds assembled on `main` since 2026-07-05 —
+R32/D48 (security/privacy hardening, engine reliability, `pw status`/`--json`/`--html`, marketplace
+account recovery, CI matrix), R33/D49 (`pw config` + keyed search backends), and R34/D50 (pricing
+dedup, shared UI module, operator/asker CLI test coverage, the `pw rate` fix). It was published from
+commit `4963906`, verified (PyPI JSON API 200 + a clean-venv `pip install passiveworkers==0.2.0`),
+and tagged `v0.2.0`. **The next release MUST bump the version** — `0.2.0` is now burned on PyPI.
 
 Token: 1Password item
 **"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time — never written
