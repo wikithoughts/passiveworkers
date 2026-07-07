@@ -95,6 +95,17 @@ JOB_TYPES: dict = {
 }
 
 
+def pool_for(job_type: str, n_minds: int = 1) -> float:
+    """The worker reward pool a job of this type costs, for ``n_minds`` responder nodes — the ONE
+    definition of the price, so the create-job sites, the ``/job-types`` catalog, and the marketplace
+    cost preview can never drift (they used to carry copy-pasted formulas + hardcoded JS fallbacks).
+    Per-mind price is ``worker_pool / fleet_size`` (so the default is unchanged); it scales by the mind
+    count and the type's ``pool_mult``. Total to the asker = ``ledger.quote(pool, judge_fee)``. Assisted
+    jobs are single-mind (human-mediated) → ``n_minds`` stays 1."""
+    return round(CONFIG.worker_pool / CONFIG.fleet_size * n_minds
+                 * JOB_TYPES[job_type]["pool_mult"], 4)
+
+
 # ---- task-type behavior registry (D33) ----------------------------------------------------------
 # One source of truth for how each job type is orchestrated, so adding a type no longer means editing
 # five scattered `if job_type == ...` sites (coordinator split/assemble/judge-sample + worker

@@ -139,17 +139,13 @@ APP_HTML = r"""<!doctype html>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const CENTROIDS={FI:[61.9,25.7],AE:[23.4,53.8],US:[39.8,-98.6],DE:[51.2,10.4],BR:[-14.2,-51.9],
- GB:[54,-2],FR:[46.6,2.2],IN:[21,78],SG:[1.35,103.8],JP:[36.2,138.3],NL:[52.1,5.3],CA:[56,-106],
- AU:[-25,133],ZA:[-29,24],NG:[9,8],KE:[0.2,37.9],EG:[26,30],SA:[24,45],IQ:[33,44],TR:[39,35],
- RU:[61,105],CN:[35,105],KR:[36,128],ID:[-2,118],VN:[14,108],MX:[23,-102],ES:[40,-3.7],IT:[42.8,12.8],
- SE:[62,15],PL:[52,19],AR:[-38,-63]};
+/*__CENTROIDS__*/
 const YOU=[25.2,55.3];  // asker anchor (overridden by geolocation if allowed)
 let you=YOU.slice();
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+/*__ESC__*/
 function cc(s){return String(s||'').replace(/^sim-/,'').toUpperCase()}
 function flag(s){const c=cc(s);if(!/^[A-Z]{2}$/.test(c))return '🖥';return String.fromCodePoint(...[...c].map(x=>0x1F1A5+x.charCodeAt(0)))}
-function centroid(country){return CENTROIDS[cc(country)]||[10,-30]}
+function centroid(country){return CENTROIDS[cc(country)]||CENTROIDS['?']}
 function jit(k){k=String(k||'');let h=0;for(const ch of k)h=(h*31+ch.charCodeAt(0))&255;return (h/255-.5)*7}
 function statusColor(s){return s==='answered'?'#36d399':s==='thinking'?'#fbbd23':'#6ea8ff'}
 
@@ -269,14 +265,17 @@ function updateHint(){
   const n=+(document.getElementById('minds').value||3);
   const t=jt();
   const info=(JOBTYPES&&JOBTYPES[t])||null;                       // real server prices when loaded
-  const per=info?info.price_per_mind:(t==='research_report'?30:t==='shard_map'?20:10);
-  const cost=Math.round(n*per+(info?info.judge_fee:5));
   const itemsEl=document.getElementById('items');
   if(itemsEl)itemsEl.style.display=t==='shard_map'?'':'none';
   const qEl=document.getElementById('q');
   if(qEl)qEl.placeholder=t==='shard_map'?'Instruction to apply to every item (e.g. “Classify the sentiment as POS/NEG/NEU”)…'
     :t==='research_report'?'Research brief — what should the world find out for you?':'Ask the council anything…';
-  document.getElementById('hint').textContent=
+  const hintEl=document.getElementById('hint');if(!hintEl)return;
+  // Never guess a price — show the real server cost, or "…" until /job-types loads (loadJobTypes
+  // re-runs updateHint on arrival). A hardcoded fallback would lie the moment an operator retunes the pool.
+  if(!info){hintEl.textContent='fetching current prices…';return}
+  const cost=Math.round(n*info.price_per_mind+info.judge_fee);
+  hintEl.textContent=
     t==='research_report'? n+' computer'+(n===1?'':'s')+' will research the live web from their own countries · '+cost+' credits · ~20–40 min'
     :t==='shard_map'? 'the items are SPLIT across '+n+' computer'+(n===1?'':'s')+' (≈'+n+'× faster) · '+cost+' credits'
     : n+' diverse mind'+(n===1?'':'s')+' will answer · costs '+cost+' credits';
@@ -464,3 +463,9 @@ if(location.hash.indexOf('#job=')===0)openJob(location.hash.slice(5));
 </body>
 </html>
 """
+
+# One definition of the shared esc() + centroid table, substituted in at import (see council.net.ui_common).
+from council.net import ui_common as _ui  # noqa: E402
+APP_HTML = (APP_HTML
+            .replace("/*__ESC__*/", _ui.ESC_JS)
+            .replace("/*__CENTROIDS__*/", _ui.CENTROIDS_JS))

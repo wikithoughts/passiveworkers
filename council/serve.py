@@ -185,7 +185,7 @@ button.go{background:var(--btn);border-color:var(--btn-edge);font-weight:600;mar
 <div class="card hist"><b><span aria-hidden="true">📄</span> Past reports</b><div id="hist" class="muted">none yet</div></div>
 <footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
 <script>
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+/*__ESC__*/
 function md(t){
   let h=esc(t||'');
   h=h.replace(/^### (.*)$/gm,'<h4>$1</h4>').replace(/^## (.*)$/gm,'<h3>$1</h3>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
@@ -245,6 +245,10 @@ document.getElementById('cancel').onclick=async()=>{
 refreshHist();
 </script></div></body></html>
 """
+
+# One definition of the shared esc(), substituted in at import (see council.net.ui_common).
+from council.net import ui_common as _ui  # noqa: E402
+SERVE_HTML = SERVE_HTML.replace("/*__ESC__*/", _ui.ESC_JS)
 
 
 def main() -> None:

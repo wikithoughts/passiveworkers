@@ -89,6 +89,20 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R34 — Engineering debt: pricing dedup, shared UI, client test coverage (D50, 2026-07-07)
+Three audit-cited debt items cleared before publishing 0.2.0, two of which surfaced real bugs:
+- **Pricing consolidated to `pool_for`** (`net/config.py`) — the pool formula was copy-pasted across 6
+  sites (2 diverged) and re-implemented in the marketplace JS with a hardcoded `30/20/10`/`5` fallback
+  that **lied whenever an operator retuned the pool**. `/job-types` now serves full-precision prices and
+  the client never guesses.
+- **Operator/asker CLI client got test coverage** (a `requests`→`TestClient` shim) — which **caught a
+  broken `pw rate`**: it posted JSON without a `Content-Type`, so the coordinator 422'd it; the CLI
+  rating path had never worked. Fixed. `submit.py` (409-retry/poll state machine) also now tested.
+- **Shared `council/net/ui_common.py`** — the `esc()` helper + the country-centroid table were duplicated
+  across the three web UIs and the two map copies disagreed on the fallback keys, so an unmapped/`local`
+  node landed at a different spot on each map. One definition now; all three surfaces browser-verified
+  (Playwright) to render identically. Adversarial review: 0 findings survived. Published as **0.2.0**.
+
 ## R33 — Configuration & connectivity: `pw config` + keyed search backends (D49, 2026-07-06)
 Two file-confirmed gaps closed, folded into the still-unpublished 0.2.0 (no version bump — it never hit
 PyPI, so it's still being assembled):

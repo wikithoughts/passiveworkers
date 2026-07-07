@@ -5,12 +5,13 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
-## [0.2.0] — 2026-07-05 – 07-06
+## [0.2.0] — 2026-07-05 – 07-07
 A broad "usable, trustworthy, competitive" pass (R32 / D48): security/privacy hardening, engine
 reliability, new CLI + export features, marketplace UX, and a hardened trust surface — plus a
-configuration & connectivity round (R33 / D49): persistent `pw config` and keyed search backends.
-Every phase was adversarially reviewed before commit — which caught 15 real defects the green test
-suite had missed.
+configuration & connectivity round (R33 / D49): persistent `pw config` and keyed search backends —
+and an engineering-debt round (R34 / D50): pricing consolidation, a shared UI module, and test
+coverage for the operator/asker CLI (which caught a broken `pw rate`). Every phase was adversarially
+reviewed before commit — the reviews caught real defects the green test suite had missed.
 ### Security
 - **`/status` privacy:** the public dashboard feed no longer exposes the per-account balance sheet or
   asker handles / job-ids — only a de-identified pulse (type · status · age). Pseudonymous operator
@@ -46,9 +47,19 @@ suite had missed.
 - CI gains a `ruff` lint gate, a Python 3.10–3.13 matrix, coverage, and a core-only-install job; the
   README gains badges, an architecture diagram, and a comparison table.
 ### Fixed
+- **`pw rate <job> <score>` never worked:** it posted its JSON body without a `Content-Type`, so the
+  coordinator rejected it (422). It now sends `application/json` (found by the new client test coverage).
 - All-errored council **or batch** jobs are marked failed and the asker is not charged.
 - Bounded desk concurrency + job-map pruning (+ 404-safe polling); nested `--out` dirs; non-Latin report
   filenames; Ctrl-C handling; balanced parens in exported citation links.
+### Internal (R34 / D50)
+- The worker-pool price is derived in one place (`council.net.config.pool_for`) instead of copy-pasted
+  across 6 sites; the marketplace cost preview now reads real prices from `/job-types` (its hardcoded
+  `30/20/10` fallback lied the moment an operator retuned `PW_WORKER_POOL`/`PW_FLEET_SIZE`/`PW_JUDGE_FEE`).
+- A shared `council/net/ui_common.py` (HTML-escape helper + country-centroid table) removes drift across
+  the three web UIs — an unmapped/`local` node now resolves to the same spot on both maps.
+- The operator/asker CLI client (`pw tasks`/`accept`/`deliver`/`rate` and `council.net.submit`) gained
+  integration test coverage via a `requests`→`TestClient` shim (previously untested).
 
 ## [0.1.5] — 2026-06-14
 `pw join` actually works now — two bugs found by dogfooding the real operator flow on a VPS (R31 / D47).

@@ -314,8 +314,10 @@ def rate(job_id: str, score: str) -> int:
         s = float(score)
     except ValueError:
         print("✗ score must be a number 0-10"); return 2
+    # `json=` sets Content-Type: application/json + serializes — a bare data=json.dumps(...) with no
+    # Content-Type made FastAPI reject the body as a string (RateBody wouldn't parse): `pw rate` 422'd.
     r = requests.post(f"{base}/jobs/{job_id}/rate", headers={"X-User-Secret": sec},
-                      data=json.dumps({"score": s}), timeout=15)
+                      json={"score": s}, timeout=15)
     if not r.ok:
         print(f"✗ {r.json().get('detail', r.text)}"); return 1
     print(f"✓ rated — operator reputation now {r.json().get('operator_reputation')}")

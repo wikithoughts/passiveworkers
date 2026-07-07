@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from council.net import geoip
 from council.net.app import APP_HTML
 from council.net.baseline import generate_baseline
-from council.net.config import CONFIG, JOB_TYPES, task_behavior
+from council.net.config import CONFIG, JOB_TYPES, pool_for, task_behavior
 from council.net.dashboard import DASHBOARD_HTML
 from council.net.ratelimit import RateLimiter
 from council.net.store import Store
@@ -409,9 +409,8 @@ def _baseline_async(job_id: str, question: str) -> None:
 @app.get("/job-types")
 def job_types():
     """The marketplace catalog — what kinds of work computers can request here."""
-    per_mind = CONFIG.worker_pool / CONFIG.fleet_size
     return {k: {"label": v["label"], "eta": v["eta"],
-                "price_per_mind": round(per_mind * v["pool_mult"], 1),
+                "price_per_mind": pool_for(k, 1),   # one source of truth (full precision, no drift)
                 "judge_fee": CONFIG.judge_fee,
                 "deadline_s": v["deadline_s"]}
             for k, v in JOB_TYPES.items()}

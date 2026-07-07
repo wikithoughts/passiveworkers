@@ -74,15 +74,9 @@ DASHBOARD_HTML = r"""<!doctype html>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const CENTROIDS = {
-  FI:[61.9,25.7],AE:[23.4,53.8],US:[39.8,-98.6],DE:[51.2,10.4],BR:[-14.2,-51.9],GB:[54,-2],
-  FR:[46.6,2.2],IN:[21,78],SG:[1.35,103.8],JP:[36.2,138.3],NL:[52.1,5.3],CA:[56,-106],
-  AU:[-25,133],ZA:[-29,24],NG:[9,8],KE:[0.2,37.9],EG:[26,30],SA:[24,45],IQ:[33,44],
-  TR:[39,35],RU:[61,105],CN:[35,105],KR:[36,128],ID:[-2,118],VN:[14,108],MX:[23,-102],
-  AR:[-38,-63],ES:[40,-3.7],IT:[42.8,12.8],SE:[62,15],PL:[52,19],"local":[20,0],"?":[0,-20]
-};
+/*__CENTROIDS__*/
 function jitter(id){id=String(id||'');let h=0;for(const c of id)h=(h*31+c.charCodeAt(0))&255;return (h/255-0.5)*6;}
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+/*__ESC__*/
 function loadColor(l){l=l||0;return l<0.4?'#36d399':l<0.75?'#fbbd23':'#f87272';}
 const map=L.map('map',{worldCopyJump:true}).setView([30,15],2);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
@@ -164,3 +158,9 @@ tick(); setInterval(tick,3000);
 </body>
 </html>
 """
+
+# One definition of the shared esc() + centroid table, substituted in at import (see council.net.ui_common).
+from council.net import ui_common as _ui  # noqa: E402
+DASHBOARD_HTML = (DASHBOARD_HTML
+                  .replace("/*__ESC__*/", _ui.ESC_JS)
+                  .replace("/*__CENTROIDS__*/", _ui.CENTROIDS_JS))

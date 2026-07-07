@@ -33,7 +33,7 @@ import uuid
 from typing import Any, Optional
 
 from council.ledger import STARTER_ALLOWANCE, Account, InsufficientCredit, Ledger
-from council.net.config import CONFIG, JOB_TYPES, task_behavior
+from council.net.config import CONFIG, JOB_TYPES, pool_for, task_behavior
 from council.sanitize import sanitize_brief
 
 _now = time.time  # server runtime (not a workflow script)
@@ -498,8 +498,7 @@ class Store:
             # (per-mind price = worker_pool / fleet_size, so the default stays unchanged).
             n_minds = max(1, min(int(minds), len(candidates))) if minds else CONFIG.fleet_size
             workers = candidates[:n_minds]
-            pool = round(CONFIG.worker_pool / CONFIG.fleet_size * len(workers)
-                         * JOB_TYPES[job_type]["pool_mult"], 4)
+            pool = pool_for(job_type, len(workers))
             job_id = str(uuid.uuid4())
 
             if not workers:
@@ -530,8 +529,7 @@ class Store:
                             "error": "batch job needs a non-empty items list"}
                 if len(workers) > len(clean):
                     workers = workers[:len(clean)]
-                    pool = round(CONFIG.worker_pool / CONFIG.fleet_size * len(workers)
-                                 * JOB_TYPES[job_type]["pool_mult"], 4)
+                    pool = pool_for(job_type, len(workers))
                 # weights: an explicit, FINITE, positive, worker-count-matching `split` wins; else
                 # capacity. (Non-finite weights — inf/nan — would make _apportion's int(raw) crash;
                 # an invalid split silently falls back to capacity rather than erroring the job. review)
@@ -628,7 +626,7 @@ class Store:
             if bad:
                 return {"job_id": job_id, "status": "failed",
                         "error": "min_reputation must be a number 0-10"}
-        pool = round(CONFIG.worker_pool / CONFIG.fleet_size * JOB_TYPES["assisted"]["pool_mult"], 4)
+        pool = pool_for("assisted")
         self.ledger.open_account(asker)
         # HOLD the reward in escrow now so it can't be spent before the operator delivers.
         try:
@@ -696,8 +694,7 @@ class Store:
             if jtype == "assisted":
                 # only the assisted escrow needs a pre-check (avoid an orphan failed offer); create_job
                 # handles affordability for the automated types itself.
-                assisted_pool = round(CONFIG.worker_pool / CONFIG.fleet_size
-                                      * JOB_TYPES["assisted"]["pool_mult"], 4)
+                assisted_pool = pool_for("assisted")
                 if not self.ledger.can_afford(asker, assisted_pool):
                     return
                 child = self.create_job(asker, q, job_type="assisted", context=ctx,

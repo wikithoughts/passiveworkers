@@ -1294,6 +1294,38 @@ A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 
 Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
 atomic doesn't make the fallback atomic. 300 tests green.
 
+## D50 — Engineering-debt round before publishing 0.2.0 (R34, 2026-07-07)
+**Context:** with 0.2.0 assembled but publish-held, three read-only audits inventoried the remaining
+"pending" debt. Only three items were safe, offline, non-strategic code work; the rest needed real
+operators, paid spend, or were large features (all deferred). Cleared the three, then published.
+
+**Pricing → one `pool_for`.** The pool price (`worker_pool/fleet_size * n_minds * pool_mult`) was
+copy-pasted at 6 sites — 2 exact, 2 assisted variants, a 1-dp `/job-types` variant, and a **JS
+re-implementation in `app.py` with hardcoded `30/20/10`/`5` fallbacks**. That fallback silently lied the
+moment an operator retuned `PW_WORKER_POOL`/`PW_FLEET_SIZE`/`PW_JUDGE_FEE`. Now `council.net.config.pool_for`
+is the single definition; `/job-types` serves it at full precision; the client shows "…" until the catalog
+loads rather than guessing. Server pools are byte-identical to before (pure dedup; regression-tested).
+
+**Client test coverage caught a real bug.** `council/operator.py`'s 8 client verbs and all of
+`council/net/submit.py` were untested. A new `requests`→FastAPI-`TestClient` shim (tests/conftest.py) runs
+the real client code against the real coordinator with no socket. It immediately surfaced that **`pw rate`
+never worked**: `rate()` sent `data=json.dumps(...)` with no `Content-Type`, so FastAPI couldn't parse
+`RateBody` and 422'd every call (confirmed against real `requests`: `data=<str>` sets no Content-Type,
+`json=` does). Fixed to `json=`. The `deliver` path worked only because it set `Content-Type` via `_headers()`.
+
+**Shared UI module.** `esc()` and the 30-country map-centroid table were duplicated across the three web
+surfaces; the two `CENTROIDS` copies disagreed on the `'local'`/`'?'` fallback keys, so an unmapped node
+landed at a different spot on each map. `council/net/ui_common.py` is now the one definition, substituted
+into each HTML template at import via a `/*__NAME__*/` placeholder. Scope was deliberately limited to the
+cleanly-shared, drift-carrying pieces (esc, centroid table); the **bespoke per-surface CSS palettes were
+left alone** — unifying them is cosmetic churn with real visual-regression risk right before a release, so
+it's a documented future cleanup, not this round. All three surfaces were Playwright-verified to render
+identically to before (incl. the `local`-node pin). The adversarial review found **0 surviving findings**.
+
+**Publish.** With the debt cleared and green, 0.2.0 was published to PyPI and tagged `v0.2.0` (the founder's
+"debt first, then publish" call). No version bump beyond 0.2.0 — everything since 2026-07-05 shipped as one
+release. See [[passiveworkers-adversarial-review-catches-real-bugs]].
+
 ## D49 — Persistent `pw config` + keyed search backends (R33, 2026-07-06)
 **Context:** the founder asked "what's next" after the 0.2.0 round and chose *config + keyed search*.
 Two exploration passes confirmed two real gaps: (a) all ~60 `PW_*` knobs are read live from
