@@ -99,24 +99,30 @@ class ResearchWorker:
         qs = [str(q).strip() for q in parsed if str(q).strip()] if isinstance(parsed, list) else []
         return qs[:2]
 
-    def _draft(self, brief: str, evidence: list[dict], local: list[dict] | None = None) -> tuple[str, int]:
+    @staticmethod
+    def _ev(i: int, e: dict) -> str:
+        # full-page extract when we fetched one (denser grounding), else the snippet.
+        # show the date (real or hinted) so the model can prefer the freshest source (R18).
+        d = e.get("date") or e.get("date_hint")
+        dated = f", {d}" if d else ""
+        if e.get("page"):
+            return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     EXTRACT: {e['page'][:1500]}"
+        return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     {e['snippet'][:300]}"
+
+    def _source_block(self, evidence: list[dict], local: list[dict] | None) -> str:
+        """The SOURCES block the analyst drafts from — web extracts as [S#], library docs as [L#],
+        spotlight-wrapped. Shared by _draft and the self-repair pass so both show the model the
+        same source text (corrections then align with what was originally cited)."""
         from council.sanitize import spotlight
-
-        def _ev(i: int, e: dict) -> str:
-            # full-page extract when we fetched one (denser grounding), else the snippet.
-            # show the date (real or hinted) so the model can prefer the freshest source (R18).
-            d = e.get("date") or e.get("date_hint")
-            dated = f", {d}" if d else ""
-            if e.get("page"):
-                return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     EXTRACT: {e['page'][:1500]}"
-            return f"[S{i+1}] {e['title']} ({e['host']}{dated})\n     {e['snippet'][:300]}"
-
-        web_block = "\n".join(_ev(i, e) for i, e in enumerate(evidence))
+        web_block = "\n".join(self._ev(i, e) for i, e in enumerate(evidence))
         local_block = ""
         if local:
             local_block = "\n\nYOUR DOCUMENTS (cite as [L#]):\n" + "\n".join(
                 f"[L{i+1}] {d['title']}\n     {d['text'][:1500]}" for i, d in enumerate(local))
-        src_block = spotlight((web_block + local_block).strip())
+        return spotlight((web_block + local_block).strip())
+
+    def _draft(self, brief: str, evidence: list[dict], local: list[dict] | None = None) -> tuple[str, int]:
+        src_block = self._source_block(evidence, local)
         geo = self.country not in ("", "local", "your location")
         role = (f"You are a researcher physically located in {self.country}, writing your "
                 "contribution to a multi-country research report."
@@ -143,6 +149,72 @@ class ResearchWorker:
             "  • If the sources are thin on some aspect, say so honestly.\n"
             "  • 250-400 words. No preamble.\n\n"
             f"BRIEF:\n{brief}\n\nSOURCES:\n{src_block}\n\nFINDINGS:", num_predict=700)
+
+    # ------------------------------------------------------------------ citation-fidelity critic (R35/D51)
+    @staticmethod
+    def _evidence_extracts(evidence: list[dict], local: list[dict] | None) -> dict[str, str]:
+        """The marker→source-text map the draft was written from: the exact ~1500-char extract each
+        [S#]/[L#] pointed at (full-page fetch when we have one, else the snippet). Mirrors the
+        evidence-capture the offline eval scores against (the PW_CAPTURE_EVIDENCE block below), so the
+        inline critic and scripts/eval_citation_fidelity.py judge a claim against identical text."""
+        m = {f"S{i+1}": (e.get("page") or e.get("snippet") or "")[:1500]
+             for i, e in enumerate(evidence)}
+        for i, d in enumerate(local or []):
+            m[f"L{i+1}"] = (d.get("text") or "")[:1500]
+        return m
+
+    def _repair_draft(self, brief: str, draft: str, evidence: list[dict],
+                      local: list[dict] | None) -> str:
+        """Best-effort citation-fidelity self-repair. Score the draft's cited claims against the exact
+        evidence the model saw; if any are UNGROUNDED or assert a multi-digit number absent from their
+        source (the fabricated-statistic failure the trial found), do ONE bounded re-prompt to
+        correct/remove ONLY those. Accept the revision only if it STRICTLY reduces the unsupported set
+        without losing grounded claims or gutting the content — so by fidelity's own measure the pass
+        can never lower a report's grounding; on any doubt it returns the original. Callers also wrap
+        this in try/except, so a model/parse failure degrades to the un-repaired draft, never a crash."""
+        from council import fidelity
+        body = fidelity.split_draft(draft)          # score the findings, not any appended source list
+        extracts = self._evidence_extracts(evidence, local)
+        before = fidelity.unsupported_claims(body, extracts)
+        if not before:
+            return draft                            # already clean → no model call at all
+        g_before, _ = fidelity.grounded_counts(body, extracts)
+        gw_before = fidelity.grounded_word_count(body, extracts)
+        flagged = "\n".join(
+            f"- {f['claim']}" + (f"  [these numbers are not in the cited source(s): "
+                                 f"{', '.join(f['missing_numbers'])}]" if f["missing_numbers"] else "")
+            for f in before[:12])
+        src_block = self._source_block(evidence, local)
+        revised, _ = self._generate(
+            "You wrote the FINDINGS below, citing the SOURCES below. A grounding check flagged these "
+            "sentences as asserting a specific fact (a number, date, name, or claim) that the source(s) "
+            "they cite do NOT contain:\n"
+            f"{flagged}\n\n"
+            "Rewrite the findings so every flagged sentence states ONLY what its cited sources support "
+            "— correct the detail to match a source, or delete just the unsupported detail. Change "
+            "NOTHING else: keep every other sentence word-for-word and keep every [S#]/[L#] marker "
+            "exactly where it is. No preamble, similar length.\n\n"
+            f"SOURCES:\n{src_block}\n\nFINDINGS:\n{body}\n\nREVISED FINDINGS:", num_predict=700)
+        revised = (revised or "").strip()
+        if not revised:
+            return draft
+        # Anti-gaming guards (review R35): the fabrication-risk set can also "shrink" if the model
+        # strips/mangles a citation rather than fixing the claim — the marker-less sentence just falls
+        # out of the score. Refuse a revision that (a) cites a marker absent from the sources it was
+        # given (an invented/dangling [S#]), or (b) leaves a previously-flagged claim's text in place
+        # un-corrected (only its citation removed). Both would raise the grounded RATE by hiding a
+        # fabrication instead of correcting it.
+        revised_body = fidelity.split_draft(revised)
+        if any(m not in extracts for m in fidelity.markers_in(revised_body)):
+            return draft                          # invented/dangling citation → refuse
+        if fidelity.unsupported_survived(before, revised):
+            return draft                          # a flagged number survived un-cited → refuse
+        after = fidelity.unsupported_claims(revised, extracts)
+        g_after, _ = fidelity.grounded_counts(revised, extracts)
+        accept = (len(after) < len(before)                     # strictly fewer fabrication-risk claims
+                  and g_after >= g_before                      # kept every grounded claim
+                  and len(revised.split()) >= 0.7 * gw_before)  # kept the grounded prose (no gutting)
+        return revised if accept else draft
 
     # ------------------------------------------------------------------ entry
     def research(self, brief: str) -> dict:
@@ -243,6 +315,23 @@ class ResearchWorker:
             except Exception:
                 draft, tokens = (f"(This {self.country} node found the sources below but could "
                                  "not synthesize in time — titles and links are its findings.)", 0)
+        # Inference-time citation-fidelity self-repair (R35/D51): catch plausible-but-wrong cited
+        # specifics before the report is saved. Self-verifying (accepted only if it lowers the
+        # unsupported set) and best-effort — never allowed to break a run. PW_FIDELITY_REPAIR=0 opts
+        # out (A/B measurement, speed). Skipped when there are no sources to check a claim against.
+        repair_trace = None
+        if os.environ.get("PW_FIDELITY_REPAIR", "1") != "0" and draft and (evidence or local):
+            pre_repair = draft
+            try:
+                draft = self._repair_draft(brief, draft, evidence, local)
+            except Exception:
+                pass
+            # Eval-only trace (R35): PW_FIDELITY_TRACE=1 records the pre- and post-repair draft so
+            # eval_citation_fidelity --paired can score BOTH against the SAME captured evidence — a
+            # within-run, confound-free measure of the repair effect (unlike --compare, which re-
+            # researches each arm). Local-only, same PW_COORDINATOR guard as evidence capture.
+            if os.environ.get("PW_FIDELITY_TRACE") == "1" and not os.environ.get("PW_COORDINATOR"):
+                repair_trace = {"pre": pre_repair, "post": draft, "changed": draft != pre_repair}
         sources = [{"id": f"S{i+1}", "title": e["title"], "url": e["url"], "host": e["host"],
                     "date": e.get("date") or e.get("date_hint", "")}
                    for i, e in enumerate(evidence)]
@@ -278,10 +367,12 @@ class ResearchWorker:
                 doc_lines.append(f"[{s['id']}] {s['title']} — {s['source']}")
             blocks.append("YOUR DOCUMENTS:\n" + "\n".join(doc_lines))
         src_list = "\n\n".join(blocks)
+        research = {"country": self.country, "sources": sources, "local_sources": local_sources}
+        if repair_trace is not None:
+            research["repair_trace"] = repair_trace
         return {
             "text": f"{draft}\n\n{src_list}",
             "tokens": tokens,
             "elapsed_s": round(time.monotonic() - t0, 2),
-            "research": {"country": self.country, "sources": sources,
-                         "local_sources": local_sources},
+            "research": research,
         }

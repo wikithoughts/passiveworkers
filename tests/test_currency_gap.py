@@ -61,14 +61,14 @@ def test_extract_summary_falls_back_to_whole_text():
 # ----------------------------------------------------------------------------- build_matrix
 def test_build_matrix_aggregates_by_window_and_gap():
     results = [
-        {"window": "static", "category": "sci", "council_score": 8, "frontier_score": 9},
-        {"window": "static", "category": "sci", "council_score": 6, "frontier_score": 9},
-        {"window": "breaking", "category": "fin", "council_score": 9, "frontier_score": 2},
+        {"window": "static", "category": "sci", "council_score": 8, "baseline_score": 9},
+        {"window": "static", "category": "sci", "council_score": 6, "baseline_score": 9},
+        {"window": "breaking", "category": "fin", "council_score": 9, "baseline_score": 2},
     ]
     m = CG.build_matrix(results)
     assert m["by_window"]["static"]["n"] == 2
-    assert m["by_window"]["static"]["council"] == 7.0 and m["by_window"]["static"]["frontier"] == 9.0
-    assert m["by_window"]["static"]["gap"] == -2.0          # frontier wins where currency is irrelevant
+    assert m["by_window"]["static"]["council"] == 7.0 and m["by_window"]["static"]["baseline"] == 9.0
+    assert m["by_window"]["static"]["gap"] == -2.0          # baseline wins where currency is irrelevant
     assert m["by_window"]["breaking"]["gap"] == 7.0         # council wins on breaking (the moat)
     assert m["overall"]["n"] == 3
     assert set(m["by_category"]) == {"sci", "fin"}
@@ -76,23 +76,32 @@ def test_build_matrix_aggregates_by_window_and_gap():
 
 def test_build_matrix_excludes_missing_scores_per_cell():
     results = [
-        {"window": "recent", "category": "tech", "council_score": 7, "frontier_score": None},
-        {"window": "recent", "category": "tech", "council_score": None, "frontier_score": 5},
+        {"window": "recent", "category": "tech", "council_score": 7, "baseline_score": None},
+        {"window": "recent", "category": "tech", "council_score": None, "baseline_score": 5},
     ]
     m = CG.build_matrix(results)["by_window"]["recent"]
-    assert m["council"] == 7.0 and m["frontier"] == 5.0 and m["gap"] is None   # no paired cell → no gap
+    assert m["council"] == 7.0 and m["baseline"] == 5.0 and m["gap"] is None   # no paired cell → no gap
     assert m["n"] == 2
 
 
 def test_render_matrix_smoke():
-    out = CG.render_matrix(CG.build_matrix([
-        {"window": "breaking", "category": "fin", "council_score": 9, "frontier_score": 2}]))
+    matrix = CG.build_matrix([
+        {"window": "breaking", "category": "fin", "council_score": 9, "baseline_score": 2}])
+    out = CG.render_matrix(matrix)
     assert "Currency-gap" in out and "breaking" in out and "OVERALL" in out
+    assert "baseline" in out and "frontier (memory)" in out           # default label
+    # the local-baseline label flows through to the header caption + footnote
+    local_out = CG.render_matrix(matrix, baseline_label="local (memory): qwen3:14b")
+    assert "local (memory): qwen3:14b" in local_out
 
 
 # ----------------------------------------------------------------------------- estimate_cost
-def test_estimate_cost_scales_with_grader():
-    local = CG.estimate_cost(10, "local")
-    api = CG.estimate_cost(10, "api")
-    assert "10 paid API call" in local           # local grader → only frontier baseline calls
-    assert "30 paid API call" in api             # api grader → +2 grades per question
+def test_estimate_cost_scales_with_grader_and_baseline():
+    # frontier baseline (default): 1 baseline call/q (+2 grades if api grader)
+    assert "10 paid API call" in CG.estimate_cost(10, "local")          # 10 frontier calls
+    assert "30 paid API call" in CG.estimate_cost(10, "api")            # +2 grades/q
+    # local baseline + local grader spends nothing
+    free = CG.estimate_cost(10, "local", "local")
+    assert "$0 paid" in free and "own" in free
+    # local baseline + api grader still pays for the 2 grades/question, but not for the baseline
+    assert "20 paid API call" in CG.estimate_cost(10, "api", "local")

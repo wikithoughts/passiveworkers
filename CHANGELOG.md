@@ -5,6 +5,42 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [0.3.0] — 2026-07-10
+A "quality + proof" round (R35 / D51): the flagship reports now self-check their own citations at
+inference time, and the benefit evidence gets stronger **without any paid API spend**. Both halves are
+pure local code; every change was adversarially reviewed before commit.
+### Added
+- **Citation-fidelity self-repair in `pw research`.** After each analyst drafts, the engine scores every
+  cited claim against the exact source text the model saw (the same `council.fidelity` grounding check
+  that powers the offline eval) and, when a claim is unsupported or asserts a number/date absent from its
+  source, does one bounded re-prompt to correct or drop just that claim. The revision is **accepted only
+  if it measurably reduces the unsupported set without losing grounded content** — so by its own metric
+  the pass can never lower a report's grounding, and it adds a model call only when there is something to
+  fix. On by default; `PW_FIDELITY_REPAIR=0` opts out. Measured paired (same-run, same-evidence via
+  `--paired`) on local Ollama: it removes fixable unsupported claims with **zero regression by
+  construction**; on a capable analyst (gemma3:12b) an illustrative run improved the grounded rate
+  85%→88% (2 of 4 drafts repaired), while the weaker gemma3:4b analyst safely *declined* every revision
+  (no change). A small, honest effect on a 2-model rig — the guarantee, not the magnitude, is the point.
+- **Free local baseline for the currency eval.** `eval_currency_gap.py --baseline local` compares the
+  council (local models + live web) against the **same local models answering from their own memory** —
+  no web, no API key, **$0**. This is the apples-to-apples read the product's claim actually makes (and
+  removes the paid frontier dependency that gated deepening this eval). The paid frontier stays available
+  as `--baseline frontier` (default, unchanged). The question bank was expanded and re-verified from the
+  live web as of 2026-07-10 (4 static / 7 recent / 5 breaking) so the two moving windows clear the
+  "paired n < 3 = noise" floor. Measured (gemma3:4b + live web vs the same model from memory, graded
+  0–10 vs curated refs, `$0`): static control ≈ tie (**−0.5**, baseline even slightly ahead — the eval
+  isn't rigged), **recent +4.6 (n=7)**, **breaking +4.0 (n=5)**, overall +3.1.
+- `eval_citation_fidelity.py --paired` (confound-free: scores the same draft pre/post-repair against the
+  same evidence) and `--compare` (between-runs) — measure the self-repair's grounded-rate effect.
+### Changed
+- The currency-eval result/matrix keys are `baseline_*` (was `frontier_*`), and the matrix now labels
+  which baseline it ran against; the API-key requirement and the `MAX_PAID_QUESTIONS` ceiling apply only
+  to runs that actually spend (frontier baseline and/or api grader).
+### Internal
+- `council/fidelity.py` gained pure `unsupported_claims` / `grounded_counts` / `grounded_word_count`
+  helpers (no Ollama/network); `ResearchWorker`'s source-block rendering was factored into `_ev` /
+  `_source_block` and reused by the repair pass. New `tests/test_critic.py` pins the acceptance gate.
+
 ## [0.2.0] — 2026-07-05 – 07-07
 A broad "usable, trustworthy, competitive" pass (R32 / D48): security/privacy hardening, engine
 reliability, new CLI + export features, marketplace UX, and a hardened trust surface — plus a
@@ -135,6 +171,7 @@ Initial public release — the single-player deep-research engine.
   (`council/net/`) with a live two-country deployment.
 - Eval instruments: SimpleQA bench, citation-fidelity, and currency-gap scripts.
 
+[0.3.0]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.3.0
 [0.2.0]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.2.0
 [0.1.5]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.5
 [0.1.4]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.4

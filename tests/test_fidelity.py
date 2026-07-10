@@ -129,12 +129,68 @@ def test_score_claim_unverifiable_only_when_all_sources_empty():
     assert classify(r_partial) == "GROUNDED" and r_partial["cited_present"] == ["S2"]
 
 
+# ----------------------------------------------------------------------------- inference-time critic helpers (R35/D51)
+from council.fidelity import grounded_counts, grounded_word_count, unsupported_claims  # noqa: E402
+
+
+def test_grounded_word_count_counts_only_grounded_sentences():
+    draft = "The rate is 3.75% since April [S1]. The moon is made of cheese [S2]."
+    sources = {"S1": "The rate target is 3.50 to 3.75 percent since April.",
+               "S2": "Apples grow on trees in orchards during autumn."}
+    # only the grounded [S1] sentence contributes its words; the ungrounded [S2] one does not
+    assert grounded_word_count(draft, sources) == len("The rate is 3.75% since April [S1].".split())
+
+
+def test_unsupported_claims_flags_offtopic_ungrounded():
+    draft = ("The federal funds rate is 3.75% held since April [S1]. "
+             "The city banned all private cars [S2].")
+    sources = {"S1": "The federal funds rate target range is 3.50 to 3.75 percent, held since April.",
+               "S2": "A recipe for sourdough bread requires flour, water, salt, and time."}
+    flagged = unsupported_claims(draft, sources)
+    claims = [f["claim"] for f in flagged]
+    assert any("banned all private cars" in c for c in claims)   # off-topic → UNGROUNDED, flagged
+    assert not any("federal funds" in c for c in claims)         # grounded claim not flagged
+
+
+def test_unsupported_claims_flags_fabricated_number_despite_topic_overlap():
+    # topic words overlap (would classify GROUNDED) but a multi-digit stat is absent → still flagged
+    draft = "Revenue grew 42% in 2026 [S1]."
+    sources = {"S1": "Revenue grew during 2026 across all regions."}   # '42' absent
+    flagged = unsupported_claims(draft, sources)
+    assert len(flagged) == 1 and "42" in flagged[0]["missing_numbers"]
+
+
+def test_unsupported_claims_empty_when_all_grounded():
+    draft = "Revenue rose 18% in 2026 [S1]."
+    sources = {"S1": "The company reported revenue rose 18% in 2026 across regions."}
+    assert unsupported_claims(draft, sources) == []
+
+
+def test_unsupported_claims_never_flags_unverifiable_source():
+    # an empty/unreachable source populates missing_numbers with the claim's OWN numbers, but that is
+    # a fetch failure (UNVERIFIABLE), not a fabrication — it must NOT be flagged (regression guard).
+    draft = "The tower is 830 metres tall [S1]."
+    assert unsupported_claims(draft, {"S1": ""}) == []
+
+
+def test_grounded_counts_pair():
+    draft = "The rate is 3.75% since April [S1]. The moon is made of cheese [S2]."
+    sources = {"S1": "The rate target is 3.50 to 3.75 percent since April.",
+               "S2": "Apples grow on trees in orchards during autumn."}
+    assert grounded_counts(draft, sources) == (1, 2)     # 1 grounded of 2 verifiable
+    assert grounded_counts("no citations here", sources) == (0, 0)
+
+
 # ----------------------------------------------------------------------------- evidence capture (researcher.py)
-def _capture_run(monkeypatch, env_on: bool):
+def _capture_run(monkeypatch, env_on: bool, trace: bool = False):
     import council.researcher as RW
 
     monkeypatch.setattr(RW.ResearchWorker, "_generate",
                         lambda self, prompt, num_predict: ('["q1","q2","q3"]', 3))
+    if trace:
+        monkeypatch.setenv("PW_FIDELITY_TRACE", "1")
+    else:
+        monkeypatch.delenv("PW_FIDELITY_TRACE", raising=False)
     # 3 results, but quick depth only fetches the top 2 pages → the 3rd must fall back to its snippet
     # (accepts engine= because researcher now routes web/academic/encyclopedic — R17)
     monkeypatch.setattr(RW, "search_structured",
@@ -168,6 +224,24 @@ def test_evidence_capture_attaches_seen_text_when_enabled(monkeypatch):
     # the page we fetched is captured for the top result; the rest fall back to the snippet
     assert any("FULL PAGE EXTRACT" in s["extract"] for s in srcs)
     assert any("snippet" in s["extract"] for s in srcs)
+
+
+def test_repair_trace_attached_only_when_enabled(monkeypatch):
+    # PW_FIDELITY_TRACE=1 attaches a pre/post repair trace for the paired eval; off by default.
+    off = _capture_run(monkeypatch, env_on=True, trace=False)
+    assert "repair_trace" not in off["research"]
+    on = _capture_run(monkeypatch, env_on=True, trace=True)
+    tr = on["research"].get("repair_trace")
+    assert tr is not None and "pre" in tr and "post" in tr
+    # the stub draft ('["q1","q2","q3"]') carries no citations → nothing to repair → unchanged
+    assert tr["changed"] is False and tr["pre"] == tr["post"]
+
+
+def test_repair_trace_suppressed_for_federated_worker(monkeypatch):
+    # same PW_COORDINATOR guard as evidence capture — never attach a trace on a federated worker
+    monkeypatch.setenv("PW_COORDINATOR", "http://coordinator.example:8088")
+    out = _capture_run(monkeypatch, env_on=True, trace=True)
+    assert "repair_trace" not in out["research"]
 
 
 def test_evidence_capture_suppressed_for_federated_worker(monkeypatch):

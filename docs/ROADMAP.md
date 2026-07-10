@@ -89,6 +89,21 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R35 — Quality + proof: citation-fidelity self-repair + a free currency baseline (D51, 2026-07-10)
+Two pure-local upgrades (no paid spend, no new operators), the founder's "both quality + proof" choice:
+- **Citation-fidelity self-repair in `pw research`** — the grounding scorer (`council/fidelity.py`) that
+  only ran as an offline eval now runs at inference: after each analyst drafts, unsupported/fabricated-number
+  cited claims trigger one bounded re-prompt to correct or drop just those. **Self-verifying** — accepted
+  only if the unsupported set strictly shrinks without losing grounded content — so it can't lower a report's
+  grounding by fidelity's own measure; default on (`PW_FIDELITY_REPAIR=0` opts out), best-effort/crash-safe.
+- **Free local currency baseline** — `eval_currency_gap.py --baseline local` compares the council (local +
+  live web) against the **same local models from memory**, `$0`, no API key — the apples-to-apples read the
+  claim actually makes (paid frontier stays available as `--baseline frontier`). Bank re-verified from the
+  live web (2026-07-10) and expanded to 4 static / 7 recent / 5 breaking to clear the small-sample noise floor.
+- **Adversarial review caught a gate-evasion the tests missed** — a model could shrink the "unsupported" set
+  by stripping a citation instead of fixing the claim (shipping the fabrication un-cited, inflating the A/B
+  metric); closed with two targeted guards + mutation-pinned tests. 385 tests, ruff, JS checks green. **0.3.0.**
+
 ## R34 — Engineering debt: pricing dedup, shared UI, client test coverage (D50, 2026-07-07)
 Three audit-cited debt items cleared before publishing 0.2.0, two of which surfaced real bugs:
 - **Pricing consolidated to `pool_for`** (`net/config.py`) — the pool formula was copy-pasted across 6

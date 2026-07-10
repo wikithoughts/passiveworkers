@@ -144,8 +144,61 @@ def score_run(questions: list[str], *, model: str | None, depth: str, analysts: 
     return results
 
 
+# ----------------------------------------------------------------------------- Mode B (paired)
+def score_paired(questions: list[str], *, model: str | None, depth: str, analysts: int,
+                 grounded: float, weak: float) -> tuple[list[dict], list[dict], int, int]:
+    """Within-run A/B (R35): run each brief ONCE with self-repair on, and score the PRE-repair and
+    POST-repair draft against the SAME captured evidence. Because both drafts see identical sources,
+    this isolates the repair's effect with zero re-research variance — the honest measure of the
+    feature (unlike --compare, whose two arms research different pages). Returns
+    (pre_results, post_results, n_changed, n_drafts)."""
+    os.environ["PW_CAPTURE_EVIDENCE"] = "1"
+    os.environ["PW_FIDELITY_TRACE"] = "1"
+    os.environ["PW_FIDELITY_REPAIR"] = "1"
+    os.environ.setdefault("PW_WEB_BACKEND", "ddgs")
+    from council.local import detect_models, pick_cast
+    from council.researcher import ResearchWorker
+
+    cast = [model] if model else pick_cast(detect_models(), max(1, analysts))[0]
+    pre_results: list[dict] = []
+    post_results: list[dict] = []
+    changed = total = 0
+    for q in questions:
+        for m in cast:
+            print(f"  · {m}  ⟶  {q[:70]}", file=sys.stderr, flush=True)
+            rw = ResearchWorker(worker_id=m, model=m, lens="independent analyst",
+                                country="local", depth=depth, page_evidence=True, scope="web")
+            try:
+                out = rw.research(q)
+            except Exception as exc:
+                print(f"    (run failed: {exc})", file=sys.stderr)
+                continue
+            trace = out["research"].get("repair_trace")
+            if not trace:
+                continue                      # repair didn't run (no draft/evidence for this brief)
+            total += 1
+            changed += bool(trace["changed"])
+            src_text = {s["id"]: s.get("extract", "") for s in out["research"].get("sources", [])}
+            src_text.update({s["id"]: s.get("extract", "")
+                             for s in out["research"].get("local_sources", [])})
+            for body, sink in ((trace["pre"], pre_results), (trace["post"], post_results)):
+                for claim, markers in parse_cited_claims(body):
+                    r = score_claim(claim, markers, src_text)
+                    r["bucket"] = classify(r, grounded, weak)
+                    r["question"], r["model"] = q, m
+                    sink.append(r)
+    return pre_results, post_results, changed, total
+
+
 # ----------------------------------------------------------------------------- reporting
 _ORDER = ["GROUNDED", "WEAK", "UNGROUNDED", "UNVERIFIABLE", "NO_CONTENT"]
+
+
+def grounded_rate(results: list[dict]) -> tuple[int, int, float]:
+    """(grounded, verifiable, rate) — the headline number, factored out so --compare can diff two arms."""
+    verifiable = [r for r in results if r["bucket"] in ("GROUNDED", "WEAK", "UNGROUNDED")]
+    grounded = sum(1 for r in verifiable if r["bucket"] == "GROUNDED")
+    return grounded, len(verifiable), grounded / (len(verifiable) or 1)
 
 
 def summarize(results: list[dict], top: int) -> None:
@@ -209,6 +262,12 @@ def main() -> int:
     src.add_argument("--report", help="Mode A: score an existing report .md (re-fetches sources)")
     src.add_argument("--run", action="store_true",
                      help="Mode B: fresh run scored against captured evidence (Ollama, no re-fetch)")
+    src.add_argument("--compare", action="store_true",
+                     help="Mode B A/B: run the brief set with the citation self-repair OFF then ON "
+                          "(PW_FIDELITY_REPAIR) and report the grounded-rate delta (between-runs)")
+    src.add_argument("--paired", action="store_true",
+                     help="Mode B paired: run each brief ONCE and score its pre- vs post-repair draft "
+                          "against the SAME evidence — the confound-free measure of the self-repair")
     ap.add_argument("--questions", help="Mode B: JSON file with a list of brief strings")
     ap.add_argument("--model", help="Mode B: force one analyst model (else auto-pick the cast)")
     ap.add_argument("--analysts", type=int, default=1, help="Mode B: how many analyst models (1-4)")
@@ -219,16 +278,61 @@ def main() -> int:
     ap.add_argument("--json", dest="json_out", help="write raw per-claim results to this path")
     a = ap.parse_args()
 
+    def _questions() -> list[str]:
+        if a.questions:
+            loaded = json.loads(pathlib.Path(a.questions).expanduser().read_text())
+            return [str(x) for x in loaded if str(x).strip()]
+        return DEFAULT_QUESTIONS
+
+    if a.compare:
+        # A/B the inference-time self-repair (R35): same brief set, repair OFF then ON. Each arm
+        # re-researches from scratch (repair lives inside the pipeline), so this is a between-runs
+        # PRODUCT-level read — "are the reports users get more grounded with repair on?" — not a
+        # per-claim paired test. That is exactly the question that matters for shipping it.
+        questions = _questions()
+        arms: dict[str, list[dict]] = {}
+        for label, val in (("OFF", "0"), ("ON", "1")):
+            os.environ["PW_FIDELITY_REPAIR"] = val
+            print(f"\n=== self-repair {label} (PW_FIDELITY_REPAIR={val}) ===", file=sys.stderr)
+            arms[label] = score_run(questions, model=a.model, depth=a.depth,
+                                    analysts=max(1, min(4, a.analysts)), grounded=a.grounded, weak=a.weak)
+            summarize(arms[label], a.top)
+        go, no_, ro = grounded_rate(arms["OFF"])
+        gn, nn, rn = grounded_rate(arms["ON"])
+        print("\n  ── Self-repair A/B — grounded rate of verifiable cited claims ──")
+        print(f"     repair OFF : {go}/{no_}  ({ro:.0%})")
+        print(f"     repair ON  : {gn}/{nn}  ({rn:.0%})")
+        print(f"     delta      : {(rn - ro) * 100:+.1f} pts")
+        print("     (each arm re-researches → a between-runs product-level read, not a paired test)")
+        if a.json_out:
+            pathlib.Path(a.json_out).write_text(json.dumps(arms, indent=2, ensure_ascii=False))
+            print(f"\n  raw results → {a.json_out}", file=sys.stderr)
+        return 0
+
+    if a.paired:
+        pre, post, changed, total = score_paired(
+            _questions(), model=a.model, depth=a.depth, analysts=max(1, min(4, a.analysts)),
+            grounded=a.grounded, weak=a.weak)
+        gp, np_, rp = grounded_rate(pre)
+        go, no_, ro = grounded_rate(post)
+        print(f"\n  ── Self-repair PAIRED A/B — {total} draft(s), repair changed {changed} ──")
+        print(f"     pre-repair  grounded rate: {gp}/{np_}  ({rp:.0%})")
+        print(f"     post-repair grounded rate: {go}/{no_}  ({ro:.0%})")
+        print(f"     delta       : {(ro - rp) * 100:+.1f} pts   (same run, same evidence — confound-free)")
+        print("     (post-repair can never score below pre-repair on a given draft, by the accept gate;\n"
+              "      the repair only fires on drafts that carry an unsupported/fabricated cited claim.)")
+        if a.json_out:
+            pathlib.Path(a.json_out).write_text(json.dumps(
+                {"pre": pre, "post": post, "changed": changed, "total": total}, indent=2, ensure_ascii=False))
+            print(f"\n  raw results → {a.json_out}", file=sys.stderr)
+        return 0
+
     if a.report:
         text = pathlib.Path(a.report).expanduser().read_text(errors="ignore")
         print(f"Scoring {a.report} by re-fetching its cited sources …", file=sys.stderr)
         results = score_report(text, grounded=a.grounded, weak=a.weak)
     else:
-        questions = DEFAULT_QUESTIONS
-        if a.questions:
-            loaded = json.loads(pathlib.Path(a.questions).expanduser().read_text())
-            questions = [str(x) for x in loaded if str(x).strip()]
-        results = score_run(questions, model=a.model, depth=a.depth,
+        results = score_run(_questions(), model=a.model, depth=a.depth,
                             analysts=max(1, min(4, a.analysts)), grounded=a.grounded, weak=a.weak)
 
     summarize(results, a.top)

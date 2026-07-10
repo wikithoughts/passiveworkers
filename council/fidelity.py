@@ -195,3 +195,78 @@ def score_claim(claim: str, markers: list[str], sources: dict[str, str]) -> dict
     g["cited_present"] = [m for m in markers if (sources.get(m) or "").strip()]
     g["claim"] = claim.strip()
     return g
+
+
+# ------------------------------------------------------ inference-time critic (R35/D51)
+# The same scorer the offline eval uses, applied to a draft *during* a run so a report can
+# self-repair before it is saved. Kept here (pure, no Ollama/network) so what the critic
+# flags is EXACTLY what scripts/eval_citation_fidelity.py would report; the model call that
+# acts on these flags lives in researcher.py, which owns the Ollama client.
+def _draft_verdicts(draft: str, sources: dict[str, str], grounded: float, weak: float):
+    """Yield (claim, markers, grounding, bucket) for every cited claim in a draft body,
+    scored against the marker→source-text map the model actually read."""
+    for claim, markers in parse_cited_claims(draft):
+        g = score_claim(claim, markers, sources)
+        yield claim, markers, g, classify(g, grounded, weak)
+
+
+def unsupported_claims(draft: str, sources: dict[str, str],
+                       grounded: float = 0.5, weak: float = 0.3) -> list[dict]:
+    """The fabrication-risk set of a draft: every cited claim that is UNGROUNDED, *or* one whose
+    topic overlaps its source (GROUNDED/WEAK) yet asserts a multi-digit number/year/code absent from
+    that source (`missing_numbers` — the classic fabricated statistic). Draft order preserved; each
+    entry is {claim, markers, bucket, missing_numbers, content_cov}. UNVERIFIABLE/NO_CONTENT claims
+    are never flagged — an unreachable/empty source populates missing_numbers with the claim's OWN
+    numbers, but that is a fetch failure, not a fabrication (same policy as classify())."""
+    out = []
+    for claim, markers, g, bucket in _draft_verdicts(draft, sources, grounded, weak):
+        checkable = bucket in ("GROUNDED", "WEAK")   # we had source text AND checkable content
+        if bucket == "UNGROUNDED" or (checkable and g["missing_numbers"]):
+            out.append({"claim": claim.strip(), "markers": list(markers), "bucket": bucket,
+                        "missing_numbers": g["missing_numbers"],
+                        "content_cov": g["content_cov"]})
+    return out
+
+
+def grounded_counts(draft: str, sources: dict[str, str],
+                    grounded: float = 0.5, weak: float = 0.3) -> tuple[int, int]:
+    """(#GROUNDED, #verifiable) cited claims in a draft — verifiable = had source text AND checkable
+    content (GROUNDED|WEAK|UNGROUNDED). The pair the self-repair gate must not worsen (accept a
+    revision only if unsupported strictly drops AND grounded does not)."""
+    g_n = v_n = 0
+    for _claim, _markers, _g, bucket in _draft_verdicts(draft, sources, grounded, weak):
+        if bucket in ("GROUNDED", "WEAK", "UNGROUNDED"):
+            v_n += 1
+            if bucket == "GROUNDED":
+                g_n += 1
+    return g_n, v_n
+
+
+def grounded_word_count(draft: str, sources: dict[str, str],
+                        grounded: float = 0.5, weak: float = 0.3) -> int:
+    """Total words across a draft's already-GROUNDED/WEAK cited sentences — the "good prose" a
+    self-repair pass must not throw away. Gating on this (rather than the whole draft's length)
+    lets a repair legitimately DELETE a large unsupported sentence without tripping an anti-gutting
+    guard, while still rejecting a revision that truncates the grounded content to keyword fragments."""
+    total = 0
+    for claim, _markers, _g, bucket in _draft_verdicts(draft, sources, grounded, weak):
+        if bucket in ("GROUNDED", "WEAK"):
+            total += len(claim.split())
+    return total
+
+
+def unsupported_survived(before_claims: list[dict], revised: str) -> bool:
+    """True if a fabricated NUMBER a flagged claim asserted is STILL present in the revised draft body.
+    This catches the metric-gaming failure the review found: the model keeps a wrong statistic/date but
+    strips its [S#] marker, so the claim falls out of the score (a marker-less sentence is invisible to
+    unsupported_claims) instead of being corrected — the exact "plausible-but-wrong specifics" failure
+    the demand trial identified. It is deliberately NUMBER-targeted, not a broad content-token match:
+    a genuine correction removes/changes the wrong number, whereas a re-draft on the same topic
+    legitimately reuses the topic vocabulary — checking all content tokens would false-reject real fixes
+    and strangle the feature (measured: it rejected every gemma3 repair). Dangling/invented markers are
+    handled separately by the caller (review R35: fidelity-critic-correctness)."""
+    body_toks = set(tokenize(split_draft(revised)))
+    for f in before_claims:
+        if any(n in body_toks for n in f.get("missing_numbers") or []):
+            return True
+    return False

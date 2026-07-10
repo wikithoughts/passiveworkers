@@ -111,6 +111,63 @@ pw research "What is the current US federal funds rate target range?" --quick --
 python scripts/eval_citation_fidelity.py --report reports/<that-report>.md
 python scripts/bench_rag.py
 python scripts/merge_eval.py
-python scripts/eval_currency_gap.py            # $0 dry run (validate + estimate)
-OPENROUTER_API_KEY=… python scripts/eval_currency_gap.py --run   # paid frontier baseline (~$0.10)
+python scripts/eval_currency_gap.py                          # $0 dry run (validate + estimate)
+python scripts/eval_currency_gap.py --run --baseline local   # $0 — council vs the SAME local models from memory
+python scripts/eval_citation_fidelity.py --compare           # $0 — self-repair OFF vs ON, grounded-rate delta
+OPENROUTER_API_KEY=… python scripts/eval_currency_gap.py --run --baseline frontier   # paid frontier baseline (~$0.10)
 ```
+
+---
+
+## Appendix — 2026-07-10 (R35): trustworthier reports + a free currency read
+This appendix **adds to** the numbers above; it does not retract them. Two changes landed as 0.3.0, both
+measured on local Ollama with just `gemma3:4b` and `gemma3:12b` (a modest 2-model rig, so these are floor
+readings, not a ceiling — a real deployment with a 14–32B analyst would show more).
+
+**1. Citation self-repair now runs at inference time.** The grounding check that used to run only as an
+offline eval now runs *inside* `pw research`: an analyst's cited claims are scored against the exact
+sources the model saw, and unsupported/fabricated-number claims trigger one bounded re-prompt to correct
+or drop them — **accepted only if that measurably reduces the unsupported set without losing grounded
+content, so it can never lower a report's grounding by its own measure.** We measure it with a *paired*
+A/B (`eval_citation_fidelity.py --paired`): score the SAME draft pre- and post-repair against the SAME
+evidence, so there is no re-research variance. On this 2-model rig the honest picture is:
+
+- With a capable analyst (`gemma3:12b`), the pass fires on the drafts that carry a fixable unsupported
+  claim and removes them with **zero regression** — an illustrative 4-question run improved the grounded
+  rate **85% → 88%** (2 of 4 drafts repaired).
+- With the weak `gemma3:4b` analyst, it **safely declined every revision** (the model would have kept the
+  wrong number while dropping its citation — *hiding* the fabrication rather than fixing it — which the
+  gate refuses), so it made no change.
+
+So the effect size is small and noisy on a small local rig (0 to +3 pts across runs) — but it is **never
+negative**, and its corrective value scales with the analyst model. The guarantee is the point, not a big
+number. (A naive *between-runs* `--compare` gave a misleading −16 pts here, which is pure run-to-run
+variance at this sample size — exactly why the paired instrument exists.) An adversarial review of this
+feature caught a real gate-evasion — a model stripping a citation to *hide* a claim rather than fix it —
+now blocked; see D51.
+
+**2. The currency edge, now measurable for `$0`.** The head-to-head no longer requires a paid frontier
+model: `--baseline local` pits the council (local models + live web) against **the same local models
+answering from their own frozen memory** — exactly what the claim says, at no cost and with no API key.
+On a bank re-verified from the live web on 2026-07-10 (4 static / 7 recent / 5 breaking):
+
+```
+  window       n  paired   council  baseline    gap
+  static       4     4       9.00      9.50    -0.50    ← fairness control (currency irrelevant): ≈ tie
+  recent       7     7       5.71      1.14    +4.57
+  breaking     5     5       4.80      0.80    +4.00
+  OVERALL     16    16       6.25      3.12    +3.12
+  council = gemma3:4b + live web · baseline = gemma3:4b from memory · grader = gemma3:12b vs curated refs · $0
+```
+
+The shape is exactly what an honest currency eval should show: on **static** facts the memory baseline
+essentially ties the council (indeed edges it, −0.5 — so the eval is not tilted toward us), while on
+**recent** (+4.6, n=7) and **breaking** (+4.0, n=5) the live-web council pulls decisively ahead. Both
+moving windows clear the "paired n < 3 = noise" floor. This is the same model on both sides — the only
+difference is live grounding — and it cost nothing.
+
+Read the gap, not the columns: it is the paired (council − baseline) mean, and both sides are graded by
+the same local judge against a curated reference, so grader quirks cancel. Expect ≈0 on *static* (the
+fairness control — currency is irrelevant there) and positive on *recent/breaking* if the moat is real.
+The paid frontier comparison from the original report still stands and remains available as
+`--baseline frontier`.

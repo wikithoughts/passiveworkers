@@ -1294,6 +1294,57 @@ A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 
 Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
 atomic doesn't make the fallback atomic. 300 tests green.
 
+## D51 — Quality + proof: citation-fidelity self-repair + a free currency baseline (R35, 2026-07-10)
+**Context:** with 0.2.0 shipped and the repo audited-clean (no forced debt), the founder chose — from a
+4-way question — "**both quality + proof**": make the flagship reports more trustworthy AND prove the
+benefit more rigorously, both as pure local code with **zero paid spend and zero new operators**.
+
+**The insight (quality).** The grounding scorer in `council/fidelity.py` was fully written but only ran
+as an *offline eval* — never during a real `pw research`. The demand trial's decisive defect was
+"plausible-but-wrong specifics" (fabricated numbers/dates), which the docs noted the fidelity eval
+*would* flag — but it never ran at inference time. So we wired a **best-effort self-repair pass** into
+the pipeline (`ResearchWorker._repair_draft`, after each analyst's draft): score the cited claims against
+the exact evidence the model saw; if any are UNGROUNDED or assert a number absent from their source, do
+**one bounded re-prompt** to correct/drop just those. It is **self-verifying** — accepted only if the
+unsupported set strictly shrinks, no grounded claim is lost, and the grounded prose isn't gutted — so by
+fidelity's own measure the pass can never lower a report's grounding, and it costs a model call only when
+there's something to fix. Default on (`PW_FIDELITY_REPAIR=0` opts out); wrapped so it can never break a run.
+
+**The adversarial review earned its keep.** A 4-lens review (verified, 5 findings survived) caught a
+**gate-evasion the green tests missed**: a small model can "shrink" the unsupported set by *stripping or
+mangling a citation* rather than fixing the claim — a marker-less sentence just falls out of the score, so
+the fabrication ships un-cited and the A/B metric is *inflated*. The naive fix (require the cited-claim
+count not to drop) would wrongly reject legitimate whole-sentence deletions. So the gate got two targeted
+guards instead: reject a revision that (a) cites a marker absent from the sources it was given (an invented
+`[S9]`), or (b) leaves a flagged claim's text in place un-corrected (only its citation removed —
+`fidelity.unsupported_survived`, marker-stripped comparison so dropping the `[S#]` can't disguise it). The
+review also flagged that the two accept-guards weren't *pinned* by any test — each is now pinned by a
+mutation-verified test (deleting/inverting the guard makes exactly one test fail), plus two currency-eval
+honesty nits (a dry-run "FREE" label and a conflict-of-interest warning that mis-fired for the local
+baseline). All fixed and regression-tested the same round.
+
+**The insight (proof).** The currency eval's "memory" baseline was a **paid frontier model** — which is
+*why* deepening it was skipped last round, and it never matched the actual claim ("local models beat their
+*own* frozen knowledge"). We added a **free local baseline** (`--baseline local`: the same largest local
+model answering from parametric memory, no web, no key, `$0`) — the apples-to-apples read — while keeping
+the paid frontier as opt-in `--baseline frontier`. The bank was re-verified from the live web on 2026-07-10
+and expanded to 4 static / 7 recent / 5 breaking so the two moving windows clear the "paired n < 3 = noise"
+floor. Honest naming throughout (`frontier_*`→`baseline_*`; the key/`MAX_PAID` guards apply only to paid runs).
+
+**Measured (local Ollama, gemma3).** Citation self-repair, paired within-run A/B (`--paired` — score the
+SAME draft pre/post-repair against the SAME evidence, so no re-research variance): the pass removes fixable
+unsupported claims with zero regression by construction; on a capable analyst (gemma3:12b) an illustrative
+run improved the grounded rate 85%→88% (2 of 4 drafts repaired), while gemma3:4b safely declined every
+revision (no change). The effect is small and within run-to-run noise on this 2-model rig; the safety
+guarantee + catching the documented fabrication mode when the model can fix it are the value. (The naive
+between-runs `--compare` gave a *misleading* −16 pts here — pure re-research variance at n=6 — which is
+exactly why the paired instrument was added.) Machine gauntlet green (387 tests, ruff, JS checks, all 3
+UIs parse clean). The free currency gap (`--baseline local`, gemma3) came out textbook-clean:
+static control ≈ tie (−0.5, the memory baseline even slightly ahead — the eval isn't tilted), recent
++4.6 (paired n=7), breaking +4.0 (paired n=5), overall +3.1 — council (gemma3:4b + live web) vs the SAME
+model from memory, graded vs curated references, at **$0**.
+**Shipped as 0.3.0** (0.2.0 was burned on PyPI). See [[passiveworkers-adversarial-review-catches-real-bugs]].
+
 ## D50 — Engineering-debt round before publishing 0.2.0 (R34, 2026-07-07)
 **Context:** with 0.2.0 assembled but publish-held, three read-only audits inventoried the remaining
 "pending" debt. Only three items were safe, offline, non-strategic code work; the rest needed real
