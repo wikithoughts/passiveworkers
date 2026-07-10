@@ -1,21 +1,27 @@
 # Releasing to PyPI
 
-## Current state — **0.2.0 PUBLISHED (2026-07-07)**
-`passiveworkers` **0.1.0 through 0.2.0 are live** on https://pypi.org/project/passiveworkers/, each
-git-tagged (`v0.1.0`…`v0.2.0`). **0.2.0** bundled three rounds assembled on `main` since 2026-07-05 —
-R32/D48 (security/privacy hardening, engine reliability, `pw status`/`--json`/`--html`, marketplace
-account recovery, CI matrix), R33/D49 (`pw config` + keyed search backends), and R34/D50 (pricing
-dedup, shared UI module, operator/asker CLI test coverage, the `pw rate` fix). It was published from
-commit `4963906`, verified (PyPI JSON API 200 + a clean-venv `pip install passiveworkers==0.2.0`),
-and tagged `v0.2.0`. **The next release MUST bump the version** — `0.2.0` is now burned on PyPI.
+## Current state — **0.3.0 PUBLISHED (2026-07-10)**
+`passiveworkers` **0.1.0 through 0.3.0 are live** on https://pypi.org/project/passiveworkers/, each
+git-tagged (`v0.1.0`…`v0.3.0`). **0.3.0** (R35/D51) is a "quality + proof" round: inference-time
+citation-fidelity self-repair in `pw research`, and a **free local currency baseline** for
+`eval_currency_gap.py` (`--baseline local`) plus a re-verified/expanded question bank. It was published
+from commit `c2921f2`, verified (PyPI JSON API 200 + a clean-venv `pip install passiveworkers==0.3.0`
+→ `pw version` 0.3.0), and tagged `v0.3.0`. The round was adversarially reviewed before commit (a real
+citation-fidelity gate-evasion was caught and fixed). **The next release MUST bump the version** —
+`0.3.0` is now burned on PyPI.
+
+_Prior: **0.2.0** (2026-07-07, commit `4963906`) bundled R32/D48 (security/privacy hardening, engine
+reliability, `pw status`/`--json`/`--html`, marketplace account recovery, CI matrix), R33/D49
+(`pw config` + keyed search backends), and R34/D50 (pricing dedup, shared UI module, operator/asker CLI
+test coverage, the `pw rate` fix)._
 
 Token: 1Password item
 **"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time — never written
 to `~/.pypirc` or any file.
 
 > **Published versions are burned.** A version number on PyPI can never be reused, even after a yank.
-> The **next** release MUST bump `version` in `pyproject.toml` (`0.2.0` for the coming feature release;
-> a `0.1.x` bump only for a pure fix). Note: the PyPI JSON API updates instantly but the pip
+> The **next** release MUST bump `version` in `pyproject.toml` (`0.4.0` for the coming feature release;
+> a `0.3.x` bump only for a pure fix). Note: the PyPI JSON API updates instantly but the pip
 > simple-index lags ~30–60s — a fresh `pip install ==<newver>` may 404 right after upload; retry after a minute.
 
 ## How to publish (repeat for every bumped version)
