@@ -171,3 +171,42 @@ the same local judge against a curated reference, so grader quirks cancel. Expec
 fairness control — currency is irrelevant there) and positive on *recent/breaking* if the moat is real.
 The paid frontier comparison from the original report still stands and remains available as
 `--baseline frontier`.
+
+---
+
+## Appendix — 2026-07-10 (R36): rerank + adaptive depth, on a bigger local analyst
+0.4.0 added two flagship-quality levers, both **safe by construction** — a web-evidence **rerank** (it only
+reorders sources toward relevance; identity order on any failure, so it can never drop a source) and
+**adaptive/recursive depth** (a budgeted loop that adds evidence and stops early when saturated). Measured
+on `gemma3:12b` (a step up from the 2-model `gemma3:4b` rig above); the citation-fidelity numbers are a
+*between-runs* A/B, so run-to-run variance is real at this sample size — read them as directional.
+
+**Rerank A/B** — three *non-temporal* briefs (RSA, photosynthesis, the seasons; rerank only engages when a
+brief isn't time-sensitive), `pw research --depth standard`, citation self-repair held OFF to isolate the
+rerank, grounded-rate scored against the exact evidence each analyst read:
+
+```
+  rerank OFF : 23/26 grounded (88%) · mean source-overlap 68%
+  rerank ON  : 21/24 grounded (88%) · mean source-overlap 71%
+  gemma3:12b · --depth standard · 3 non-temporal briefs · self-repair held OFF to isolate the rerank
+```
+
+Grounded rate is flat (88% both arms — inside the between-runs noise at 24–26 claims); mean source-overlap
+edges up 68% → 71% (the reranked evidence is a bit more on-topic to what gets cited). Directional, not a
+headline — but it never went the wrong way, which is what "safe by construction" should look like.
+
+**No regression to the currency edge** — with *all* levers on (rerank + adaptive depth + the R35 citation
+critic), the free currency gap still holds (`gemma3:4b`, `--depth standard`, static + recent windows):
+
+```
+  window     n  paired   council  baseline    gap
+  static     4     4       9.75      9.50    +0.25    ← fairness control still ≈ tie (the levers didn't tilt it)
+  recent     4     3       5.67      2.00    +3.00    ← the currency edge holds with all levers ON
+  gemma3:4b + live web  vs  the same model from memory · grader gemma3:12b · $0
+```
+
+Honest bottom line: the levers are designed so they cannot lower research quality (rerank reorders; deeper
+search only adds evidence), and they leave the currency edge intact. A clean *magnitude* on a small local
+rig is hard to isolate — between-runs variance dominates, exactly as the R35 self-repair appendix found —
+so the case rests on the mechanism (best sources into the cap + read in full; more coverage on hard briefs)
+and the unit tests that pin the permutation and budget guarantees, not on a single headline number.

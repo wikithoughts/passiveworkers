@@ -32,6 +32,21 @@ def keep_alive() -> str:
     return os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")
 
 
+def smallest_chat_model(base_url: str | None = None) -> str:
+    """The smallest installed non-embedding model — cheap for auxiliary calls like listwise
+    reranking (``council.rerank``). ``PW_SMALL_MODEL`` overrides; ``''`` if none reachable.
+    Resolved at call time against ``base_url`` (or ``base()``) so a remote host is honored."""
+    override = os.environ.get("PW_SMALL_MODEL", "")
+    if override:
+        return override
+    try:
+        r = requests.get(f"{(base_url or base()).rstrip('/')}/api/tags", timeout=10)
+        models = [m for m in r.json().get("models", []) if "embed" not in m["name"].lower()]
+        return sorted(models, key=lambda m: m.get("size", 0))[0]["name"]
+    except Exception:
+        return ""
+
+
 def resolve_timeout(env_primary: str | None, default: float) -> float:
     """A generation timeout from ``env_primary`` (if set) else ``PW_OLLAMA_TIMEOUT`` else `default`.
     An empty/invalid value falls through instead of raising (previously an empty env var crashed)."""

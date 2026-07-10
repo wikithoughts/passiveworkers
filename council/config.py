@@ -65,6 +65,11 @@ KNOWN: dict[str, dict] = {
     "PW_LIBRARY_DIR":       {"help": "where library.db + node identity live (default ~/.passiveworkers)", "secret": False},
     "PW_LIBRARY_ROOTS":     {"help": "colon-separated roots the library may index (default $HOME)", "secret": False},
     "PW_RERANK":            {"help": "enable cross-encoder rerank in library search: 1 | (empty)", "secret": False},
+    # research pipeline (pw research)
+    "PW_RESEARCH_RERANK":   {"help": "rerank web evidence by relevance on non-temporal briefs: 1 (default) | 0", "secret": False},
+    "PW_RESEARCH_MAX_ROUNDS": {"help": "max adaptive research refine rounds (default 2; deep 4)", "secret": False},
+    "PW_RESEARCH_DEADLINE": {"help": "wall-clock budget in s for a node's retrieval loop (default 240)", "secret": False},
+    "PW_RESEARCH_MAX_SOURCES": {"help": "max web sources collected before refine stops (default 30)", "secret": False},
     # local research desk
     "PW_SERVE_HOST":        {"help": "bind host for `pw serve` (default 127.0.0.1)",       "secret": False},
     "PW_SERVE_PORT":        {"help": "port for `pw serve` (default 8770)",                 "secret": False},

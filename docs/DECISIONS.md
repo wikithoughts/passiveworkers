@@ -1294,6 +1294,45 @@ A workflow review (3 lenses — backend / UI / tests — × adversarial verify, 
 Lesson (again): a security guarantee in a *fallback* path needs its own test — the happy path being
 atomic doesn't make the fallback atomic. 300 tests green.
 
+## D52 — Rerank + recursive research + a hardening sweep (R36, 2026-07-10)
+**Context:** after 0.3.0 shipped, the founder chose **"do them all"** across the four next-move candidates,
+so 0.4.0 is a broad round: two flagship-quality levers, a code-hardening sweep, and a bigger-model pass.
+
+**Web-evidence rerank.** On non-time-sensitive briefs the analyst drafted from evidence in raw
+search-backend order — the context cap and the (expensive) full-page fetch operated on whatever DuckDuckGo
+ranked first. Now a one-call listwise reranker orders the evidence by relevance-to-brief *before* the cap,
+so the best sources survive and get read in full. The private library already had exactly this reranker;
+it was extracted to a shared `council/rerank.py` (a pure `rerank_listwise` — a permutation, append-not-drop,
+identity-on-failure) and `Library._rerank` became a 3-line wrapper. Hooked as an `elif` after the
+`if fresh:` recency branch, so **time-sensitive briefs are untouched** (currency stays recency-ordered).
+Default on (`PW_RESEARCH_RERANK=0` opts out); it only ever reorders, so it can't drop a source.
+
+**Adaptive (recursive) depth.** The fixed 0/1/2 refine rounds became a budgeted loop: keep issuing
+gap-filling follow-ups while the model still names gaps AND each round surfaces new URLs, bounded by round
+count, a wall-clock deadline, and a source ceiling. Hard briefs go deeper; well-covered ones stop early.
+
+**Hardening.** (1) The escrow-refund swallow (an expired assisted offer whose refund raised was still marked
+failed → asker's hold stranded): the reaper now leaves the offer open to retry, and `Ledger.refund` resolves
+the asker account BEFORE moving credit (atomic — a missing account can't decrement escrow and burn credit).
+(2) The three web UIs' drifted CSS palettes / footer / Leaflet bootstrap / status colors were consolidated
+into `council/net/ui_common.py` (the R34-deferred cleanup, now safe post-release; all three
+Playwright-verified to render coherently). (3) Scoped, advisory type-checking (`pyright basic` on
+`council/net`, non-blocking CI) — fixed the genuine annotations it surfaced. Plus tests for the previously
+uncovered web-UI routes + the legacy `Council` orchestrator.
+
+**The adversarial review earned its keep again** (2 verified findings): the web-UI substitution test guarded
+only the `/*__…__*/` placeholders, not the `<!--__…__-->` ones the same diff added (a typo'd FOOTER/LEAFLET
+replace would silently ship broken — now asserted + mutation-pinned); and the new `PW_RESEARCH_*` numeric
+env parsing crashed on a blank/garbage value (regressing the `resolve_timeout` hardening — now guarded).
+A review subagent also *reverted* the app.py CSS edits mid-verify (as in R35) — caught by re-checking the
+tree before committing. **Measured (gemma3:12b/4b, --depth standard):** the rerank held the grounded rate
+(88% both arms) and nudged mean source-overlap 68%→71% (directional — between-runs variance dominates the
+magnitude at a 3-brief rig, the same lesson R35 taught); and with all levers on the free currency gap held
+(static ≈tie +0.25, recent +3.0) — no regression. The levers are safe by construction, so the case rests on
+the mechanism + the unit-pinned permutation/budget guarantees, not a headline number (BENEFIT.md R36
+appendix). 412 tests, ruff, JS checks, pyright-advisory green. **Shipped as 0.4.0.**
+See [[passiveworkers-adversarial-review-catches-real-bugs]].
+
 ## D51 — Quality + proof: citation-fidelity self-repair + a free currency baseline (R35, 2026-07-10)
 **Context:** with 0.2.0 shipped and the repo audited-clean (no forced debt), the founder chose — from a
 4-way question — "**both quality + proof**": make the flagship reports more trustworthy AND prove the

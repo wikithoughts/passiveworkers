@@ -83,7 +83,7 @@ class Agent:
         return h
 
     def _profile(self) -> dict:
-        prof = {"os": platform.system(), "machine": platform.machine()}
+        prof: dict[str, object] = {"os": platform.system(), "machine": platform.machine()}
         if psutil:
             prof["ram_gb"] = round(psutil.virtual_memory().total / 1e9, 1)
             prof["cores"] = psutil.cpu_count(logical=False) or psutil.cpu_count()

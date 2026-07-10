@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "passiveworkers"
-version = "0.3.0"
+version = "0.4.0"
 description = "Make your computer work for you and others: a local-first compute network where machines do typed jobs for each other. Flagship task — deep research: local LLMs research the live web as independent analysts and a blind editor compiles one cited report."
 readme = "README.md"
 license = "MIT"
@@ -85,3 +85,17 @@ select = ["E9", "F"]
 # Unused locals in tests are frequently intentional (binding a result for readability / a side effect).
 "tests/**" = ["F841"]
 "scripts/**" = ["F841"]
+
+[tool.pyright]
+# Scoped, ADVISORY type-checking (R36/D52). Starts on the federation layer only — the highest-value,
+# most-tested surface, where the pydantic request/response models already carry real types. `basic` mode
+# is Any-tolerant, so the dynamic `sqlite3.Row["col"]` / `json.loads(...)` patterns don't explode. The CI
+# `types` job runs this but does NOT gate the build (continue-on-error) — signal now, enforcement later.
+# Widen `include` module-by-module as the surface is annotated; NOT strict, NOT repo-wide by design.
+include = ["council/net"]
+typeCheckingMode = "basic"
+pythonVersion = "3.10"
+reportMissingImports = "none"          # optional extras (geoip2, pynacl, …) are lazy-imported
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportAttributeAccessIssue = "warning"

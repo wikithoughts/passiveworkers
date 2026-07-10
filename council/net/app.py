@@ -18,10 +18,9 @@ APP_HTML = r"""<!doctype html>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Passive Workers — the Council</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<!--__LEAFLET_CSS__-->
 <style>
-  :root{--bg:#0a0e1c;--panel:#0f1730;--edge:#21305e;--ink:#e6ecff;--mut:#a7b6e0;--card:#0c1430;
-        --good:#36d399;--warn:#fbbd23;--bad:#f87272;--acc:#6ea8ff;}
+  /*__THEME__*/
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font:14.5px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
   #wrap{display:grid;grid-template-columns:1fr 400px;height:100vh}
@@ -43,8 +42,6 @@ APP_HTML = r"""<!doctype html>
     border:2px solid var(--edge);border-top-color:var(--acc);border-radius:50%;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   @media(prefers-reduced-motion:reduce){.spin,.thinking,.arc{animation:none}}
-  .pwfoot{margin-top:18px;padding-top:12px;border-top:1px solid var(--edge);color:var(--mut);font-size:11.5px}
-  .pwfoot a{color:var(--acc)}
   .row{display:flex;gap:8px;align-items:center} .between{justify-content:space-between}
   .card{background:#0c1430;border:1px solid var(--edge);border-radius:12px;padding:12px 14px;margin:12px 0}
   .persp{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #1b2750}
@@ -134,11 +131,12 @@ APP_HTML = r"""<!doctype html>
       <div class="muted" style="font-size:12.5px;margin-top:8px">Run a worker so your machine joins the council and earns credits for your handle:</div>
       <pre id="contribute" style="white-space:pre-wrap;background:#0a1126;border:1px solid var(--edge);border-radius:8px;padding:8px;font-size:11.5px;overflow:auto"></pre>
     </details>
-    <footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
+    <!--__FOOTER__-->
   </div>
 </div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!--__LEAFLET_JS__-->
 <script>
+/*__PWC__*/
 /*__CENTROIDS__*/
 const YOU=[25.2,55.3];  // asker anchor (overridden by geolocation if allowed)
 let you=YOU.slice();
@@ -147,10 +145,10 @@ function cc(s){return String(s||'').replace(/^sim-/,'').toUpperCase()}
 function flag(s){const c=cc(s);if(!/^[A-Z]{2}$/.test(c))return '🖥';return String.fromCodePoint(...[...c].map(x=>0x1F1A5+x.charCodeAt(0)))}
 function centroid(country){return CENTROIDS[cc(country)]||CENTROIDS['?']}
 function jit(k){k=String(k||'');let h=0;for(const ch of k)h=(h*31+ch.charCodeAt(0))&255;return (h/255-.5)*7}
-function statusColor(s){return s==='answered'?'#36d399':s==='thinking'?'#fbbd23':'#6ea8ff'}
+function statusColor(s){return s==='answered'?PWC.good:s==='thinking'?PWC.warn:PWC.acc}
 
 const map=L.map('map',{worldCopyJump:true,zoomControl:false}).setView([28,20],2.4);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:8,attribution:'© OSM © CARTO'}).addTo(map);
+/*__MAP_TILE__*/.addTo(map);
 const ambient=L.layerGroup().addTo(map), jobLayer=L.layerGroup().addTo(map);
 
 // ---- auth ----
@@ -311,7 +309,7 @@ function drawMap(v){
     const p=[c[0]+jit(mk),c[1]+jit(mk+'x')];
     const anyThinking=m.items.some(x=>x.status_label==='thinking');
     const allAnswered=m.items.every(x=>x.status_label==='answered');
-    const col=allAnswered?'#36d399':anyThinking?'#fbbd23':'#6ea8ff';
+    const col=allAnswered?PWC.good:anyThinking?PWC.warn:PWC.acc;
     L.polyline([you,p],{color:col,weight:1.4,opacity:.55,className:'arc'}).addTo(jobLayer);
     if(jc&&allAnswered&&mk!==v.judge_machine_key)L.polyline([p,jc],{color:'#6ea8ff',weight:1.2,opacity:.4,className:'arc'}).addTo(jobLayer);
     L.circleMarker(p,{radius:9,color:col,fillColor:col,fillOpacity:.5,weight:2,className:anyThinking?'thinking':''}).addTo(jobLayer)
@@ -464,8 +462,15 @@ if(location.hash.indexOf('#job=')===0)openJob(location.hash.slice(5));
 </html>
 """
 
-# One definition of the shared esc() + centroid table, substituted in at import (see council.net.ui_common).
+# Shared UI fragments (theme, footer, Leaflet bootstrap, esc(), centroids, status colors), substituted
+# in at import (see council.net.ui_common).
 from council.net import ui_common as _ui  # noqa: E402
 APP_HTML = (APP_HTML
+            .replace("/*__THEME__*/", _ui.THEME_CSS)
+            .replace("<!--__FOOTER__-->", _ui.FOOTER_HTML)
+            .replace("<!--__LEAFLET_CSS__-->", _ui.LEAFLET_CSS)
+            .replace("<!--__LEAFLET_JS__-->", _ui.LEAFLET_JS)
+            .replace("/*__MAP_TILE__*/", _ui.MAP_TILE_JS)
+            .replace("/*__PWC__*/", _ui.STATUS_COLORS_JS)
             .replace("/*__ESC__*/", _ui.ESC_JS)
             .replace("/*__CENTROIDS__*/", _ui.CENTROIDS_JS))

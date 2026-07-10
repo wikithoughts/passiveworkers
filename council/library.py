@@ -375,34 +375,13 @@ class Library:
 
     def _rerank(self, query: str, rows, ids: list[int], k: int) -> list[int]:
         """Opt-in (PW_RERANK=1) listwise rerank: one local-model call scores the fused
-        candidates by actual relevance. Zero new deps; falls back to RRF order on failure."""
-        model = _smallest_chat_model()
-        if not model:
-            return ids[:k]
-        try:
-            from council.judge import _extract_json
-            from council.sanitize import spotlight
-            # candidate passages are untrusted document text → spotlight (a planted
-            # instruction can at worst reorder, never escape; index-clamp below bounds it)
-            cand = spotlight("\n".join(f"[{j}] {rows[i]['text'][:300]}" for j, i in enumerate(ids)))
-            prompt = (f"Rank the passages by relevance to the QUERY. Return STRICT JSON: "
-                      f'{{"order":[indices best-first]}}.\n\nQUERY: {query}\n\nPASSAGES:\n{cand}\n\nJSON:')
-            r = requests.post(f"{OLLAMA}/api/generate",
-                              json={"model": model, "prompt": prompt, "stream": False,
-                                    "options": {"temperature": 0.0, "num_predict": 120},
-                                    "keep_alive": os.environ.get("PW_OLLAMA_KEEP_ALIVE", "30m")},
-                              timeout=120)
-            r.raise_for_status()
-            parsed = _extract_json((r.json().get("response") or "").strip())
-            order = parsed.get("order") if isinstance(parsed, dict) else None
-            if isinstance(order, list):
-                picked = [ids[j] for j in order if isinstance(j, int) and 0 <= j < len(ids)]
-                # append any not mentioned, preserving fusion order
-                picked += [i for i in ids if i not in picked]
-                return picked[:k]
-        except Exception:
-            pass
-        return ids[:k]
+        candidates by actual relevance. Delegates to the shared council.rerank reranker
+        (identical logic; append-not-drop + identity-on-failure) — kept as a thin adapter that
+        maps corpus ids ↔ candidate passages. Honors PW_CONTEXT_MODEL via _smallest_chat_model()."""
+        from council.rerank import rerank_listwise
+        passages = [rows[i]["text"][:300] for i in ids]
+        order = rerank_listwise(query, passages, k, model=_smallest_chat_model())
+        return [ids[j] for j in order]
 
     def _hit(self, rows, i, score, window: bool) -> dict:
         """Build a result, optionally expanding to a parent window (neighbor chunks of the

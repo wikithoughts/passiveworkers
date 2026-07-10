@@ -89,6 +89,51 @@ def test_expiry_after_accept_refunds_and_blocks_late_deliver(store, monkeypatch)
     assert store.ledger.conservation_ok()
 
 
+def test_expiry_refund_failure_does_not_strand_hold(store, monkeypatch):
+    # R36: a refund that raises (e.g. a ledger desync) must NOT fail-and-strand the asker's hold —
+    # the reaper leaves the offer open and the NEXT tick self-heals once the refund path recovers.
+    import council.net.store as st
+    j = _offer(store, asker="alice")
+    tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
+    store.accept_assisted(tid, "bobnode", "bob")
+    assert store.ledger.accounts["alice"].balance == 50.0        # 50 held in escrow
+    monkeypatch.setattr(st, "_now", lambda: 10**12)              # offer is now expired
+
+    real_refund = store.ledger.refund
+    calls = {"n": 0}
+
+    def flaky_refund(asker_id, amount):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("ledger desync")                 # first tick fails
+        return real_refund(asker_id, amount)                    # later ticks succeed
+
+    monkeypatch.setattr(store.ledger, "refund", flaky_refund)
+
+    store._reap_once()                                          # tick 1: refund raises
+    assert store.job_status(j["job_id"]) != "failed"           # NOT failed-and-stranded
+    assert store.ledger.accounts["alice"].balance == 50.0      # hold intact — nothing burned
+    assert store.ledger.conservation_ok()
+
+    store._reap_once()                                          # tick 2: refund succeeds → self-heals
+    assert store.job_status(j["job_id"]) == "failed"
+    assert store.ledger.accounts["alice"].balance == 100.0     # refunded
+    assert store.ledger.conservation_ok()
+
+
+def test_refund_to_missing_account_burns_no_escrow(store):
+    # R36: refund() is atomic — a missing asker account raises BEFORE escrow is decremented, so
+    # credit is never destroyed (previously escrow was debited first → a KeyError burned it).
+    led = store.ledger
+    led.open_account("alice")
+    led.hold("alice", 20.0)
+    escrow_before = led._escrow().balance
+    with pytest.raises(Exception):
+        led.refund("ghost_account", 20.0)
+    assert led._escrow().balance == escrow_before              # escrow untouched on failure
+    assert led.conservation_ok()
+
+
 def test_capability_gate_hides_ineligible_offers(store):
     _offer(store, requires={"model": "qwen3:14b"})
     # operator without that model sees nothing

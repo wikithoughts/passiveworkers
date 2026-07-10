@@ -5,6 +5,40 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [0.4.0] — 2026-07-10
+A broad round (R36 / D52): two flagship research-quality levers, a code-hardening sweep, and a
+bigger-model evidence pass. Everything is pure local code; adversarially reviewed before commit.
+### Added
+- **Web-evidence reranking.** On non-time-sensitive briefs, `pw research` now reranks the web search
+  results by relevance to the brief *before* the context cap and page-fetch, so the strongest sources
+  survive and get read in full — instead of drafting from whatever order the search backend returned.
+  Reuses the same one-call local reranker as the private library (`council/rerank.py`, shared).
+  Default on; `PW_RESEARCH_RERANK=0` opts out. (Time-sensitive briefs keep recency ordering, unchanged.)
+- **Adaptive (recursive) research depth.** The fixed refine rounds became a *budgeted* loop: it keeps
+  issuing gap-filling follow-up queries while the model still finds gaps and each round surfaces new
+  sources, then stops — bounded by round, wall-clock (`PW_RESEARCH_DEADLINE`, default 240s), and source
+  (`PW_RESEARCH_MAX_SOURCES`, default 30) budgets. Hard briefs go deeper; well-covered ones stop early.
+- Measured (gemma3:12b/4b, `--depth standard`): the rerank held the grounded rate (88% both arms) and
+  nudged mean source-overlap 68%→71% — directional, since between-runs variance dominates the magnitude
+  on a small local rig; and with **all** levers on the free currency gap held (static ≈tie +0.25, recent
+  +3.0), i.e. **no regression**. The levers are safe by construction (rerank only reorders; deeper search
+  only adds evidence). Full numbers in the `docs/BENEFIT.md` R36 appendix.
+### Fixed
+- **Escrow refund no longer strands an asker's hold.** When an assisted offer expired, a refund that
+  raised (e.g. a ledger desync) still marked the job failed — losing the held credit. The reaper now
+  leaves the offer open to retry on the next tick, and `Ledger.refund` is atomic (it resolves the asker
+  account before moving any credit, so a missing account can't decrement escrow and burn credit).
+### Internal
+- **One dark theme for all three web UIs.** `council/net/ui_common.py` now holds the canonical `:root`
+  palette, footer, Leaflet/CARTO map bootstrap, and status colors — ending the drift between the research
+  desk, marketplace, and operator dashboard (three different `--bg`/`--card` values, a `--muted`/`--mut`
+  name split, and a divergent map attribution). All three surfaces browser-verified to render coherently.
+- **Scoped type-checking.** A `[tool.pyright]` config (`basic`, `council/net` only) + a non-blocking
+  advisory CI `types` job. Fixed the genuine annotation issues it surfaced (`Store.__init__` path,
+  `create_job` `then` accepting a pipeline list, a heterogeneous profile dict).
+- Tests for the previously-uncovered web-UI routes (`GET /`, `/dashboard`) and the legacy in-process
+  `Council` orchestrator; the shared reranker and the adaptive-depth budgets are unit-pinned.
+
 ## [0.3.0] — 2026-07-10
 A "quality + proof" round (R35 / D51): the flagship reports now self-check their own citations at
 inference time, and the benefit evidence gets stronger **without any paid API spend**. Both halves are
@@ -171,6 +205,7 @@ Initial public release — the single-player deep-research engine.
   (`council/net/`) with a live two-country deployment.
 - Eval instruments: SimpleQA bench, citation-fidelity, and currency-gap scripts.
 
+[0.4.0]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.4.0
 [0.3.0]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.3.0
 [0.2.0]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.2.0
 [0.1.5]: https://github.com/wikithoughts/passiveworkers/releases/tag/v0.1.5

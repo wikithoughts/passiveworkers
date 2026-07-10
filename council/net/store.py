@@ -86,7 +86,7 @@ def _norm_then(then: Any) -> Optional[str]:
 
 
 class Store:
-    def __init__(self, path: str = None):
+    def __init__(self, path: str | None = None):
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(path or CONFIG.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -466,7 +466,7 @@ class Store:
                    job_type: str = "chat", items: Optional[list] = None,
                    requires: Optional[dict] = None, fetch: bool = False,
                    context: str = "", encrypt_to: str = "",
-                   split: Optional[list] = None, then: Optional[dict] = None,
+                   split: Optional[list] = None, then: dict | list | None = None,
                    as_file: bool = False) -> dict:
         with self.lock:
             asker = _clip(asker)
@@ -1274,12 +1274,16 @@ class Store:
                     "SELECT * FROM jobs WHERE status IN ('pending_assist','assisting')")):
                 deadline = JOB_TYPES["assisted"]["deadline_s"]
                 if now - job["created"] > deadline:
-                    # refund the held reward to the asker before failing (escrow → asker)
+                    # Refund the held reward to the asker BEFORE failing (escrow → asker). If the
+                    # refund can't complete (e.g. a ledger desync), DON'T mark the job failed — leave
+                    # it open so the next reap tick retries, rather than fail-and-strand the asker's
+                    # hold. refund() is atomic (mutates nothing on failure), so the retry can't
+                    # double-credit (R36 hardening; was `except: pass` → failed regardless).
                     try:
                         if job["pool"]:
                             self.ledger.refund(job["asker"], job["pool"])
                     except Exception:
-                        pass
+                        continue   # refund failed → keep the offer open, retry next tick
                     self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
                                       (f"assisted offer expired ({int(deadline)}s)", job["job_id"]))
                     self._save_ledger()

@@ -137,8 +137,7 @@ SERVE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Research desk — Passive Workers</title>
 <style>
-:root{--bg:#0b1020;--ink:#e8ecff;--muted:#a7b6e0;--edge:#21305e;--card:#101736;--cardin:#0c1430;
-  --acc:#6ea8ff;--bad:#f87272;--btn:#2447b2;--btn-edge:#2e57d6}
+/*__THEME__*/
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,Segoe UI,Inter,sans-serif}
 .wrap{max-width:860px;margin:0 auto;padding:28px 18px}
 h1{font-size:20px;margin:0 0 2px} .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
@@ -162,8 +161,6 @@ button.go{background:var(--btn);border-color:var(--btn-edge);font-weight:600;mar
 .report a{color:var(--acc);word-break:break-all}
 .hist div{cursor:pointer;padding:6px 2px;border-top:1px dashed #1b2750}
 .hist div:hover{color:#fff}
-.pwfoot{margin-top:22px;padding-top:12px;border-top:1px solid var(--edge);color:var(--muted);font-size:11.5px}
-.pwfoot a{color:var(--acc)}
 @media(max-width:820px){.wrap{padding:20px 12px}}
 @media(max-width:480px){.row{gap:8px}.go{margin-left:0;width:100%}select{flex:1 1 auto}}
 @media print{body *{visibility:hidden}#out,#out *{visibility:visible}#out{position:absolute;left:0;top:0;width:100%;border:0}.noprint{display:none!important}}
@@ -183,7 +180,7 @@ button.go{background:var(--btn);border-color:var(--btn-edge);font-weight:600;mar
 <div class="card" id="live" style="display:none" aria-live="polite"><span class="spin" id="spin" aria-hidden="true"></span><b id="status">working…</b><button id="cancel" style="display:none;float:right;padding:4px 10px" aria-label="Cancel research">Cancel</button><div class="log" id="log" role="log" aria-label="Research progress"></div></div>
 <div class="card report" id="out" style="display:none"></div>
 <div class="card hist"><b><span aria-hidden="true">📄</span> Past reports</b><div id="hist" class="muted">none yet</div></div>
-<footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
+<!--__FOOTER__-->
 <script>
 /*__ESC__*/
 function md(t){
@@ -246,9 +243,12 @@ refreshHist();
 </script></div></body></html>
 """
 
-# One definition of the shared esc(), substituted in at import (see council.net.ui_common).
+# Shared UI fragments (theme palette, footer, esc()), substituted in at import (council.net.ui_common).
 from council.net import ui_common as _ui  # noqa: E402
-SERVE_HTML = SERVE_HTML.replace("/*__ESC__*/", _ui.ESC_JS)
+SERVE_HTML = (SERVE_HTML
+              .replace("/*__THEME__*/", _ui.THEME_CSS)
+              .replace("<!--__FOOTER__-->", _ui.FOOTER_HTML)
+              .replace("/*__ESC__*/", _ui.ESC_JS))
 
 
 def main() -> None:

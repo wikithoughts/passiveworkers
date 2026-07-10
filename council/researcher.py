@@ -31,6 +31,19 @@ from council.research import (extract_date_hint, fetch_extract, inject_recency, 
                               is_time_sensitive, order_by_recency, route_engines,
                               search_structured)
 
+
+def _num_env(key: str, default, cast):
+    """Read a numeric env var, falling back to `default` on empty/invalid rather than crashing the run
+    (mirrors council.ollama.resolve_timeout — an empty `PW_RESEARCH_DEADLINE=` must not raise). R36 review."""
+    val = os.environ.get(key)
+    if val:
+        try:
+            return cast(val)
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
 @dataclass
 class ResearchWorker:
     worker_id: str
@@ -91,9 +104,10 @@ class ResearchWorker:
     def _refine_queries(self, brief: str, evidence: list[dict]) -> list[str]:
         seen = "\n".join(f"- {e['title']} ({e['host']})" for e in evidence[:10])
         raw, _ = self._generate(
-            "Given the brief and the sources found so far, name 2 follow-up search queries "
-            "that fill the biggest remaining gaps (be specific; avoid repeating what is "
-            'already covered). Reply STRICT JSON only: ["query one","query two"]\n\n'
+            "Given the brief and the sources found so far, name up to 2 follow-up search queries "
+            "that fill the biggest remaining gaps (be specific; avoid repeating what is already "
+            "covered). If the brief is already well covered by the sources, reply with an empty "
+            'list to stop. Reply STRICT JSON only: ["query one","query two"] (or [])\n\n'
             f"BRIEF:\n{brief}\n\nFOUND SO FAR:\n{seen}\n\nJSON:", num_predict=100)
         parsed = _extract_json(raw)
         qs = [str(q).strip() for q in parsed if str(q).strip()] if isinstance(parsed, list) else []
@@ -266,10 +280,27 @@ class ResearchWorker:
 
         if self.scope in ("both", "web"):
             _collect(self._plan_queries(brief), per_query=4)
+        # Adaptive gap-driven deepening (R36/D52): keep issuing follow-up queries while the model
+        # still names gaps AND a round keeps surfacing NEW sources — instead of a fixed round count.
+        # Hard bounds keep it from ever running away: a max round count, a wall-clock budget (the
+        # essential guard — each round stacks a generate + searches), and a source ceiling. Defaults
+        # reproduce the old fixed counts (standard=1-2 rounds, deep more) for a well-covered brief.
         if evidence and self.scope in ("both", "web") and depth != "quick":
-            _collect(self._refine_queries(brief, evidence), per_query=3)
-            if depth == "deep":
-                _collect(self._refine_queries(brief, evidence), per_query=3)
+            max_rounds = _num_env("PW_RESEARCH_MAX_ROUNDS", {"deep": 4}.get(depth, 2), int)
+            deadline = t0 + _num_env("PW_RESEARCH_DEADLINE", 240.0, float)
+            max_sources = _num_env("PW_RESEARCH_MAX_SOURCES", 30, int)
+            rounds = 0
+            while (rounds < max_rounds
+                   and time.monotonic() < deadline
+                   and len(seen_urls) < max_sources):
+                follow = self._refine_queries(brief, evidence)
+                if not follow:                        # model says the brief is well covered → stop
+                    break
+                before = len(seen_urls)
+                _collect(follow, per_query=3)
+                rounds += 1
+                if len(seen_urls) == before:          # a round found nothing new → search saturated
+                    break
         # Freshness-biased ordering (R18/D30): the council's edge is CURRENCY, so sniff a date
         # hint for each source and — ONLY when the brief actually cares about recency (fresh,
         # computed up front) — lead with the most-recently-dated ones (they then survive the cap
@@ -279,6 +310,20 @@ class ResearchWorker:
             e["date_hint"] = extract_date_hint(e.get("url", ""), e.get("snippet", ""))
         if fresh:
             evidence[:] = order_by_recency(evidence)
+        elif os.environ.get("PW_RESEARCH_RERANK", "1") != "0" and len(evidence) > 1:
+            # Non-temporal briefs have no recency signal, so evidence is in raw search-backend order —
+            # the cap and page-fetch below would then draft from whatever the engine ranked first.
+            # Rerank by relevance-to-brief so the best sources survive the cap AND get page-fetched
+            # (R36/D52). Shared listwise reranker; a permutation (never drops) with identity-on-failure,
+            # so it is strictly additive. Temporal briefs keep recency ordering (untouched above).
+            try:
+                from council.rerank import rerank_listwise
+                q = f"{brief} {self.angle}".strip()
+                passages = [f"{e.get('title', '')} {e.get('snippet', '')}".strip() for e in evidence]
+                order = rerank_listwise(q, passages, base_url=self.ollama_base)
+                evidence[:] = [evidence[j] for j in order]
+            except Exception:
+                pass
         cap = {"quick": 8, "deep": 16}.get(depth, 12)
         evidence[:] = evidence[:cap]   # keep the prompt within small-model context
 

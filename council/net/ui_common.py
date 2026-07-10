@@ -29,3 +29,40 @@ CENTROIDS_JS = (
     "VN:[14,108],MX:[23,-102],ES:[40,-3.7],IT:[42.8,12.8],SE:[62,15],PL:[52,19],AR:[-38,-63],"
     "'local':[20,0],'?':[0,-20]};"
 )
+
+# ---- ONE dark theme for all three surfaces (R36/D52) ---------------------------------------------
+# The `:root` palette had drifted: three different `--bg`/`--ink`/`--card` values and a `--muted`
+# vs `--mut` name split, so the surfaces slowly diverged. This is the single canonical palette,
+# substituted via a `/*__THEME__*/` placeholder. It carries the UNION of every token any surface
+# references (so each page's existing CSS still resolves), keeps BOTH `--mut` and `--muted` as
+# aliases of the one muted grey (no per-surface var() rewrites), and folds in the shared `.pwfoot`
+# footer rule that was also copy-pasted three times.
+THEME_CSS = (
+    ":root{--bg:#0b1020;--ink:#e6ecff;--mut:#a7b6e0;--muted:#a7b6e0;--edge:#21305e;--card:#0f1730;"
+    "--cardin:#0c1430;--panel:#121a33;--acc:#6ea8ff;--bad:#f87272;--good:#36d399;--warn:#fbbd23;"
+    "--btn:#2447b2;--btn-edge:#2e57d6}\n"
+    ".pwfoot{margin-top:18px;padding-top:12px;border-top:1px solid var(--edge);color:var(--mut);"
+    "font-size:11.5px}.pwfoot a{color:var(--acc)}"
+)
+
+# The version-stamped footer, byte-identical across the three pages (`__PW_VERSION__` is substituted
+# per request by each surface's route). Placeholder: an HTML comment so the raw template still parses.
+FOOTER_HTML = (
+    '<footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · '
+    '<a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a>'
+    "</footer>"
+)
+
+# Leaflet + CARTO dark-tile bootstrap, shared by the two map surfaces (app + dashboard). The tile
+# layer's attribution had drifted ('© OSM' vs '© OpenStreetMap'); one canonical form now. MAP_TILE_JS
+# is the `L.tileLayer(...)` expression — a surface appends `.addTo(map)`.
+LEAFLET_CSS = '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>'
+LEAFLET_JS = '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>'
+MAP_TILE_JS = (
+    "L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',"
+    "{maxZoom:8,attribution:'© OpenStreetMap © CARTO'})"
+)
+
+# Semantic status colors, previously repeated as raw hex literals in the map/dot code of both surfaces
+# (they can't consume CSS var()s — they color Leaflet markers via JS strings). ONE object now.
+STATUS_COLORS_JS = "const PWC={good:'#36d399',warn:'#fbbd23',bad:'#f87272',acc:'#6ea8ff'};"

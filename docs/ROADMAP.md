@@ -89,6 +89,20 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## R36 — Rerank + recursive research + hardening sweep (D52, 2026-07-10)
+Founder chose **"do them all"** across the four next-move candidates → a broad 0.4.0 round:
+- **Web-evidence rerank** — on non-temporal briefs `pw research` reranks web results by relevance BEFORE
+  the context cap + page-fetch (was raw search-backend order), reusing the library's listwise reranker
+  (extracted to a shared `council/rerank.py`). Default on; time-sensitive briefs keep recency ordering.
+- **Adaptive (recursive) depth** — the fixed refine rounds became a budgeted loop (round / wall-clock /
+  source caps + stop-when-saturated), so hard briefs go deeper and easy ones stop early.
+- **Hardening** — fixed the escrow-refund swallow (atomic `Ledger.refund` + reaper retry, no stranded
+  hold); consolidated the 3 web UIs' drifted CSS/footer/Leaflet/status-colors into `ui_common`
+  (Playwright-verified); added scoped advisory `pyright` (council/net) + tests for the uncovered web-UI
+  routes and legacy `Council`.
+- Adversarial review caught 2 real issues (an unguarded substitution-test class, a crash-on-blank-env
+  regression) — both fixed + regression-tested. 412 tests, ruff, JS, pyright-advisory green. **0.4.0.**
+
 ## R35 — Quality + proof: citation-fidelity self-repair + a free currency baseline (D51, 2026-07-10)
 Two pure-local upgrades (no paid spend, no new operators), the founder's "both quality + proof" choice:
 - **Citation-fidelity self-repair in `pw research`** — the grounding scorer (`council/fidelity.py`) that

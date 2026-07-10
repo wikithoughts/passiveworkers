@@ -216,10 +216,13 @@ class Ledger:
         o.lifetime_earned = round(o.lifetime_earned + amount, 4)
 
     def refund(self, asker_id: str, amount: float) -> None:
-        """Return an escrow hold to the asker (on offer expiry / failure)."""
+        """Return an escrow hold to the asker (on offer expiry / failure). ATOMIC: the asker account
+        is resolved BEFORE any balance moves, so a missing account raises without first decrementing
+        escrow — nothing mutates on failure, so credit is never burned and a caller can safely retry
+        (R36 hardening; previously escrow was debited first, so a KeyError destroyed the held credit)."""
+        a = self.accounts[asker_id]
         amount = round(amount, 4)
         self._escrow().balance = round(self._escrow().balance - amount, 4)
-        a = self.accounts[asker_id]
         a.balance = round(a.balance + amount, 4)
         a.lifetime_spent = round(a.lifetime_spent - amount, 4)
 

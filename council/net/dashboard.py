@@ -17,10 +17,9 @@ DASHBOARD_HTML = r"""<!doctype html>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Passive Workers — Council Map</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<!--__LEAFLET_CSS__-->
 <style>
-  :root{--bg:#0b1020;--panel:#121a33;--ink:#e6ecff;--mut:#a7b6e0;--edge:#21305e;--card:#0f1730;
-    --acc:#6ea8ff;--good:#36d399;--warn:#fbbd23;--bad:#f87272;}
+  /*__THEME__*/
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
   #wrap{display:grid;grid-template-columns:1fr 360px;height:100vh}
@@ -36,8 +35,6 @@ DASHBOARD_HTML = r"""<!doctype html>
   .flex{display:flex;gap:18px} .ok{color:var(--good)} .no{color:var(--bad)}
   .job{font-size:12px;border-left:3px solid #2a3a6e;padding:2px 0 2px 8px;margin:4px 0}
   a{color:var(--acc)} :focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:8px}
-  .pwfoot{margin-top:18px;padding-top:12px;border-top:1px solid var(--edge);color:var(--mut);font-size:11.5px}
-  .pwfoot a{color:var(--acc)}
   @media(max-width:820px){#wrap{grid-template-columns:1fr;grid-template-rows:42vh 1fr}#map{height:42vh}
     #side{border-left:0;border-top:1px solid var(--edge)}}
   @media(max-width:480px){#side{padding:12px}.flex{gap:12px}.stat{font-size:19px}}
@@ -69,18 +66,18 @@ DASHBOARD_HTML = r"""<!doctype html>
     <h1 style="font-size:13px;margin:16px 0 6px">Recent jobs</h1>
     <div id="jobs"></div>
     <div class="sub" id="updated" style="margin-top:12px" aria-live="polite"></div>
-    <footer class="pwfoot" aria-label="About">Passive&nbsp;Workers v__PW_VERSION__ · <a href="https://github.com/wikithoughts/passiveworkers" target="_blank" rel="noopener">GitHub</a></footer>
+    <!--__FOOTER__-->
   </div>
 </div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!--__LEAFLET_JS__-->
 <script>
+/*__PWC__*/
 /*__CENTROIDS__*/
 function jitter(id){id=String(id||'');let h=0;for(const c of id)h=(h*31+c.charCodeAt(0))&255;return (h/255-0.5)*6;}
 /*__ESC__*/
-function loadColor(l){l=l||0;return l<0.4?'#36d399':l<0.75?'#fbbd23':'#f87272';}
+function loadColor(l){l=l||0;return l<0.4?PWC.good:l<0.75?PWC.warn:PWC.bad;}
 const map=L.map('map',{worldCopyJump:true}).setView([30,15],2);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  {maxZoom:8,attribution:'© OpenStreetMap © CARTO'}).addTo(map);
+/*__MAP_TILE__*/.addTo(map);
 let markers=[];
 async function tick(){
   let d; try{ d=await (await fetch('/status',{cache:'no-store'})).json(); }catch(e){ return; }
@@ -98,8 +95,8 @@ async function tick(){
     const lat=c[0]+jitter(n.node_key), lng=c[1]+jitter(n.node_key+'x');
     const col=loadColor(n.load), role=esc(n.answer_model||'judge');
     const geoBadge=n.geo_mismatch
-      ? `<span class="pill" title="self-reported vs geo-verified" style="color:#fbbd23">⚠ says ${esc(n.country)} · geo ${esc(n.geo_country)}</span>`
-      : (n.geo_country ? `<span class="pill" title="geo-verified" style="color:#36d399">✓ ${esc(n.geo_country)}</span>` : '');
+      ? `<span class="pill" title="self-reported vs geo-verified" style="color:${PWC.warn}">⚠ says ${esc(n.country)} · geo ${esc(n.geo_country)}</span>`
+      : (n.geo_country ? `<span class="pill" title="geo-verified" style="color:${PWC.good}">✓ ${esc(n.geo_country)}</span>` : '');
     const m=L.circleMarker([lat,lng],{radius:9,color:col,fillColor:col,fillOpacity:.85,weight:2}).addTo(map);
     m.bindPopup(`<b>${esc(n.name)}</b> · ${esc(disp)}${n.geo_mismatch?' (says '+esc(n.country)+')':''}<br>owner ${esc(n.owner)}<br>${role}`+
       `<br>load ${(100*(n.load||0)).toFixed(0)}% · rep ${(+n.reputation||0)}/10`+
@@ -116,7 +113,7 @@ async function tick(){
   const JT={chat:'💬 ask',research_report:'🔬 research',shard_map:'⚙️ batch',assisted:'🤝 assisted',
     download_extract:'📥 extract',code_generation:'💻 code'};
   for(const j of jobs.slice(0,8)){
-    const col=j.status==='done'?'#36d399':j.status==='failed'?'#f87272':'#fbbd23';
+    const col=j.status==='done'?PWC.good:j.status==='failed'?PWC.bad:PWC.warn;
     const ago=(j.age_s!=null)?(j.age_s<90?Math.round(j.age_s)+'s':Math.round(j.age_s/60)+'m')+' ago':'';
     jb.insertAdjacentHTML('beforeend',
       `<div class="job" style="border-left-color:${col}"><b>${esc(JT[j.type]||j.type||'job')}</b> `+
@@ -137,7 +134,7 @@ async function tickLeaders(){
   const ops=d.operators||[];
   if(!ops.length){ box.innerHTML='<div class="muted" style="font-size:12px">no operators yet</div>'; return; }
   ops.forEach((o,i)=>{
-    const dot=o.online?'<span class="dot" style="background:#36d399"></span>':'';
+    const dot=o.online?`<span class="dot" style="background:${PWC.good}"></span>`:'';
     const cc=(o.countries||[]).length?' <span class="muted">'+esc((o.countries||[]).join(' '))+'</span>':'';
     box.insertAdjacentHTML('beforeend',
       `<div class="lead"><span class="rank">${i+1}</span><span class="who">${dot}${esc(o.owner)}${cc}</span>`+
@@ -159,8 +156,15 @@ tick(); setInterval(tick,3000);
 </html>
 """
 
-# One definition of the shared esc() + centroid table, substituted in at import (see council.net.ui_common).
+# Shared UI fragments (theme, footer, Leaflet bootstrap, esc(), centroids, status colors), substituted
+# in at import (see council.net.ui_common).
 from council.net import ui_common as _ui  # noqa: E402
 DASHBOARD_HTML = (DASHBOARD_HTML
+                  .replace("/*__THEME__*/", _ui.THEME_CSS)
+                  .replace("<!--__FOOTER__-->", _ui.FOOTER_HTML)
+                  .replace("<!--__LEAFLET_CSS__-->", _ui.LEAFLET_CSS)
+                  .replace("<!--__LEAFLET_JS__-->", _ui.LEAFLET_JS)
+                  .replace("/*__MAP_TILE__*/", _ui.MAP_TILE_JS)
+                  .replace("/*__PWC__*/", _ui.STATUS_COLORS_JS)
                   .replace("/*__ESC__*/", _ui.ESC_JS)
                   .replace("/*__CENTROIDS__*/", _ui.CENTROIDS_JS))

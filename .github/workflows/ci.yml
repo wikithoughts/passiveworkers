@@ -22,6 +22,21 @@ jobs:
       - name: Ruff (pyflakes + syntax)
         run: ruff check .
 
+  types:
+    # ADVISORY type-checking (R36): pyright `basic` on council/net only. Non-blocking
+    # (continue-on-error) — it surfaces type signal without gating merges; promote to a required
+    # check once the scoped surface is clean and the include list has widened. See [tool.pyright].
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e . pyright   # -e . gives pyright the real fastapi/pydantic types
+      - name: Pyright (basic, council/net — advisory)
+        run: pyright
+
   test:
     # exercise the whole 3.10–3.14 support matrix the classifiers advertise (was single-version 3.12)
     runs-on: ubuntu-latest
