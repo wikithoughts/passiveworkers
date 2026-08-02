@@ -163,6 +163,12 @@ class Store:
         ncols = {r["name"] for r in self.conn.execute("PRAGMA table_info(nodes)")}
         if "geo_country" not in ncols:
             self.conn.execute("ALTER TABLE nodes ADD COLUMN geo_country TEXT")
+        # R10 review: a node that fails 100% of its tasks still looked fully healthy — heartbeat
+        # carried only `load`. These counters make failure visible on /status.
+        if "ok_count" not in ncols:
+            self.conn.execute("ALTER TABLE nodes ADD COLUMN ok_count INTEGER DEFAULT 0")
+        if "fail_count" not in ncols:
+            self.conn.execute("ALTER TABLE nodes ADD COLUMN fail_count INTEGER DEFAULT 0")
         self.conn.commit()
 
     # ------------------------------------------------------------------ ledger persistence
@@ -307,11 +313,13 @@ class Store:
                 "SELECT node_id FROM nodes WHERE secret_hash=?", (_hash(secret),)).fetchone()
             return row["node_id"] if row else None
 
-    def heartbeat(self, node_id: str, load: float = 0.0) -> bool:
+    def heartbeat(self, node_id: str, load: float = 0.0, tasks_ok: int = 0,
+                 tasks_failed: int = 0) -> bool:
         with self.lock:
             cur = self.conn.execute(
-                "UPDATE nodes SET last_seen=?, load=?, status='online' WHERE node_id=?",
-                (_now(), load, node_id))
+                "UPDATE nodes SET last_seen=?, load=?, status='online', ok_count=?, fail_count=? "
+                "WHERE node_id=?",
+                (_now(), load, tasks_ok, tasks_failed, node_id))
             self.conn.commit()
             return cur.rowcount > 0
 
@@ -1444,6 +1452,11 @@ class Store:
                     # D43: offline geo-verification ("" if unavailable). The raw IP is NEVER exposed.
                     "geo_country": geo,
                     "geo_mismatch": bool(geo and n["country"] and geo.upper() != (n["country"] or "").upper()),
+                    # R10 review: task success/failure counts (self-reported by the node's own
+                    # heartbeat) so a 100%-failing node stops looking indistinguishable from a
+                    # healthy one on the public map.
+                    "tasks_ok": (n["ok_count"] or 0) if "ok_count" in n.keys() else 0,
+                    "tasks_failed": (n["fail_count"] or 0) if "fail_count" in n.keys() else 0,
                 })
             # D48 privacy: the recent-jobs pulse is PSEUDONYMOUS — no asker handle and no job_id
             # (a job_id would be a readable capability into /jobs/{id}). Just the kind of work + its

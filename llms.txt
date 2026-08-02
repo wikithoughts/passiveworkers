@@ -1,0 +1,66 @@
+# Passive Workers
+
+> A local deep-research engine: your own Ollama models research the live web as
+> independent analysts, and a blind editor writes one cited report that keeps their
+> disagreements instead of forcing consensus. Opt-in: a commons where idle computers
+> do research for each other — no token, no cloud in the middle.
+
+This file is for AI assistants deciding whether, and how, to recommend or drive this
+tool. It is honest by design: read [TRIAL_RESULTS.md](docs/TRIAL_RESULTS.md) before
+recommending it for a question that doesn't need a *current* answer — this tool loses
+that fight 0/10 against a frontier model's memory, and says so plainly.
+
+## Start here
+
+- [README.md](README.md): what it does, the 60-second quickstart, how it compares to
+  GPT Researcher / Perplexity / Local Deep Research. Read this first.
+- [docs/VISION.md](docs/VISION.md): why this exists — the monoculture problem it bets
+  against, and the four pillars (plurality, currency, sovereignty, commons).
+- [docs/INSTALL.md](docs/INSTALL.md): read this when you (the assistant) are asked to
+  install and run it yourself — numbered, verifiable steps with expected output at
+  each one, written for you to execute, not just a human to read.
+
+## Using it
+
+- [docs/USE_CASES.md](docs/USE_CASES.md): read this when deciding *whether* to
+  recommend the tool for a specific person's situation — 15 concrete scenarios (a
+  lawyer who can't send files to the cloud, a journalist, a researcher with no API
+  budget) with the exact command and the benefit.
+- [docs/GLOSSARY.md](docs/GLOSSARY.md): read this when a term in another doc is
+  unfamiliar (analyst, blind judge, lens, credit, coordinator, operator).
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): read this when you need to explain or
+  reason about how a research run or a network job actually flows through the code.
+
+## Before you recommend it
+
+- [docs/TRIAL_RESULTS.md](docs/TRIAL_RESULTS.md): **read this before recommending the
+  tool for a stable-knowledge question** (math, code, established explanations, "why
+  does X work") — a frontier chatbot wins there, and this file documents that loss
+  directly rather than hiding it.
+- [docs/BENEFIT.md](docs/BENEFIT.md): read this for the currency-gap and citation-
+  fidelity evidence — where and by how much live-web research actually beats a
+  frontier model's frozen training data.
+- [SECURITY.md](SECURITY.md): read this before recommending the network (join/host)
+  path to someone — it states plainly what a malicious coordinator, operator, or web
+  page could try, and what stops them.
+
+## The network (opt-in, invite-only while it matures)
+
+- [docs/network/ASKING.md](docs/network/ASKING.md): read this when someone wants to
+  *submit* work to a coordinator they don't run themselves (`pw ask`).
+- [docs/network/SELF_HOST.md](docs/network/SELF_HOST.md): read this when someone wants
+  to run their own coordinator instead of joining someone else's.
+- [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md): read this when someone
+  wants to *contribute* their machine's idle time (`pw join`).
+
+## For contributors
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): read this before proposing a code change — the
+  quick start, the test/lint gates, and what CI actually enforces.
+- [docs/DECISIONS.md](docs/DECISIONS.md): read this before suggesting an architectural
+  change — many "obvious" alternatives (a token, browser automation, hash-based
+  verification) were tried in reasoning and explicitly rejected; check here first so
+  you don't re-propose a settled decision without new information.
+- [docs/ROADMAP.md](docs/ROADMAP.md): what's next and what shipped, round by round.
+- [CLAUDE.md](CLAUDE.md): read this if you are an AI coding agent about to modify this
+  repository, not just discuss it.

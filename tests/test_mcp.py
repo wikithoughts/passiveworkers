@@ -1,6 +1,10 @@
 """MCP trust boundary: arg clamping (_normalize_research_args) and the no-traceback contract for
 the research()/library_add() tool bodies — an MCP client must always get a clean string, never an
 exception (incl. SystemExit, which is BaseException and slips past `except Exception`)."""
+import asyncio
+
+import pytest
+
 import council.mcp_server as M
 from council.mcp_server import _normalize_research_args
 
@@ -27,27 +31,49 @@ def test_analysts_are_clamped():
 
 
 # ---------------------------------------------------------------- the no-traceback contract
-def test_research_tool_systemexit_becomes_error_string(monkeypatch):
-    # run() raises SystemExit on the #1 first-run failure (Ollama down) — must come back as a string
+def test_research_tool_systemexit_becomes_error_field(monkeypatch):
+    # run() raises SystemExit on the #1 first-run failure (Ollama down) — must come back as a
+    # structured error, never a traceback (SystemExit is a BaseException, slips past `except
+    # Exception` if not caught explicitly).
     def boom(*a, **k):
         raise SystemExit("Can't reach Ollama at http://x. Start it with `ollama serve`.")
     monkeypatch.setattr("council.local.run", boom)
-    out = M._run_research_text("real question", "quick", 2, "both")
-    assert out.startswith("error:") and "ollama serve" in out.lower()
+    out = M._run_research_structured("real question", "quick", 2, "both")
+    assert out["error"] and "ollama serve" in out["error"].lower()
+    assert out["report"] == ""
 
 
-def test_research_tool_generic_exception_becomes_error_string(monkeypatch):
+def test_research_tool_generic_exception_becomes_error_field(monkeypatch):
     monkeypatch.setattr("council.local.run",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")))
-    out = M._run_research_text("real question", "quick", 2, "both")
-    assert out.startswith("error:") and "RuntimeError" in out and "disk full" in out
+    out = M._run_research_structured("real question", "quick", 2, "both")
+    assert "RuntimeError" in out["error"] and "disk full" in out["error"]
 
 
 def test_research_tool_empty_brief_short_circuits(monkeypatch):
     # bad input never reaches run() — clean error, no exception
     monkeypatch.setattr("council.local.run",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
-    assert M._run_research_text("", "quick", 2, "both").startswith("error:")
+    out = M._run_research_structured("", "quick", 2, "both")
+    assert out["error"]
+
+
+def test_research_tool_success_returns_degradation_signals(monkeypatch, tmp_path):
+    # R2 review: an MCP caller must see sources_web/sources_local/depth_achieved without
+    # grepping report prose — this is the whole point of the structured variant.
+    report_path = tmp_path / "r.md"
+    report_path.write_text("# Report\n\nbody")
+    json_path = tmp_path / "r.json"
+    json_path.write_text('{"report": "# Report\\n\\nbody", "sources_web": 4, '
+                         '"sources_local": 1, "n_sources": 5, "analysts_used": 2, '
+                         '"depth": "quick", "depth_achieved": "quick"}')
+    monkeypatch.setattr("council.local.run", lambda *a, **k: report_path)
+    out = M._run_research_structured("real question", "quick", 2, "both")
+    assert out["error"] is None
+    assert out["sources_web"] == 4 and out["sources_local"] == 1
+    assert out["analysts_used"] == 2
+    assert out["depth_requested"] == "quick" and out["depth_achieved"] == "quick"
+    assert "body" in out["report"]
 
 
 def test_library_add_tool_systemexit_becomes_error_string(monkeypatch):
@@ -66,3 +92,17 @@ def test_library_add_tool_happy_path(monkeypatch):
             return 7
     monkeypatch.setattr("council.library.Library", _Lib)
     assert M._library_add_text("/docs") == "Indexed 7 chunks from /docs."
+
+
+def test_build_server_registers_the_three_documented_tools():
+    """G9 review: build_server()/tool registration had zero coverage — CI installs the [mcp]
+    extra but never actually instantiates the server. Confirms the FastMCP instance exists with
+    the exact name Claude Desktop's config expects, and advertises exactly the three tools
+    documented in the module docstring/README — no more, no fewer, no typo'd rename."""
+    try:
+        server = M.build_server()
+    except SystemExit:
+        pytest.skip("mcp extra not installed")
+    assert server.name == "passive-workers"
+    tools = {t.name for t in asyncio.run(server.list_tools())}
+    assert tools == {"research", "library_search", "library_add"}

@@ -96,6 +96,99 @@ def test_unsupported_filetype(tmp_path):
         L.extract_text(bad)
 
 
+# ---------------------------------------------------------------- R12: embedder preflight
+def _tags_response(models):
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"models": [{"name": m} for m in models]}
+    return _Resp()
+
+
+def test_add_refuses_single_file_when_embedder_not_pulled(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    monkeypatch.setattr(L.requests, "get", lambda *a, **k: _tags_response(["other:model"]))
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    doc = tmp_path / "memo.md"
+    doc.write_text("hello world")
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        lib.add(str(doc))
+    assert "ollama pull nomic-embed-text" in str(e.value)
+
+
+def test_add_refuses_directory_when_embedder_not_pulled(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    monkeypatch.setattr(L.requests, "get", lambda *a, **k: _tags_response([]))
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    (tmp_path / "memo.md").write_text("hello world")
+    import pytest
+    with pytest.raises(SystemExit):
+        lib.add(str(tmp_path))
+
+
+def test_add_proceeds_when_embedder_unreachable(tmp_path, monkeypatch):
+    # Ollama down entirely (not "checked and missing") stays permissive — the per-file 404 skip
+    # still surfaces per-file, but add() itself doesn't hard-refuse on an unrelated outage.
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    monkeypatch.setattr(L, "embed", _fake_embed)
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    doc = tmp_path / "memo.md"
+    doc.write_text("hello world " * 20)
+    assert lib.add(str(doc)) >= 1
+
+
+def test_add_directory_all_files_erroring_is_a_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+
+    def boom_embed(texts):
+        raise RuntimeError("simulated embed failure")
+    monkeypatch.setattr(L, "embed", boom_embed)
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    (tmp_path / "a.md").write_text("hello world " * 20)
+    (tmp_path / "b.md").write_text("goodbye world " * 20)
+    n = lib.add(str(tmp_path))
+    assert n == 0
+    assert lib.last_add_had_errors is True
+
+
+def test_add_unchanged_incremental_is_not_an_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "embed", _fake_embed)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    doc = tmp_path / "memo.md"
+    doc.write_text("Project Polaris budget. " * 20)
+    assert lib.add(str(doc)) >= 1
+    n = lib.add(str(doc))          # unchanged → legitimate 0-chunk no-op, NOT an error
+    assert n == 0
+    assert lib.last_add_had_errors is False
+
+
+def test_cli_add_prints_fail_not_checkmark_when_all_skipped(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(L, "LIB_DIR", tmp_path)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    # L.main() constructs Library() with no args, whose db_path default was bound to the REAL
+    # LIB_DB at module-import time (a plain attribute patch on L.LIB_DIR/L.LIB_DB does not
+    # reach an already-bound default parameter) — patch the bound default directly so this test
+    # doesn't touch ~/.passiveworkers/library.db (review finding).
+    monkeypatch.setattr(L.Library.__init__, "__defaults__", (tmp_path / "lib.db",))
+
+    def boom_embed(texts):
+        raise RuntimeError("simulated embed failure")
+    monkeypatch.setattr(L, "embed", boom_embed)
+    monkeypatch.setattr(L, "requests", type("R", (), {"get": staticmethod(
+        lambda *a, **k: (_ for _ in ()).throw(ConnectionError()))}))
+    (tmp_path / "a.md").write_text("hello world " * 20)
+    monkeypatch.setattr("sys.argv", ["pw library", "add", str(tmp_path)])
+    rc = L.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "✗" in out and "0 chunks indexed" in out
+    assert "✓ 0 chunks indexed." not in out
+
+
 def test_path_confinement_rejects_outside_roots(tmp_path, monkeypatch):
     # confine roots to tmp_path; a file outside it must be rejected (MCP exfil guard)
     monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])

@@ -34,12 +34,15 @@ def test_report_payload_dedupes_sources_and_keeps_report():
                                   {"id": "S2", "title": "U", "url": "http://a", "host": "a"},
                                   {"id": "S3", "title": "V", "url": "http://b", "host": "b"}]}},
     ]
-    p = _report_payload("brief", "standard", "gpt-5-chat", "the report words here", contributions, 3)
+    p = _report_payload("brief", "standard", "gpt-5-chat", "the report words here", contributions)
     assert p["brief"] == "brief" and p["depth"] == "standard" and p["editor"] == "gpt-5-chat"
     assert p["analysts"][0]["model"] == "qwen:7b" and p["analysts"][0]["n_sources"] == 3
     assert len(p["sources"]) == 2                    # deduped by url (a appears twice)
     assert p["report"] == "the report words here"
     assert p["words"] == 4
+    assert p["sources_web"] == 2 and p["sources_local"] == 0
+    assert p["analysts_used"] == 1
+    assert p["depth_achieved"] == "standard"          # no analyst hit its refine deadline
 
 
 # --------------------------------------------------------------------- review-found (D48) fixes
@@ -63,7 +66,17 @@ def test_report_html_title_cannot_leak_body():
 def test_payload_includes_library_sources():
     contributions = [{"model": "m", "text": "a b", "research": {"sources": [], "local_sources": [
         {"id": "L1", "title": "My Notes", "source": "/docs/notes.md"}]}}]
-    p = _report_payload("b", "local", "ed", "report text", contributions, 0)
+    p = _report_payload("b", "local", "ed", "report text", contributions)
     libs = [s for s in p["sources"] if s.get("kind") == "library"]
     assert len(libs) == 1 and libs[0]["source"] == "/docs/notes.md"
     assert p["n_sources"] == 1                        # library provenance is counted (was 0)
+    assert p["sources_web"] == 0 and p["sources_local"] == 1
+
+
+def test_payload_depth_achieved_flags_deadline_hit():
+    contributions = [{"model": "m", "text": "a b",
+                      "research": {"sources": [{"id": "S1", "title": "T", "url": "http://a", "host": "a"}],
+                                  "local_sources": [], "deadline_hit": True}}]
+    p = _report_payload("b", "deep", "ed", "report text", contributions)
+    assert p["depth"] == "deep"
+    assert p["depth_achieved"] == "deep (refine deadline reached)"

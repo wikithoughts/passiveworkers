@@ -107,3 +107,187 @@ def test_run_surfaces_friendly_no_ollama(monkeypatch):
     with pytest.raises(SystemExit) as e:
         L.run("hi", depth="quick")
     assert "ollama serve" in str(e.value).lower()
+
+
+# ---------------------------------------------------------------- R2: honest-output-contract
+class _ZeroSourceRW:
+    def __init__(self, *a, **k):
+        pass
+
+    def research(self, brief):
+        return {"text": "(No web or local sources reachable for this brief; no findings to report.)",
+                "tokens": 0, "elapsed_s": 0.1,
+                "research": {"country": "x", "sources": [], "local_sources": []}}
+
+
+def _base_run_mocks(monkeypatch):
+    monkeypatch.setattr(L, "detect_models", lambda: [{"name": "gemma3:4b", "size": 3e9},
+                                                      {"name": "qwen3:14b", "size": 14e9}])
+    monkeypatch.setattr(L, "plan_angles", lambda *a, **k: [])
+    monkeypatch.setattr(L._research, "reset_ddg_breaker", lambda: None)
+
+
+def test_run_raises_on_zero_sources(monkeypatch):
+    _base_run_mocks(monkeypatch)
+    monkeypatch.setattr(L, "ResearchWorker", _ZeroSourceRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+    with pytest.raises(SystemExit) as e:
+        L.run("what is X", depth="quick", n_analysts=2)
+    msg = str(e.value).lower()
+    assert "no web or library sources" in msg
+    assert "pw_web_backend" in msg.lower() or "searxng" in msg
+
+
+def test_run_local_scope_with_library_sources_does_not_raise(monkeypatch, tmp_path):
+    _base_run_mocks(monkeypatch)
+
+    class _LibOnlyRW:
+        def __init__(self, *a, **k):
+            pass
+
+        def research(self, brief):
+            return {"text": "a library finding [L1]", "tokens": 5, "elapsed_s": 0.1,
+                    "research": {"country": "x", "sources": [],
+                                "local_sources": [{"id": "L1", "title": "notes", "source": "/n.md"}]}}
+
+    monkeypatch.setattr(L, "ResearchWorker", _LibOnlyRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+    out = L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"),
+               n_analysts=1, scope="local")
+    assert out.exists()
+
+
+# ---------------------------------------------------------------- R3: resilient-run
+def test_analyst_crash_does_not_discard_other_analysts_contributions(monkeypatch, tmp_path):
+    _base_run_mocks(monkeypatch)
+
+    class _FlakyRW:
+        calls = 0
+
+        def __init__(self, *a, **k):
+            pass
+
+        def research(self, brief):
+            _FlakyRW.calls += 1
+            if _FlakyRW.calls == 2:
+                raise RuntimeError("simulated Ollama timeout")
+            return {"text": f"finding-{_FlakyRW.calls} [S1]", "tokens": 5, "elapsed_s": 0.1,
+                    "research": {"country": "x", "sources": [{"id": "S1", "title": "t",
+                                                              "url": "u", "host": "h"}],
+                                "local_sources": []}}
+
+    monkeypatch.setattr(L, "ResearchWorker", _FlakyRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+    out = L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"), n_analysts=3)
+    assert out.exists()   # 2 of 3 analysts succeeded — a report is still produced
+
+
+def test_all_analysts_failing_raises_systemexit_naming_them(monkeypatch):
+    _base_run_mocks(monkeypatch)
+
+    class _AlwaysFailRW:
+        def __init__(self, *a, **k):
+            pass
+
+        def research(self, brief):
+            raise RuntimeError("Ollama down")
+
+    monkeypatch.setattr(L, "ResearchWorker", _AlwaysFailRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+    with pytest.raises(SystemExit) as e:
+        L.run("what is X", depth="quick", n_analysts=2)
+    assert "analyst" in str(e.value).lower() and "--analysts 1" in str(e.value)
+
+
+def test_judge_deliberate_failure_falls_back_to_raw_findings(monkeypatch, tmp_path):
+    _base_run_mocks(monkeypatch)
+
+    class _BoomJudge:
+        def __init__(self, *a, **k):
+            pass
+
+        def deliberate(self, brief, answers):
+            raise RuntimeError("judge model crashed")
+
+        def compile_report(self, brief, contributions, read, local=True):
+            assert read == {"scores": {}, "merged": "", "council": {}}   # the degraded fallback
+            return "# Report\n\nbody with [S1]"
+
+    monkeypatch.setattr(L, "ResearchWorker", _FakeRW)
+    monkeypatch.setattr(L, "Judge", _BoomJudge)
+    out = L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"), n_analysts=1)
+    assert out.exists()
+
+
+def test_editor_compile_failure_uses_fallback_report(monkeypatch, tmp_path):
+    _base_run_mocks(monkeypatch)
+
+    class _BoomEditorJudge:
+        def __init__(self, *a, **k):
+            pass
+
+        def deliberate(self, brief, answers):
+            return {"scores": {}, "merged": "tldr", "council": {}}
+
+        def compile_report(self, brief, contributions, read, local=True):
+            raise RuntimeError("editor model crashed")
+
+    monkeypatch.setattr(L, "ResearchWorker", _FakeRW)
+    monkeypatch.setattr(L, "Judge", _BoomEditorJudge)
+    out = L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"), n_analysts=1)
+    assert out.exists()
+    text = out.read_text()
+    assert "editor pass failed" in text.lower()
+    assert "a finding" in text   # the raw analyst finding survived into the fallback report
+
+
+# ---------------------------------------------------------------- R15: unfuse-knobs
+def test_page_evidence_on_by_default_even_with_model_cap(monkeypatch):
+    monkeypatch.delenv("PW_PAGE_EVIDENCE", raising=False)
+    monkeypatch.setenv("PW_MODEL_CAP_GB", "3")
+    assert L._page_evidence_enabled() is True
+
+
+def test_page_evidence_off_via_own_knob(monkeypatch):
+    monkeypatch.delenv("PW_MODEL_CAP_GB", raising=False)
+    monkeypatch.setenv("PW_PAGE_EVIDENCE", "0")
+    assert L._page_evidence_enabled() is False
+
+
+def test_page_evidence_off_notice_emitted(monkeypatch, tmp_path):
+    _base_run_mocks(monkeypatch)
+    monkeypatch.setenv("PW_PAGE_EVIDENCE", "0")
+    monkeypatch.setattr(L, "ResearchWorker", _FakeRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+    seen = []
+    L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"), n_analysts=1,
+         on_progress=seen.append)
+    assert any("page evidence off" in m.lower() or "PW_PAGE_EVIDENCE" in m for m in seen)
+
+
+# ---------------------------------------------------------------- R11: local source count
+def test_local_run_final_summary_counts_local_sources(monkeypatch, tmp_path):
+    _base_run_mocks(monkeypatch)
+
+    class _LocalOnlyRW:
+        def __init__(self, *a, **k):
+            pass
+
+        def research(self, brief):
+            return {"text": "a finding [L1]", "tokens": 5, "elapsed_s": 0.1,
+                    "research": {"country": "x", "sources": [],
+                                "local_sources": [{"id": "L1", "title": "notes", "source": "/n.md"}]}}
+
+    monkeypatch.setattr(L, "ResearchWorker", _LocalOnlyRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+    seen = []
+    L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"), n_analysts=1,
+         scope="local", on_progress=seen.append)
+    final = [m for m in seen if m.startswith("📄 Report ready")][0]
+    assert "0 sources" not in final   # was always "0 sources" for --local runs before R11
+    assert "1 sources" in final
+    # Workflow-review finding: the PER-ANALYST progress line was fixed separately from the
+    # final summary line above — pin both, since they previously disagreed within one run.
+    per_analyst = [m for m in seen if "words" in m and "sources ·" in m][0]
+    assert "0 sources" not in per_analyst
+    assert "1 sources" in per_analyst

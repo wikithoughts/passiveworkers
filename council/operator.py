@@ -120,11 +120,10 @@ class Operator:
             except Exception:
                 all_state = {}
         all_state[self.base] = {"node_id": d["node_id"], "secret": d["node_secret"]}
-        STATE.write_text(json.dumps(all_state))
-        try:
-            os.chmod(STATE, 0o600)   # node_secret is a bearer credential — owner-only
-        except Exception:
-            pass
+        from council import paths
+        paths.write_private_json(STATE, all_state)   # node_secret is a bearer credential —
+                                                       # owner-only with no world-readable window
+                                                       # (review finding: write-then-chmod left one)
         return d["node_id"], d["node_secret"]
 
     def tasks(self) -> int:
@@ -259,14 +258,34 @@ def _verify_delivery_signature(view: dict, merged: str) -> tuple[bool, int]:
     return True, 0
 
 
+def _resolve_coordinator_base() -> str:
+    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
+    if base:
+        return base
+    from council.net.submit import _load_asker_state
+    return (_load_asker_state().get("default") or "").rstrip("/")
+
+
+def _resolve_asker_secret(base: str) -> str:
+    sec = os.environ.get("PW_USER_SECRET", "")
+    if sec:
+        return sec
+    from council.net.submit import _persisted_secret
+    cached = _persisted_secret(base) if base else None
+    return cached[1] if cached else ""
+
+
 def fetch(job_id: str, out_dir: str) -> int:
     """Asker side: download a delivered FILE artifact, verify every chunk, reassemble.
-    Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret)."""
+    Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret) — or falls back to the
+    identity `pw ask` persisted (R23 review)."""
     from council import artifacts as A
-    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
-    sec = os.environ.get("PW_USER_SECRET", "")
+    base = _resolve_coordinator_base()
+    sec = _resolve_asker_secret(base)
     if not base or not sec:
-        print("✗ set PW_COORDINATOR and PW_USER_SECRET (the asker's secret)"); return 2
+        print(f"✗ no asker identity found — run `pw ask \"...\"` first (or sign up at "
+              f"{base or '<coordinator>'}/ and export PW_USER_SECRET)")
+        return 2
     uh = {"X-User-Secret": sec}
     view = requests.get(f"{base}/jobs/{job_id}", headers=uh, timeout=15).json()
     merged = view.get("merged") or ""
@@ -305,11 +324,14 @@ def _asker_keys_path():
 
 def rate(job_id: str, score: str) -> int:
     """Asker side: rate a completed assisted job (0-10) → the operator's reputation.
-    Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret)."""
-    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
-    sec = os.environ.get("PW_USER_SECRET", "")
+    Needs PW_COORDINATOR + PW_USER_SECRET (the asker's secret) — or falls back to the
+    identity `pw ask` persisted (R23 review)."""
+    base = _resolve_coordinator_base()
+    sec = _resolve_asker_secret(base)
     if not base or not sec:
-        print("✗ set PW_COORDINATOR and PW_USER_SECRET (the asker's secret)"); return 2
+        print(f"✗ no asker identity found — run `pw ask \"...\"` first (or sign up at "
+              f"{base or '<coordinator>'}/ and export PW_USER_SECRET)")
+        return 2
     try:
         s = float(score)
     except ValueError:
@@ -321,6 +343,84 @@ def rate(job_id: str, score: str) -> int:
     if not r.ok:
         print(f"✗ {r.json().get('detail', r.text)}"); return 1
     print(f"✓ rated — operator reputation now {r.json().get('operator_reputation')}")
+    return 0
+
+
+def _cached_node_secret(base: str) -> str:
+    """This machine's node_secret for `base`, from `pw join`'s identity first (a worker's own
+    account), falling back to the assisted-flow operator.json identity. Never constructs a
+    fresh Operator() here — that would mint a THIRD node identity for one machine, compounding
+    the F8 review finding rather than working around it."""
+    from council.net.agent import _load_join
+    from council import paths
+    joined = paths.coordinator_entries(_load_join())
+    entry = joined.get(base)
+    if entry and entry.get("node_secret"):
+        return entry["node_secret"]
+    try:
+        cached = json.loads(STATE.read_text()).get(base)
+        if cached and cached.get("secret"):
+            return cached["secret"]
+    except Exception:
+        pass
+    return ""
+
+
+def credit() -> int:
+    """`pw credit` — this worker's own balance/reputation/jobs-helped (R33 review) — previously
+    visible only via the public, all-operators GET /leaderboard."""
+    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
+    if not base:
+        print("✗ set PW_COORDINATOR (or run `pw join` first)"); return 2
+    secret = _cached_node_secret(base)
+    if not secret:
+        print(f"✗ no joined identity found for {base} — run `pw join {base} <token>` first")
+        return 2
+    try:
+        r = requests.get(f"{base}/nodes/me", headers={"X-Node-Secret": secret}, timeout=15)
+    except requests.RequestException as exc:
+        print(f"✗ could not reach {base}: {exc}"); return 1
+    if not r.ok:
+        print(f"✗ {r.json().get('detail', r.text)}"); return 1
+    d = r.json()
+    print(f"balance: {d['balance']:.1f} cr   reputation: {d['reputation']:.1f}   "
+          f"jobs helped: {d['helped']}")
+    return 0
+
+
+def invite(argv: list) -> int:
+    """`pw invite [--owner N] [--kind any|node|user] [--grant N] [--max-uses N]` — mint an
+    enrollment token (D37) with a real CLI call instead of raw curl against /admin/enroll
+    (R33 review). Requires PW_COORDINATOR + PW_TOKEN (the coordinator's ADMIN token)."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="pw invite", add_help=False)
+    ap.add_argument("--owner", default="")
+    ap.add_argument("--kind", choices=["any", "node", "user"], default="any")
+    ap.add_argument("--grant", type=float, default=None)
+    ap.add_argument("--max-uses", type=int, default=1)
+    try:
+        args = ap.parse_args(argv)
+    except SystemExit:
+        print("usage: pw invite [--owner NAME] [--kind any|node|user] [--grant N] [--max-uses N]")
+        return 2
+    base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
+    token = os.environ.get("PW_TOKEN", "")
+    if not base or not token:
+        print("✗ set PW_COORDINATOR and PW_TOKEN (the coordinator's ADMIN token)"); return 2
+    body = {"owner": args.owner, "kind": args.kind, "max_uses": args.max_uses}
+    if args.grant is not None:
+        body["grant"] = args.grant
+    try:
+        r = requests.post(f"{base}/admin/enroll", json=body, headers={"X-PW-Token": token}, timeout=15)
+    except requests.RequestException as exc:
+        print(f"✗ could not reach {base}: {exc}"); return 1
+    if not r.ok:
+        print(f"✗ {r.json().get('detail', r.text)}"); return 1
+    d = r.json()
+    print(f"✓ enrollment token minted (kind={d['kind']}, owner={d.get('owner') or '(any)'}, "
+          f"max_uses={d['max_uses']}):\n\n  {d['enroll_token']}\n\n"
+          f"Worker: pw join {base} {d['enroll_token']}\n"
+          f"Asker:  pw ask \"...\" --enroll-token {d['enroll_token']}")
     return 0
 
 
@@ -395,6 +495,10 @@ def main() -> int:
         return trust_cmd(args[1:])
     if args[0] == "rate" and len(args) >= 3:
         return rate(args[1], args[2])
+    if args[0] == "credit":
+        return credit()
+    if args[0] == "invite":
+        return invite(args[1:])
     op = Operator()
     cmd, rest = args[0], args[1:]
     if cmd == "tasks":

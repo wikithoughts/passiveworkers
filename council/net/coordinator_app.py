@@ -151,6 +151,8 @@ class RegisterBody(BaseModel):
 
 class HeartbeatBody(BaseModel):
     load: float = 0.0
+    tasks_ok: int = Field(default=0, ge=0)
+    tasks_failed: int = Field(default=0, ge=0)
 
 
 class UserBody(BaseModel):
@@ -217,8 +219,19 @@ def register(body: RegisterBody, request: Request, x_pw_token: str | None = Head
 def heartbeat(body: HeartbeatBody, x_pw_token: str | None = Header(default=None),
               x_node_secret: str | None = Header(default=None)):
     node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
-    store.heartbeat(node_id, body.load)
+    store.heartbeat(node_id, body.load, tasks_ok=body.tasks_ok, tasks_failed=body.tasks_failed)
     return {"ok": True}
+
+
+@app.get("/nodes/me")
+def node_me(x_node_secret: str | None = Header(default=None)):
+    """A worker's OWN balance/reputation/jobs-helped (R33 review) — previously visible only via
+    the public, all-operators GET /leaderboard."""
+    node_id = _node_auth(x_node_secret)
+    node = store.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="unknown node")
+    return store.user_balance(node["owner"])
 
 
 @app.get("/tasks/next")

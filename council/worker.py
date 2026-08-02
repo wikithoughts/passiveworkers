@@ -14,8 +14,10 @@ comes from three stacked axes:
 A worker returns an OWNED DELIVERABLE — an answer it produced — never a tunnel for
 someone else's traffic. That bright line is what keeps Passive Workers clear of the
 residential-proxy / exit-node legal trap. The optional `web_context` is retrieved by
-the worker's OWN agent and handed in as text; wiring real per-country search is the
-next step (and the reason we need a second machine abroad).
+the worker's OWN agent and handed in as text — wired in M4 (see council/research.py):
+council/net/agent.py passes each node's own egress-localized search() as `web_search`
+whenever PW_WEB_BACKEND != off, so a worker in Helsinki and one in the Gulf already
+see genuinely different sources from their own egress.
 """
 
 from __future__ import annotations
@@ -56,9 +58,10 @@ class PerspectiveWorker:
     temperature: float = 0.7          # natural divergence between workers
     num_predict: int = 500
     ollama_base: str = field(default_factory=_ollama.base)
-    # Optional hook: a function (question) -> retrieved web context string, run by
-    # THIS worker's own agent. Left None in the MVP; this is where per-country
-    # search plugs in once a second machine abroad joins.
+    # Optional hook: a function (question) -> retrieved web context string, run by THIS
+    # worker's own agent. council/net/agent.py passes the node's own egress-localized
+    # search() here whenever PW_WEB_BACKEND != off (M4, shipped); None when web research is
+    # off, or best-effort-unavailable (network down) for this call.
     web_search: Optional[Callable[[str], str]] = None
 
     def answer(self, question: str) -> Answer:

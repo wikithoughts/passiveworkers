@@ -99,6 +99,56 @@ def test_respects_max_sources(monkeypatch):
     assert calls["r"] == 0
 
 
+def test_deadline_measured_from_post_plan_not_process_start(monkeypatch):
+    # R16 review: the deadline used to be anchored at t0 (top of research(), before plan+first
+    # search even ran) — a slow plan phase could burn most of the budget before refining starts.
+    # Simulate a slow plan+first-search phase (250s, deliberately > the 240s default budget) by
+    # jumping the SECOND time.monotonic() call (refine_start, captured right after plan+search) —
+    # under the OLD t0-anchored code this alone would already exceed a 240s deadline before the
+    # loop even starts; under the FIXED code the budget is re-anchored from there, so refining
+    # still gets its full window.
+    calls = {"r": 0, "s": 0}
+    state = {"n": 0}
+
+    def fake_monotonic():
+        state["n"] += 1
+        if state["n"] == 1:
+            return 0.0            # t0
+        if state["n"] == 2:
+            return 250.0          # refine_start — simulates a slow plan+first-search phase
+        return 250.0 + (state["n"] - 2) * 0.01
+
+    monkeypatch.setattr(RW.time, "monotonic", fake_monotonic)
+    w = _worker(monkeypatch, "deep", _always_refine(calls), _unique_search(calls))
+    monkeypatch.setenv("PW_RESEARCH_DEADLINE", "240")
+    out = w.research(BRIEF)
+    assert calls["r"] > 0                    # refine still got its full window, not starved by t0
+    assert out["research"]["deadline_hit"] is False
+
+
+def test_deadline_hit_sets_flag_and_stops_refining(monkeypatch):
+    calls = {"r": 0, "s": 0}
+    w = _worker(monkeypatch, "deep", _always_refine(calls), _unique_search(calls))
+    monkeypatch.setenv("PW_RESEARCH_DEADLINE", "0")
+    out = w.research(BRIEF)
+    assert calls["r"] == 0
+    assert out["research"]["deadline_hit"] is True
+    assert out["research"]["refine_rounds"] == 0
+    assert out["research"]["refine_rounds_target"] == 4      # deep default
+
+
+def test_no_deadline_hit_when_refine_stops_naturally(monkeypatch):
+    calls = {"r": 0, "s": 0}
+
+    def refine(self, brief, evidence):
+        calls["r"] += 1
+        return []   # model says covered on the first ask
+
+    w = _worker(monkeypatch, "deep", refine, _unique_search(calls))
+    out = w.research(BRIEF)
+    assert out["research"]["deadline_hit"] is False
+
+
 def test_blank_or_garbage_budget_env_falls_back_not_crash(monkeypatch):
     # R36 review: an empty/non-numeric PW_RESEARCH_* must fall back to the default, never raise mid-run.
     calls = {"r": 0, "s": 0}

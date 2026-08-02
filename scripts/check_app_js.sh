@@ -6,7 +6,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 source .venv/bin/activate 2>/dev/null || true
-command -v node >/dev/null || { echo "node not found — skipping JS check"; exit 0; }
+command -v node >/dev/null || {
+  echo "✗ node not found — this gate needs Node 18+ on PATH (brew install node / apt install nodejs)." >&2
+  echo "  Refusing to report a false green; install Node and re-run." >&2
+  exit 1
+}
 
 fail=0
 tmpdir="$(mktemp -d)"

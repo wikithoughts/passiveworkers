@@ -1516,3 +1516,50 @@ answered it: not until these two fixes. This is the strongest argument yet for c
 **Lesson:** the previous deployment used the env-var/shared-token path, so the enrollment+`pw join`
 path was never exercised end-to-end. Dogfooding the *actual* operator experience on a machine you
 don't control is the only thing that finds this class of bug — green tests didn't.
+## D53 — One product story, and the consent promise matches the code (R37, 2026-08-02)
+**Context:** the 2026-07 product review (`docs/REVIEW_2026-07.md`) surfaced two broken-promise
+findings a stranger hits within minutes. (F3/F4) The repo disagreed with itself about what the
+product *is* — CONTEXT.md:48 called the network "the primary product and north star" while
+README.md:13 said single-player research "is the product," and the PyPI one-liner led
+network-first. (F2) README:130-131/282-283 promised "you always see and consent to what your
+machine does," while the `pw join` daemon auto-executes answer/judge/batch/research tasks with
+zero per-task prompt (agent.py:234→251) — per-task consent exists only in the assisted `pw accept`
+flow. Two honest resolutions were on the table for consent: (a) build consent MODES — `pw work
+--ask` prompts per task, `--auto` is an explicit opt-in; or (b) reword the promise to describe what
+the code already does.
+
+**Decision 1 — positioning.** `docs/VISION.md` is now the single source of truth for what Passive
+Workers is, in what order, and why. Single-player deep research is the flagship and the adoption
+engine; the opt-in network is the second half and the reason for the name; later markets are named
+explicitly as speculative, not roadmap. `docs/CONTEXT.md` is replaced by a 5-line pointer to
+VISION.md (original preserved at `docs/archive/CONTEXT.md`). The PyPI description (`pyproject.toml`)
+is rewritten to lead with the research engine. A positioning-consistency check is added to
+`docs/RELEASING.md`'s pre-publish steps: the README hero, the PyPI description, and ANNOUNCE.md must
+match VISION.md's opening paragraph before a release ships — the mechanism that prevents recurrence,
+not a one-time fix.
+
+**Decision 2 — consent: reword the promise (option b), not build consent modes.** Chosen over
+consent-modes for three reasons. **Cost:** (b) is a docs fix measured in an hour; (a) is a round of
+new CLI surface, daemon plumbing, and tests for a problem we have no evidence people actually want
+solved that way. **D18 already settled this.** D18's "informed, tiered consent" principle
+deliberately chose the BOINC/SETI@home pattern: an operator consents to a *class* of work (exactly
+what `pw join`'s flags select — answer/judge/batch/research, `--web off`, `--no-judge`), and
+individual tasks in that class then run without a per-task dialog; only sensitive classes
+(computer-use, licensed-software — the `assisted` job type) escalate to explicit per-task human
+approval, and the only forbidden thing is deception. Building `--ask` mode now would relitigate D18
+without new evidence it's wrong — D18's own principle is *why* the daemon's current behavior isn't a
+violation; the README's wording was. **Honesty is available today; per-task prompting isn't
+compatible with "passive."** `pw work` is meant to run unattended (e.g. under systemd); a per-task
+prompt would either be silently skipped when nobody's at the keyboard (reintroducing the exact
+deception D18 forbids) or defeat the point of the product's name.
+
+**The reworded promise**, replacing README:130-131 and :282-283: *"You choose the kinds of work your
+machine accepts when you join (research, judging, batch, assisted) — every task it runs is visible
+in the log, and you can stop it at any time. Sensitive work (anything touching a real computer via
+`assisted`) is never auto-run; a human always sees the brief and consents to that one task."* This is
+checkable against `agent.py`'s join-flag class selection and `operator.py`'s `pw accept` per-task
+confirmation, so it can't silently drift back into a broken promise.
+
+**Status:** Settled. Implements R4 and R5 of `docs/REVIEW_2026-07.md`. Revisit consent-modes (option
+a) only if a future task class spends the operator's money or credentials, not just their compute —
+track as a Tier-3 deferral, not urgent.

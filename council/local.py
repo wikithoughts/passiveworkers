@@ -28,11 +28,12 @@ import time
 
 import requests
 
-from council.judge import Judge, _extract_json
+from council.judge import Judge, _drop_invented_markers, _extract_json
 from council.researcher import ResearchWorker
 from council.sanitize import sanitize_brief
 from council.worker import Answer
 from council import paths
+from council import research as _research
 
 
 class Cancelled(Exception):
@@ -138,15 +139,39 @@ def plan_angles(brief: str, planner_model: str, k: int) -> list[str]:
 
 def fix_dangling_citations(text: str) -> str:
     """Drop [S#]/[L#] markers that don't resolve to a listed source (web [S#] or local
-    document [L#]); the source lists are appended inline so the check is local to the block."""
+    document [L#]); the source lists are appended inline so the check is local to the block.
+    Per-token (R13 review): a multi-citation span like [S2, S1] keeps whichever markers ARE
+    listed and drops only the ones that aren't, instead of keeping/dropping the whole span
+    by its first marker — reuses judge.py's already-correct _drop_invented_markers."""
     listed = set(re.findall(r"^\[([SL]\d+)\]", text, re.MULTILINE))
     if not listed:
         return text
-    return re.sub(r"\[([SL]\d+)(?:,\s*(?:[SL]\d+\s*)+)?\]",
-                  lambda m: m.group(0) if m.group(1) in listed else "", text)
+    return _drop_invented_markers(text, listed)
 
 
-def _report_payload(brief, depth, editor_label, report, contributions, total_src) -> dict:
+def _page_evidence_enabled() -> bool:
+    """Full-page evidence (D17) is ON by default — the ecosystem's single biggest quality
+    lever. Independent from PW_MODEL_CAP_GB (R15 review): capping model SIZE for a CPU-only
+    box must not silently also drop page evidence. PW_PAGE_EVIDENCE=0 opts out explicitly
+    instead of as a side effect of an unrelated knob."""
+    return os.environ.get("PW_PAGE_EVIDENCE", "1") not in ("0", "false", "False")
+
+
+def _fallback_report(brief: str, contributions: list[dict]) -> str:
+    """Last-resort, no-model-call report assembled from raw analyst findings when the judge/
+    editor pass itself fails (R3 review) — an editor crash must never discard already-finished
+    analyst work."""
+    parts = [f"# Research report\n\n**Brief:** {brief}\n",
+             "_⚠ The editor pass failed — this is the raw per-analyst findings, "
+             "not a synthesized summary._\n",
+             "## Findings by analyst"]
+    for c in contributions:
+        parts.append(f"### {c.get('model', '')}")
+        parts.append(c.get("text") or "_(no findings)_")
+    return "\n\n".join(parts)
+
+
+def _report_payload(brief, depth, editor_label, report, contributions) -> dict:
     """Machine-readable view of a finished run (report + dedup'd sources + per-analyst stats). Every
     field is already in memory — this just shapes it for `--json`/`--html` and programmatic callers."""
     seen: set[str] = set()
@@ -165,13 +190,20 @@ def _report_payload(brief, depth, editor_label, report, contributions, total_src
                 seen.add(key)
                 sources.append({"id": s.get("id"), "title": s.get("title"),
                                 "source": s.get("source"), "kind": "library"})
+    sources_web = sum(1 for s in sources if s["kind"] == "web")
+    sources_local = sum(1 for s in sources if s["kind"] == "library")
+    deadline_hit = any(c["research"].get("deadline_hit") for c in contributions)
     return {
         "brief": brief,
         "generated": datetime.date.today().isoformat(),
         "depth": depth,
+        "depth_achieved": f"{depth} (refine deadline reached)" if deadline_hit else depth,
         "editor": editor_label,
         "words": len(report.split()),
         "n_sources": len(sources),                         # web + library, deduped
+        "sources_web": sources_web,
+        "sources_local": sources_local,
+        "analysts_used": len(contributions),
         "analysts": [{"model": c["model"], "words": len(c["text"].split()),
                       "n_sources": len(c["research"].get("sources", []))
                       + len(c["research"].get("local_sources", []))} for c in contributions],
@@ -196,6 +228,7 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         raise SystemExit("--editor api needs OPENROUTER_API_KEY (or PW_BASELINE_API_KEY) — "
                          "set it before the run")
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")   # live web ON — the whole point
+    _research.reset_ddg_breaker()   # R17: don't let a prior run's DDG outage leak into this one
 
     models = detect_models()
     analysts, editor_model = pick_cast(models, n_analysts)
@@ -206,9 +239,12 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
     angles = plan_angles(brief, models[0]["name"], len(analysts))
     if angles:
         emit("angles: " + " | ".join(angles))
-    page_evidence = not float(os.environ.get("PW_MODEL_CAP_GB", "0") or 0)  # CPU-capped → snippets
+    page_evidence = _page_evidence_enabled()
+    if not page_evidence:
+        emit("ⓘ page evidence OFF (PW_PAGE_EVIDENCE=0) — analysts draft from search "
+             "snippets, not full pages")
 
-    contributions, answers = [], []
+    contributions, answers, failed = [], [], []
     for i, model in enumerate(analysts, 1):
         if should_cancel and should_cancel():          # cooperative cancel at each analyst boundary
             raise Cancelled()
@@ -216,20 +252,52 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         emit(f"[{i}/{len(analysts)}] {model} researching the live web…"
              + (f" (angle: {angle})" if angle else ""))
         t = time.monotonic()
-        rw = ResearchWorker(worker_id=model, model=model, lens="independent analyst",
-                            country=os.environ.get("PW_COUNTRY", "your location"),
-                            depth=depth, angle=angle, page_evidence=page_evidence, scope=scope,
-                            ollama_base=OLLAMA)   # same endpoint as detection (honors PW_OLLAMA_BASE)
-        out = rw.research(brief)
+        try:
+            rw = ResearchWorker(worker_id=model, model=model, lens="independent analyst",
+                                country=os.environ.get("PW_COUNTRY", "your location"),
+                                depth=depth, angle=angle, page_evidence=page_evidence, scope=scope,
+                                ollama_base=OLLAMA)   # same endpoint as detection (honors PW_OLLAMA_BASE)
+            out = rw.research(brief)
+        except Cancelled:
+            raise
+        except Exception as exc:
+            # One analyst's crash must not discard the others' already-finished work (R3 review).
+            failed.append(model)
+            emit(f"    ✗ {model} failed ({type(exc).__name__}: {exc}) — continuing without it")
+            continue
         text = fix_dangling_citations(out["text"])
-        nsrc = len(out["research"]["sources"])
+        # web + local, matching the zero-source gate and _report_payload below — a --local run's
+        # per-analyst line used to always read "0 sources" even when the analyst found library
+        # matches (R11 review; the final summary line was fixed but this one was missed).
+        nsrc = len(out["research"].get("sources", [])) + len(out["research"].get("local_sources", []))
         emit(f"    {nsrc} sources · {len(text.split())} words · {time.monotonic()-t:.0f}s")
+        if out["research"].get("deadline_hit"):
+            emit(f"    ⏱ refine deadline reached after "
+                 f"{out['research'].get('refine_rounds', 0)}/"
+                 f"{out['research'].get('refine_rounds_target', 0)} rounds — "
+                 "partial depth for this analyst")
         contributions.append({"country": model.split(":")[0], "model": model,
                               "lens": "analyst", "text": text,
                               "research": out["research"]})
         answers.append(Answer(worker_id=model, model=model, lens="analyst",
                               country=model.split(":")[0], text=text, tokens=out["tokens"],
                               elapsed_s=out["elapsed_s"]))
+
+    if not contributions:
+        raise SystemExit(
+            f"All {len(analysts)} analyst(s) failed to research this brief "
+            f"({', '.join(failed)}) — Ollama may be down, overloaded, or timing out. "
+            "Check `ollama serve`, or retry with --analysts 1.")
+
+    total_src = sum(len(c["research"].get("sources", [])) + len(c["research"].get("local_sources", []))
+                    for c in contributions)
+    if total_src == 0:
+        raise SystemExit(
+            "No web or library sources were reachable for this brief — refusing to compile a "
+            "confident-looking report from zero evidence. Likely causes: DuckDuckGo rate-limited "
+            "this run (try `pw config set PW_WEB_BACKEND searxng` or a keyed backend), your network "
+            "is down, or (with --local) no library document matched — `pw library add <path>` "
+            "first. Try again in a few minutes.")
 
     if should_cancel and should_cancel():
         raise Cancelled()
@@ -243,8 +311,18 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         judge = _ApiEditor(os.environ.get("PW_EDITOR_MODEL", "openai/gpt-5-chat"), key,
                            os.environ.get("PW_BASELINE_API_URL",
                                           "https://openrouter.ai/api/v1/chat/completions"))
-    read = judge.deliberate(brief, answers)
-    report = judge.compile_report(brief, contributions, read, local=True)
+    try:
+        read = judge.deliberate(brief, answers)
+    except Exception as exc:
+        emit(f"    ⚠ judge scoring/merge failed ({type(exc).__name__}: {exc}) — compiling from "
+             "raw analyst findings only")
+        read = {"scores": {}, "merged": "", "council": {}}
+    try:
+        report = judge.compile_report(brief, contributions, read, local=True)
+    except Exception as exc:
+        emit(f"    ⚠ editor compile failed ({type(exc).__name__}: {exc}) — falling back to a raw "
+             "per-analyst report (no synthesized summary)")
+        report = _fallback_report(brief, contributions)
     if should_cancel and should_cancel():
         # cancel arrived during the (often longest) editor/judge phase — honor it by discarding the
         # report rather than persisting and returning a run the user explicitly cancelled. (Interrupting
@@ -262,19 +340,17 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         fname = out_path / f"{datetime.date.today().isoformat()}-{slug}-{n}.md"
     fname.write_text(report)
     mins = (time.monotonic() - t0) / 60
-    total_src = sum(len(c["research"]["sources"]) for c in contributions)
-    if as_json or as_html:
-        editor_label = editor_model if editor_mode == "local" else editor_mode
-        payload = _report_payload(brief, depth, editor_label, report, contributions, total_src)
-        if as_json:
-            fname.with_suffix(".json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-            emit(f"🧾 JSON → {fname.with_suffix('.json')}")
-        if as_html:
-            from council import render
-            fname.with_suffix(".html").write_text(render.report_html(brief, report, payload))
-            emit(f"🖨  HTML (printable) → {fname.with_suffix('.html')}")
+    editor_label = editor_model if editor_mode == "local" else editor_mode
+    payload = _report_payload(brief, depth, editor_label, report, contributions)
+    if as_json:
+        fname.with_suffix(".json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        emit(f"🧾 JSON → {fname.with_suffix('.json')}")
+    if as_html:
+        from council import render
+        fname.with_suffix(".html").write_text(render.report_html(brief, report, payload))
+        emit(f"🖨  HTML (printable) → {fname.with_suffix('.html')}")
     emit(f"📄 Report ready in {mins:.1f} min · {len(report.split())} words · "
-         f"{total_src} sources → {fname}")
+         f"{payload['n_sources']} sources → {fname}")
     return fname
 
 

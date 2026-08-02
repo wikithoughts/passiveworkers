@@ -20,8 +20,11 @@ Make your computer work for you (and, opt-in, for others). Research is the flags
     pw work                        # resume contributing after you've joined once
     pw tasks                       # list open offers your machine can take on
     pw accept <id> | deliver <id> <text | @file <job>>
+    pw ask "<brief>" [--type T] [--enroll-token TOK]   # submit a job to the network (asker)
     pw fetch <job> <dir>           # download + verify a delivered file (asker)
     pw rate <job> <0-10>           # rate a deliverable → operator reputation (asker)
+    pw credit                      # this machine's own balance/reputation/jobs-helped (operator)
+    pw invite [--owner N] [--kind any|node|user] [--grant N] [--max-uses N]  # mint an enrollment token (admin)
     pw keygen | fingerprint        # create / print your signing key + fingerprint (operator)
     pw trust add <op> <key> | list | remove <op>   # pin operator keys out of band (asker)
 """
@@ -75,7 +78,12 @@ def main() -> int:
         # one-command operator onboarding / resume — starts the long-running worker loop
         from council.net.agent import join as join_main
         return join_main([cmd] + rest)
-    if cmd in ("tasks", "accept", "deliver", "fetch", "keygen", "rate", "fingerprint", "trust"):
+    if cmd == "ask":
+        sys.argv = ["pw ask"] + rest
+        from council.net.submit import ask_main
+        return ask_main()
+    if cmd in ("tasks", "accept", "deliver", "fetch", "keygen", "rate", "fingerprint", "trust",
+               "credit", "invite"):
         sys.argv = ["pw", cmd] + rest   # operator.main dispatches on argv[1] (the verb)
         from council.operator import main as operator_main
         return operator_main()

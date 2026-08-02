@@ -89,26 +89,36 @@ class ResearchWorker:
     def _plan_queries(self, brief: str) -> list[str]:
         focus = (f"Focus specifically on this angle of the brief: {self.angle}\n"
                  if self.angle else "")
-        raw, _ = self._generate(
-            f"You are planning web research. Today is {self._today()}. Turn this brief into "
-            "exactly 3 concrete, specific search queries (different angles). For anything "
-            "time-sensitive, make the queries current — include the current year/month so the "
-            "freshest results surface. "
-            f"{focus}"
-            'Reply STRICT JSON only: ["query one","query two","query three"]\n\n'
-            f"BRIEF:\n{brief}\n\nJSON:", num_predict=140)
+        try:
+            raw, _ = self._generate(
+                f"You are planning web research. Today is {self._today()}. Turn this brief into "
+                "exactly 3 concrete, specific search queries (different angles). For anything "
+                "time-sensitive, make the queries current — include the current year/month so the "
+                "freshest results surface. "
+                f"{focus}"
+                'Reply STRICT JSON only: ["query one","query two","query three"]\n\n'
+                f"BRIEF:\n{brief}\n\nJSON:", num_predict=140)
+        except Exception:
+            # A generate failure here must degrade to the same brief-as-query fallback the JSON
+            # parse failure already uses below — never crash the whole run over the planner (R3).
+            return [brief[:200]]
         parsed = _extract_json(raw)
         qs = [str(q).strip() for q in parsed if str(q).strip()] if isinstance(parsed, list) else []
         return qs[:3] or [brief[:200]]
 
     def _refine_queries(self, brief: str, evidence: list[dict]) -> list[str]:
         seen = "\n".join(f"- {e['title']} ({e['host']})" for e in evidence[:10])
-        raw, _ = self._generate(
-            "Given the brief and the sources found so far, name up to 2 follow-up search queries "
-            "that fill the biggest remaining gaps (be specific; avoid repeating what is already "
-            "covered). If the brief is already well covered by the sources, reply with an empty "
-            'list to stop. Reply STRICT JSON only: ["query one","query two"] (or [])\n\n'
-            f"BRIEF:\n{brief}\n\nFOUND SO FAR:\n{seen}\n\nJSON:", num_predict=100)
+        try:
+            raw, _ = self._generate(
+                "Given the brief and the sources found so far, name up to 2 follow-up search queries "
+                "that fill the biggest remaining gaps (be specific; avoid repeating what is already "
+                "covered). If the brief is already well covered by the sources, reply with an empty "
+                'list to stop. Reply STRICT JSON only: ["query one","query two"] (or [])\n\n'
+                f"BRIEF:\n{brief}\n\nFOUND SO FAR:\n{seen}\n\nJSON:", num_predict=100)
+        except Exception:
+            # The refine while-loop already treats [] as "stop refining" — a generate failure
+            # degrades to a clean stop, not a lost analyst (R3 review).
+            return []
         parsed = _extract_json(raw)
         qs = [str(q).strip() for q in parsed if str(q).strip()] if isinstance(parsed, list) else []
         return qs[:2]
@@ -285,14 +295,19 @@ class ResearchWorker:
         # Hard bounds keep it from ever running away: a max round count, a wall-clock budget (the
         # essential guard — each round stacks a generate + searches), and a source ceiling. Defaults
         # reproduce the old fixed counts (standard=1-2 rounds, deep more) for a well-covered brief.
+        # The deadline is budgeted from HERE (after plan+first search), not t0 (R16 review) — on a
+        # slow box, plan+first-search alone can burn most of a t0-anchored budget, silently starving
+        # every refine round even though the analyst never explicitly "went shallow".
+        refine_start = time.monotonic()
+        rounds, max_rounds, deadline_hit = 0, 0, False
         if evidence and self.scope in ("both", "web") and depth != "quick":
             max_rounds = _num_env("PW_RESEARCH_MAX_ROUNDS", {"deep": 4}.get(depth, 2), int)
-            deadline = t0 + _num_env("PW_RESEARCH_DEADLINE", 240.0, float)
+            deadline = refine_start + _num_env("PW_RESEARCH_DEADLINE", 240.0, float)
             max_sources = _num_env("PW_RESEARCH_MAX_SOURCES", 30, int)
-            rounds = 0
-            while (rounds < max_rounds
-                   and time.monotonic() < deadline
-                   and len(seen_urls) < max_sources):
+            while rounds < max_rounds and len(seen_urls) < max_sources:
+                if time.monotonic() >= deadline:
+                    deadline_hit = True
+                    break
                 follow = self._refine_queries(brief, evidence)
                 if not follow:                        # model says the brief is well covered → stop
                     break
@@ -347,7 +362,9 @@ class ResearchWorker:
             text = f"(No {where} reachable for this brief; no findings to report.)"
             return {"text": text, "tokens": 0,
                     "elapsed_s": round(time.monotonic() - t0, 2),
-                    "research": {"country": self.country, "sources": [], "local_sources": []}}
+                    "research": {"country": self.country, "sources": [], "local_sources": [],
+                                 "refine_rounds": rounds, "refine_rounds_target": max_rounds,
+                                 "deadline_hit": deadline_hit}}
 
         # Slow/contended nodes: retry once with a smaller prompt; if synthesis still fails,
         # contribute the SOURCES alone — this node's geo-discovery is valuable by itself.
@@ -412,7 +429,9 @@ class ResearchWorker:
                 doc_lines.append(f"[{s['id']}] {s['title']} — {s['source']}")
             blocks.append("YOUR DOCUMENTS:\n" + "\n".join(doc_lines))
         src_list = "\n\n".join(blocks)
-        research = {"country": self.country, "sources": sources, "local_sources": local_sources}
+        research = {"country": self.country, "sources": sources, "local_sources": local_sources,
+                    "refine_rounds": rounds, "refine_rounds_target": max_rounds,
+                    "deadline_hit": deadline_hit}
         if repair_trace is not None:
             research["repair_trace"] = repair_trace
         return {

@@ -140,7 +140,36 @@ def _clean(results: list[dict]) -> str:
     return "\n".join(out)
 
 
+_ddg_fail_streak = 0
+_ddg_breaker_opened_at = 0.0
+
+
+def reset_ddg_breaker() -> None:
+    """Clear the DDG failure streak — call once per `pw research` run. Module-global state would
+    otherwise leak one bad run's DDG outage into an unrelated later run in a long-lived process
+    (e.g. `pw serve`) (R17 review)."""
+    global _ddg_fail_streak, _ddg_breaker_opened_at
+    _ddg_fail_streak = 0
+    _ddg_breaker_opened_at = 0.0
+
+
 def _ddgs(question: str) -> list[dict]:
+    global _ddg_fail_streak, _ddg_breaker_opened_at
+    breaker = int(os.environ.get("PW_DDG_BREAKER", "3") or 3)
+    cooldown = float(os.environ.get("PW_DDG_BREAKER_COOLDOWN", "300") or 300)
+    if breaker > 0 and _ddg_fail_streak >= breaker:
+        # A long-lived process (the `pw join`/`pw work` agent daemon) never calls
+        # reset_ddg_breaker() between tasks by design — only the one-shot `pw research` CLI does
+        # — so without a cooldown, 3 failures spread across a node's ENTIRE uptime would disable
+        # DDG PERMANENTLY for that process, worse than not having a breaker at all (review
+        # finding). Auto-clear after PW_DDG_BREAKER_COOLDOWN seconds instead of staying open
+        # forever — the standard half-open behavior a circuit breaker needs.
+        if time.monotonic() - _ddg_breaker_opened_at >= cooldown:
+            _ddg_fail_streak = 0
+        else:
+            raise RuntimeError(
+                f"ddg breaker open ({_ddg_fail_streak} consecutive failures; retrying in "
+                f"{cooldown - (time.monotonic() - _ddg_breaker_opened_at):.0f}s)")
     try:
         from ddgs import DDGS            # current package name
     except ImportError:
@@ -152,20 +181,37 @@ def _ddgs(question: str) -> list[dict]:
         try:
             with DDGS(timeout=int(_TIMEOUT)) as ddg:
                 # region world → engines localize on THIS node's egress IP (the moat).
-                return list(ddg.text(question, region="wt-wt", safesearch="moderate",
-                                     max_results=_MAX_RESULTS))
+                result = list(ddg.text(question, region="wt-wt", safesearch="moderate",
+                                       max_results=_MAX_RESULTS))
+            _ddg_fail_streak = 0
+            return result
         except Exception as e:
             last = e
-            time.sleep((2 ** attempt) + (hash(question) % 7) / 10)
+            if attempt < 2:      # never sleep after the FINAL failed attempt (R17 review)
+                time.sleep((2 ** attempt) + (hash(question) % 7) / 10)
+    _ddg_fail_streak += 1
+    if breaker > 0 and _ddg_fail_streak >= breaker:
+        _ddg_breaker_opened_at = time.monotonic()
     raise last  # type: ignore[misc]
 
 
 def _searxng(question: str) -> list[dict]:
     import requests
     searx = os.environ.get("PW_SEARXNG_URL") or _SEARX or "http://127.0.0.1:8080"
+    # PW_SEARXNG_URL is OPERATOR-supplied trusted config (env var / `pw config set`) — never
+    # derived from a job, search result, or asker. Unlike _clean()/_guarded_get() (which gate
+    # UNTRUSTED, potentially attacker-influenced URLs from search results/job content), this
+    # endpoint isn't part of that trust boundary, so it doesn't need the public-only SSRF guard
+    # — and needs NOT to have it, since a self-hosted SearXNG legitimately lives on a Docker-
+    # compose bridge network (a private IP) or a LAN (R6 review). Still fail closed on a
+    # garbage/unresolvable config rather than silently no-op.
+    scheme = (urlparse(searx).scheme or "").lower()
     host = urlparse(searx).hostname or ""
-    # SearXNG may legitimately run on loopback ON this node; allow that explicitly.
-    if not (_host_is_public(host) or host in ("127.0.0.1", "localhost")):
+    if scheme not in ("http", "https") or not host:
+        return []
+    try:
+        socket.getaddrinfo(host, None)
+    except OSError:
         return []
     r = requests.get(f"{searx.rstrip('/')}/search",
                      params={"q": question, "format": "json", "safesearch": 1},
@@ -617,6 +663,9 @@ def order_by_recency(evidence: list[dict]) -> list[dict]:
     return sorted(evidence, key=_key, reverse=True)
 
 
+_HTML_LIKE = ("text/html", "application/xhtml+xml", "text/plain")
+
+
 def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
     """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized main text.
     Shared by the researcher (page evidence) and batch fetch shards. Raises on failure —
@@ -626,6 +675,13 @@ def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
     # able to bounce to an internal address). Raises on a non-public hop or too many redirects.
     r = _guarded_get(url, timeout=15)
     r.raise_for_status()
+    # A PDF/image/binary body decoded as UTF-8 ("replace") still LOOKS like extracted text and can
+    # become the top-ranked citation's EXTRACT (R14 review). Stay PERMISSIVE when the header is
+    # simply missing — some legitimately HTML-serving hosts omit it — only block a header that
+    # explicitly names a non-HTML type.
+    ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if ctype and not any(ctype == t or ctype.startswith(t) for t in _HTML_LIKE):
+        raise ValueError(f"unsupported content-type for page evidence: {ctype}")
     raw = r.raw.read(_FETCH_CAP, decode_content=True).decode("utf-8", "replace")
     text, date = _extract_main(raw)
     text = clean(text)[:max_chars]

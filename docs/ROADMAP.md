@@ -89,6 +89,71 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## Round 37 — the PM review, executed (D53, 2026-08-02)
+
+> Spelled out as "Round 37," not "R37" — this batch's own source, `docs/REVIEW_2026-07.md`,
+> numbers its recommendations R1–R38 independently of this file's round numbering, and the
+> collision was confusing enough to flag explicitly (a should-fix the review made about itself).
+
+A from-scratch outside-in review ([docs/REVIEW_2026-07.md](REVIEW_2026-07.md): 10 persona walkthroughs, 38
+recommendations) executed as Arc 1 + Arc 2 in three workstreams, each closed out with an
+adversarial Workflow review before landing — 16 real bugs found and fixed across the two review
+passes, not zero:
+
+- **Engine honesty** — `pw status` no longer crashes on a joined machine (was iterating the
+  `"default"` sentinel as a node entry); the final AND per-analyst source-count lines now agree;
+  a research run that gathers zero sources refuses to compile a report instead of shipping an
+  empty one; analyst/judge/editor failures degrade instead of crashing a whole run; the DDG
+  circuit breaker got a TTL cooldown (it was permanently open for a process's lifetime — worse
+  than no breaker); `pw join` now preflights that the declared model is actually pulled, prints
+  actionable fix hints on task failure, and tracks per-node ok/fail counts; `pw library add`
+  preflights the embedder and distinguishes "0 chunks, all unchanged" from "0 chunks, everything
+  failed"; `PW_PAGE_EVIDENCE` is now independent of `PW_MODEL_CAP_GB` (a hardware-tip user was
+  silently losing page evidence).
+- **New CLI verbs** — `pw ask` (persisted asker identity, 0600, fixing a mint-and-forget secret
+  bug), `pw fetch`/`pw rate` now fall back to that identity, `pw credit` (a node's own
+  balance/reputation without a fresh throwaway identity), `pw invite` (mint an enrollment token
+  without hand-rolled curl). Joint smoke-tested live: `pw invite --kind user` → `pw ask
+  --enroll-token …` → non-zero starter balance — the exact loop the review's personas described
+  as broken.
+- **Docs & positioning** — `docs/VISION.md` is now the single source of truth (single-player
+  first, network second, later markets named as speculative, not roadmap); `SECURITY.md`
+  consolidates threat-model prose that used to be scattered across the README, ARCHITECTURE.md,
+  and FEDERATION_V2.md; new `docs/INSTALL.md` (LLM-executable), `llms.txt`, `CLAUDE.md`/`AGENTS.md`
+  for AI assistants; `docs/GLOSSARY.md` and `docs/ARCHITECTURE.md` rewritten to current
+  vocabulary and present tense; new `docs/network/SELF_HOST.md` + `ASKING.md`; a full README
+  rewrite. D53 also reworded the network's consent promise — the old "you always see and consent
+  to what your machine does" overstated what a `pw join` daemon (which auto-runs answer/judge/
+  batch/research with zero per-task prompt) actually does; the fix is honest about *class-level*
+  consent (D18's tiered-consent pattern), not a design change.
+- **Infra/CI/ops** — `.dockerignore` (600MB+ → ~5KB build context), a coordinator
+  `docker-compose` service, CI matrix widened to 3.14, coverage floors (75% overall, 75% scoped
+  to doctor/agent/operator/mcp_server — measured, not guessed), a `release.yml` for tag-triggered
+  PyPI Trusted Publishing (OIDC, no stored token), de-founderized ops scripts (`install_systemd.sh`/
+  `vps_run.sh`/`deploy_vps.sh` read identity from `.env` instead of hardcoding `helsinki`/etc.).
+- **Two adversarial review passes caught what a green test suite didn't**: the infra pass found a
+  worker tmux window that silently dropped `PW_WEB_BACKEND` (a stale-server-environment tmux
+  quirk, not a typo), two timeout tunables (`PW_OLLAMA_TIMEOUT`/`PW_RESEARCH_GEN_TIMEOUT`) that
+  quietly reverted to values a prior round raised specifically for VPS CPU contention, a
+  publish-workflow retry gap, and a real Linux Docker root-file-ownership bug. The docs pass
+  found two commands that were simply **wrong as written** (`pw trust add` documented with a
+  fingerprint instead of a pubkey; a self-host recipe that never set `PW_ENROLL`, so its own
+  "invite-only" framing was false) and — the one that mattered most — `operator.json` was still
+  being written world-readable-then-chmod'd, the exact anti-pattern `join.json`/`asker.json`
+  had already been fixed to avoid; SECURITY.md also overstated privacy guarantees for the
+  network's default `chat` job type and `--editor api`, both of which do send more than "just
+  derived search queries." All fixed; regression tests added where the bug was in code.
+
+**What this round deliberately did NOT do**: R25 (waitlist UI) and R26 (progress/ETA — needs a
+new hook threaded through the whole pipeline) were scoped out for a follow-up pass; R30
+(currency i18n) stays deferred; R34–R38 remain the review's own named deferrals. `PW_ENROLL`
+defaults to on in the new `docker-compose.yml` coordinator service, but the live two-country VPS
+deployment's actual enrollment setting was deliberately left untouched — flipping a production
+coordinator's registration behavior is a real operational decision, not a docs-consistency fix.
+
+Next: founder's call on whether to publish this as a release, and on Arc 2's remaining
+door-openers (R25/R26) as their own pass.
+
 ## R36 — Rerank + recursive research + hardening sweep (D52, 2026-07-10)
 Founder chose **"do them all"** across the four next-move candidates → a broad 0.4.0 round:
 - **Web-evidence rerank** — on non-temporal briefs `pw research` reranks web results by relevance BEFORE

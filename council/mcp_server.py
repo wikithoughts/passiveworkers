@@ -15,7 +15,8 @@ Claude Desktop config (claude_desktop_config.json):
     {"mcpServers": {"passive-workers": {"command": "pw", "args": ["mcp"]}}}
 
 Tools:
-  research(brief, depth="quick", analysts=2, scope="both") -> cited markdown report
+  research(brief, depth="quick", analysts=2, scope="both") -> {report, sources_web,
+      sources_local, n_sources, analysts_used, depth_requested, depth_achieved, error}
   library_search(query, k=5)                               -> your private-document hits
   library_add(path)                                        -> index a file/dir into the library
 """
@@ -41,21 +42,34 @@ def _normalize_research_args(brief: str, depth: str, analysts, scope):
     return brief, depth, analysts, scope, ""
 
 
-def _run_research_text(brief: str, depth: str, analysts, scope) -> str:
-    """The research() tool body, extracted so it is testable without a live MCP client: normalize
-    the args, run, and convert ANY failure (Ollama down, no models, network) into a clean
-    'error: …' string. Honors the module contract: an MCP client never sees a traceback. Note
-    SystemExit (e.g. "Can't reach Ollama…") is a BaseException, so it must be caught explicitly."""
+def _run_research_structured(brief: str, depth: str, analysts, scope) -> dict:
+    """The research() tool body: normalize the args, run, and return the machine-readable
+    degradation signals (sources_web/sources_local/analysts_used/depth_requested/depth_achieved)
+    an agent caller can act on (R2 review) instead of grepping report prose. Honors the module
+    contract: an MCP client never sees a traceback — SystemExit (e.g. "Can't reach Ollama…") is
+    a BaseException, so it must be caught explicitly."""
     from council.local import run
+    import json as _json
     brief, depth, analysts, scope, err = _normalize_research_args(brief, depth, analysts, scope)
     if err:
-        return err
+        return {"report": "", "error": err}
     try:
-        return run(brief, depth=depth, n_analysts=analysts, scope=scope).read_text()
-    except SystemExit as exc:        # e.g. "Can't reach Ollama…" / "No usable models…"
-        return f"error: {exc}"
+        path = run(brief, depth=depth, n_analysts=analysts, scope=scope, as_json=True)
+        payload = _json.loads(path.with_suffix(".json").read_text())
+        return {
+            "report": payload.get("report", ""),
+            "sources_web": payload.get("sources_web", 0),
+            "sources_local": payload.get("sources_local", 0),
+            "n_sources": payload.get("n_sources", 0),
+            "analysts_used": payload.get("analysts_used", 0),
+            "depth_requested": payload.get("depth", depth),
+            "depth_achieved": payload.get("depth_achieved", depth),
+            "error": None,
+        }
+    except SystemExit as exc:        # e.g. "Can't reach Ollama…" / the R2 zero-source gate
+        return {"report": "", "error": str(exc)}
     except Exception as exc:
-        return f"error: {type(exc).__name__}: {exc}"
+        return {"report": "", "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _library_add_text(path: str) -> str:
@@ -84,10 +98,14 @@ def build_server():
 
     @mcp.tool()
     def research(brief: str, depth: str = "quick", analysts: int = 2,
-                 scope: str = "both") -> str:
+                 scope: str = "both") -> dict:
         """Run multi-model local deep research (live web + your private library) and return a
-        cited markdown report. depth: quick|standard|deep. scope: both|web|local. Takes minutes."""
-        return _run_research_text(brief, depth, analysts, scope)
+        cited markdown report plus degradation signals. depth: quick|standard|deep (this tool
+        defaults lower than `pw research`'s standard/3 to respect client timeouts — see
+        depth_requested vs depth_achieved). scope: both|web|local. Takes minutes.
+        Fields: report, sources_web, sources_local, n_sources, analysts_used, depth_requested,
+        depth_achieved, error (null on success — always check this before trusting `report`)."""
+        return _run_research_structured(brief, depth, analysts, scope)
 
     @mcp.tool()
     def library_search(query: str, k: int = 5) -> str:

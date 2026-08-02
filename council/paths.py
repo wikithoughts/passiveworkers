@@ -24,3 +24,24 @@ def reports_dir() -> pathlib.Path:
     """Where research reports are written and read. ``PW_REPORTS_DIR`` overrides the default."""
     override = os.environ.get("PW_REPORTS_DIR")
     return pathlib.Path(override) if override else home() / "reports"
+
+
+_RESERVED_KEYS = {"default"}
+
+
+def coordinator_entries(state: dict) -> dict:
+    """Per-coordinator entries in a join.json/asker.json-shaped ``{url: {...}, "default": url}``
+    dict, excluding the ``"default"`` pointer key. Iterating ``state.items()`` directly crashes
+    the moment it reaches ``"default"`` (a string, not a dict) — this is the one safe way to read
+    these files."""
+    return {k: v for k, v in state.items() if k not in _RESERVED_KEYS and isinstance(v, dict)}
+
+
+def write_private_json(path: pathlib.Path, state: dict) -> None:
+    """Owner-only (0600) JSON write, no world-readable window before chmod."""
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:      # fdopen owns fd; closed on exit even if json.dump raises
+        json.dump(state, f, indent=2)

@@ -113,6 +113,218 @@ def _row(name):
     return [{"title": name, "href": "https://good.example/x", "body": name}]
 
 
+# --------------------------------------------------------- SearXNG compose/LAN reachability (R6)
+def test_searxng_reaches_private_compose_hostname(monkeypatch):
+    # A self-hosted SearXNG legitimately lives on a Docker-compose bridge network (a private IP)
+    # or a bare service name like "searxng" — PW_SEARXNG_URL is operator-supplied trusted config,
+    # not attacker-influenced, so it must NOT be rejected by the public-only SSRF guard.
+    import requests
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": [{"title": "hit"}]}
+
+    monkeypatch.setenv("PW_SEARXNG_URL", "http://searxng:8080")
+    # "searxng" only resolves INSIDE an actual compose network — mock DNS to simulate that,
+    # since the point of this test is the guard logic, not a live compose network.
+    monkeypatch.setattr(R.socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("172.19.0.2", 0))])
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+    out = R._searxng("q")
+    assert out and out[0]["title"] == "hit"
+
+
+def test_searxng_rejects_garbage_url(monkeypatch):
+    monkeypatch.setenv("PW_SEARXNG_URL", "not-a-url")
+    assert R._searxng("q") == []
+
+
+def test_searxng_rejects_non_http_scheme(monkeypatch):
+    monkeypatch.setenv("PW_SEARXNG_URL", "ftp://searxng:8080")
+    assert R._searxng("q") == []
+
+
+# --------------------------------------------------------- content-type gate (R14 review)
+def test_fetch_extract_skips_pdf_content_type(monkeypatch):
+    import pytest
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    resp = _Resp(body=b"%PDF-1.4 binary garbage")
+    resp.headers = {"Content-Type": "application/pdf"}
+    monkeypatch.setattr(requests, "get", lambda url, **kw: resp)
+    with pytest.raises(ValueError):
+        R.fetch_extract("http://good.example/doc.pdf")
+
+
+def test_fetch_extract_allows_text_plain(monkeypatch):
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    resp = _Resp(body=b"plain text body")
+    resp.headers = {"Content-Type": "text/plain; charset=utf-8"}
+    monkeypatch.setattr(requests, "get", lambda url, **kw: resp)
+    assert "plain text body" in R.fetch_extract("http://good.example/page.txt")
+
+
+def test_fetch_extract_allows_missing_content_type(monkeypatch):
+    # some legitimately HTML-serving hosts omit Content-Type — stay permissive (regression-pin
+    # the existing happy-path behavior, which relies on this).
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    monkeypatch.setattr(requests, "get",
+                        lambda url, **kw: _Resp(body=b"<html><body><p>Hello</p></body></html>"))
+    assert "Hello" in R.fetch_extract("http://good.example/page")
+
+
+# --------------------------------------------------------- DDG circuit breaker (R17 review)
+def test_ddg_does_not_sleep_after_final_failed_attempt(monkeypatch):
+    R.reset_ddg_breaker()
+    sleeps = []
+    monkeypatch.setattr(R.time, "sleep", lambda s: sleeps.append(s))
+
+    class _BoomDDGS:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, *a, **k):
+            raise RuntimeError("429")
+
+    import sys
+    import types
+    fake_mod = types.ModuleType("ddgs")
+    fake_mod.DDGS = _BoomDDGS
+    monkeypatch.setitem(sys.modules, "ddgs", fake_mod)
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        R._ddgs("q")
+    assert len(sleeps) == 2   # 3 attempts, sleep only between 1->2 and 2->3, never after the 3rd
+
+
+def test_ddg_breaker_opens_after_n_consecutive_failures(monkeypatch):
+    R.reset_ddg_breaker()
+    monkeypatch.setenv("PW_DDG_BREAKER", "2")
+    monkeypatch.setattr(R.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class _BoomDDGS:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, *a, **k):
+            calls["n"] += 1
+            raise RuntimeError("429")
+
+    import sys
+    import types
+    fake_mod = types.ModuleType("ddgs")
+    fake_mod.DDGS = _BoomDDGS
+    monkeypatch.setitem(sys.modules, "ddgs", fake_mod)
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        R._ddgs("q1")   # streak -> 1
+    with pytest.raises(RuntimeError):
+        R._ddgs("q2")   # streak -> 2, breaker now open
+    n_before = calls["n"]
+    with pytest.raises(RuntimeError, match="breaker open"):
+        R._ddgs("q3")   # short-circuits — no DDGS call at all
+    assert calls["n"] == n_before   # confirms the short-circuit never constructed DDGS
+
+
+def test_ddg_breaker_resets_on_success(monkeypatch):
+    R.reset_ddg_breaker()
+    monkeypatch.setenv("PW_DDG_BREAKER", "1")
+    monkeypatch.setattr(R.time, "sleep", lambda s: None)
+
+    class _OkDDGS:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, *a, **k):
+            return [{"title": "T"}]
+
+    import sys
+    import types
+    fake_mod = types.ModuleType("ddgs")
+    fake_mod.DDGS = _OkDDGS
+    monkeypatch.setitem(sys.modules, "ddgs", fake_mod)
+
+    R._ddgs("q")           # success resets the streak
+    R._ddgs("q2")          # would raise "breaker open" if the streak hadn't reset
+
+
+def test_reset_ddg_breaker_clears_streak(monkeypatch):
+    R._ddg_fail_streak = 5
+    R.reset_ddg_breaker()
+    assert R._ddg_fail_streak == 0
+
+
+def test_ddg_breaker_auto_clears_after_cooldown(monkeypatch):
+    # Workflow-review finding: a long-lived process (the pw join/pw work agent daemon) never
+    # calls reset_ddg_breaker() between tasks by design — without a cooldown, 3 failures spread
+    # across a node's ENTIRE uptime would disable DDG PERMANENTLY, worse than no breaker at all.
+    R.reset_ddg_breaker()
+    monkeypatch.setenv("PW_DDG_BREAKER", "1")
+    monkeypatch.setenv("PW_DDG_BREAKER_COOLDOWN", "10")
+    monkeypatch.setattr(R.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class _BoomDDGS:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, *a, **k):
+            calls["n"] += 1
+            raise RuntimeError("429")
+
+    import sys
+    import types
+    fake_mod = types.ModuleType("ddgs")
+    fake_mod.DDGS = _BoomDDGS
+    monkeypatch.setitem(sys.modules, "ddgs", fake_mod)
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(R.time, "monotonic", lambda: clock["t"])
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        R._ddgs("q1")   # streak -> 1, breaker opens, opened_at = 0.0
+    with pytest.raises(RuntimeError, match="breaker open"):
+        R._ddgs("q2")   # still within cooldown (t=0) -> short-circuits, no DDGS call
+    n_before_cooldown = calls["n"]
+
+    clock["t"] = 11.0   # advance past the 10s cooldown
+    with pytest.raises(RuntimeError):
+        R._ddgs("q3")   # cooldown elapsed -> streak reset -> retries for real (and fails again)
+    assert calls["n"] > n_before_cooldown   # confirms it actually retried, not just re-raised
+
+
 def test_keyed_backend_selected(monkeypatch):
     monkeypatch.setenv("PW_WEB_BACKEND", "brave")
     monkeypatch.setattr(R, "_searxng_alive", lambda: False)

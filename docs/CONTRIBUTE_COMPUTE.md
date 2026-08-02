@@ -40,8 +40,11 @@ ordinary, defensible work — and it is the single most important design rule of
 - **No inbound, no open ports.** The agent only dials out.
 - **No computer-use, ever.** The agent runs model inference and returns text/files. It does not
   drive a browser, click, or touch your sessions/cookies — by design, permanently (D18).
-- **You stay in control.** Stop the agent any time (Ctrl-C / stop the service). A CPU-ceiling
-  pause gate keeps it from hogging the machine.
+- **You choose the kinds of work your machine accepts when you join** (research, judging, batch,
+  assisted) — every task it runs is visible in the log, and you can stop it at any time (Ctrl-C /
+  stop the service; a CPU-ceiling pause gate also keeps it from hogging the machine). Sensitive
+  work (anything touching a real computer via `assisted`) is never auto-run; a human always sees
+  the brief and consents to that one task (see D53 in [DECISIONS.md](DECISIONS.md)).
 - **Untrusted content is treated as data.** Web pages and job inputs are sanitized and
   "spotlighted" (data, never instructions); the models hold zero tool privileges.
 - **Cryptographic delivery.** Deliverables are signed; files are content-addressed and can be
@@ -64,9 +67,10 @@ pw join https://<coordinator-url> <enrollment-token> \
 
 `pw join` saves your config + node identity to `~/.passiveworkers/join.json` (owner-only `0o600`),
 so next time you just run **`pw work`** (or `pw join` with no args) to resume — no token needed.
-Optional flags: `--lens`, `--judge` (also judge others' answers), `--judge-model`, `--web off` (web
-research is on by default so your node can take research jobs). Leave it running; stop it any time
-(Ctrl-C).
+Judging is **on by default** (a lone contributor's node must be able to both answer and judge, or
+a small deployment fails every job) — pass `--no-judge` if you only want to answer, not judge
+others'. Other optional flags: `--lens`, `--judge-model`, `--web off` (web research is on by
+default so your node can take research jobs). Leave it running; stop it any time (Ctrl-C).
 
 - **Always-on (Linux):** `scripts/install_systemd.sh` installs a systemd unit that survives reboot.
 - **Mac trial:** `scripts/mac_join.sh` opens a tunnel and runs a couple of perspectives + a judge.
@@ -102,5 +106,9 @@ When your agent does web research, it searches from **your** internet egress —
 sees different sources than one in São Paulo. That diversity is something no central API can
 replicate, and it's why where your machine *is* matters. Contributing from an under-represented
 region is especially valuable.
+
+Want to run your own coordinator instead of joining someone else's? See
+[docs/network/SELF_HOST.md](network/SELF_HOST.md). Want to *ask* the network for work
+rather than contribute compute? See [docs/network/ASKING.md](network/ASKING.md).
 
 Questions, or want a coordinator URL + token? Open an issue or reach the maintainer.

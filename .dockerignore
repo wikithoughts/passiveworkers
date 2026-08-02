@@ -1,0 +1,38 @@
+# Keep `docker build`'s context to what the Dockerfile actually COPYs (council/, pyproject.toml,
+# README.md, LICENSE) — everything else here was going to the Docker daemon on every build,
+# including a 600MB+ context and a live PW_TOKEN in .vps.env.
+
+# VCS / editor
+.git
+.github
+.claude
+.DS_Store
+
+# Python virtualenvs and caches — never needed in the image; the Dockerfile installs fresh
+.venv
+test_env
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+*.egg-info
+
+# Build/release artifacts — rebuilt inside the image, never copied in
+build
+dist
+
+# Runtime state / secrets — must never reach the build context
+reports
+*.db
+.vps.env
+.env
+.coverage
+
+# Not referenced by the Dockerfile; excluding shrinks the context further
+docs
+tests
+scripts
+spikes
+CHANGELOG.md
+requirements.txt

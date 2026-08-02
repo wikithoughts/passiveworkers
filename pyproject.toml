@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "passiveworkers"
 version = "0.4.0"
-description = "Make your computer work for you and others: a local-first compute network where machines do typed jobs for each other. Flagship task — deep research: local LLMs research the live web as independent analysts and a blind editor compiles one cited report."
+description = "The research engine you own: many local models research the live web as independent analysts, and a blind editor writes one cited report that keeps their disagreements. Opt-in: a commons where idle computers do research for each other, no token and no cloud in the middle."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -57,6 +57,11 @@ crypto = ["pynacl>=1.5"]
 geoip = ["geoip2>=4.0"]
 # Everything.
 all = ["trafilatura>=2.0", "pypdf>=4.0", "python-docx>=1.1", "mcp>=1.0", "pynacl>=1.5", "geoip2>=4.0"]
+# Contributor tooling: the test runner + coverage plugin + the lint gate CI runs (see
+# CONTRIBUTING.md's quick start — this is the ONE place both are declared, so a contributor's
+# local `ruff check .` can't silently drift from CI's). Also needs Node 18+ on PATH for the
+# front-end guard/harness (scripts/check_app_js.sh, scripts/fe_test.js) — not pip-installable.
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [project.urls]
 Homepage = "https://github.com/wikithoughts/passiveworkers"
@@ -64,6 +69,8 @@ Repository = "https://github.com/wikithoughts/passiveworkers"
 Issues = "https://github.com/wikithoughts/passiveworkers/issues"
 Documentation = "https://github.com/wikithoughts/passiveworkers#readme"
 Changelog = "https://github.com/wikithoughts/passiveworkers/blob/main/CHANGELOG.md"
+Evidence = "https://wikithoughts.github.io/passiveworkers/"
+Security = "https://github.com/wikithoughts/passiveworkers/security/advisories/new"
 
 [project.scripts]
 pw = "council.cli:main"
@@ -85,6 +92,15 @@ select = ["E9", "F"]
 # Unused locals in tests are frequently intentional (binding a result for readability / a side effect).
 "tests/**" = ["F841"]
 "scripts/**" = ["F841"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # Starlette's TestClient (which fastapi.testclient re-exports) emits this on every import;
+    # it's an upstream heads-up about httpx, not something under this repo's control yet.
+    # Scoped to exactly this warning class — nothing else is silenced.
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.pyright]
 # Scoped, ADVISORY type-checking (R36/D52). Starts on the federation layer only — the highest-value,

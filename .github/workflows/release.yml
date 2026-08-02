@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a publish in flight
+
+jobs:
+  test:
+    # a lightweight safety gate before anything gets published — the tag should already be off a
+    # green `main`, but a tag is a one-shot action, so re-verify rather than trust that.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install (all extras + dev tools)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[all,dev]'
+      - name: Unit tests
+        run: pytest tests/ -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build twine
+      - name: Build sdist + wheel
+        run: python -m build
+      - name: twine check
+        run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/passiveworkers/
+    permissions:
+      id-token: write   # OIDC — no stored PyPI token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI (Trusted Publishing, OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A retried run after a partial success (e.g. sdist uploaded, wheel upload dropped)
+          # would otherwise have PyPI reject the already-accepted file, fail this job again,
+          # and never reach github-release — leaving a published version with no GitHub Release.
+          skip-existing: true
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create GitHub Release with build provenance
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

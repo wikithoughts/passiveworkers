@@ -1,3 +1,5 @@
+> **Archived 2026-08 — an internal AI-workflow note, not user-facing docs. Kept for history.**
+
 # Browser automation — why it didn't connect, and how it's fixed
 
 When I tried to screenshot the UI earlier, the `claude-in-chrome` tool returned **"Browser extension is

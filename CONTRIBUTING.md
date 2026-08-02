@@ -8,16 +8,20 @@ big thing that doesn't.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e '.[dev,all]'   # dev tools (pytest/ruff) + every production extra CI tests against
 ollama pull qwen3:4b          # any small model works for development
 pw research "test brief" --quick --analysts 1
 ```
+
+Also needs Node 18+ on `PATH` for gates 4–5 below (`brew install node` / `apt install nodejs`) —
+Node isn't pip-installable, so it's a separate one-time step.
 
 ## Before opening a PR
 
 1. `python -m py_compile $(git ls-files '*.py')` — everything compiles.
 2. `ruff check .` — lint gate (matches CI).
-3. `pytest tests/ -q` — the full test suite is green (CI's headline step).
+3. `pytest tests/ -q` — the full test suite is green (~5s, 400+ tests, fully offline — CI's
+   headline step).
 4. `bash scripts/check_app_js.sh` — inline JS in served pages parses.
 5. `node scripts/fe_test.js` — the front-end harness passes.
 6. If you touched anything that handles web content: the sanitizer rules in

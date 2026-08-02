@@ -5,9 +5,12 @@ __pycache__/
 *.db
 .DS_Store
 .vps.env
+.env
 reports/
 *.egg-info/
 build/
 dist/
 .pytest_cache/
+.ruff_cache/
+.coverage
 .claude/

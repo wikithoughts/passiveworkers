@@ -80,6 +80,18 @@ def test_identity_is_cached_across_operators(coord_client, op_module, shim_facto
     assert (a.node_id, a.secret) == (b.node_id, b.secret)
 
 
+def test_operator_json_written_owner_only(coord_client, op_module, shim_factory, monkeypatch):
+    """operator.json holds a bearer node_secret — must never have a world/group-readable window
+    (review finding: the old write_text()-then-chmod() left one; now routed through
+    paths.write_private_json like join.json/asker.json/config.json)."""
+    import stat
+    OP = op_module
+    _wire(OP, coord_client, shim_factory, monkeypatch)
+    OP.Operator()
+    mode = stat.S_IMODE(OP.STATE.stat().st_mode)
+    assert mode == 0o600
+
+
 # --------------------------------------------------------- asker-side rate guards (no coordinator)
 def test_rate_requires_user_secret(op_module, monkeypatch, capsys):
     monkeypatch.setenv("PW_COORDINATOR", "http://c")
@@ -93,6 +105,50 @@ def test_rate_bad_score(op_module, monkeypatch, capsys):
     monkeypatch.setenv("PW_USER_SECRET", "SEC")
     assert op_module.rate("job", "notanumber") == 2
     assert "0-10" in capsys.readouterr().out
+
+
+# --------------------------------------------------------- R23: asker.json identity fallback
+def test_fetch_falls_back_to_asker_json_secret(op_module, monkeypatch, capsys):
+    OP = op_module
+    monkeypatch.delenv("PW_COORDINATOR", raising=False)
+    monkeypatch.delenv("PW_USER_SECRET", raising=False)
+    from council.net.submit import _save_asker_secret
+    _save_asker_secret("http://c", "alice", "SEC-CACHED")
+
+    seen = {}
+
+    def fake_get(url, **kw):
+        seen["headers"] = kw.get("headers")
+        return type("R", (), {"ok": True, "json": staticmethod(lambda: {"merged": "plain text result"})})()
+    monkeypatch.setattr(OP, "requests", type("R", (), {"get": staticmethod(fake_get)}))
+    assert OP.fetch("job1", str(op_module.STATE.parent)) == 0
+    assert seen["headers"]["X-User-Secret"] == "SEC-CACHED"
+
+
+def test_rate_falls_back_to_asker_json_secret(op_module, monkeypatch, capsys):
+    OP = op_module
+    monkeypatch.delenv("PW_COORDINATOR", raising=False)
+    monkeypatch.delenv("PW_USER_SECRET", raising=False)
+    from council.net.submit import _save_asker_secret
+    _save_asker_secret("http://c", "alice", "SEC-CACHED")
+
+    seen = {}
+
+    def fake_post(url, **kw):
+        seen["headers"] = kw.get("headers")
+        return type("R", (), {"ok": True,
+                              "json": staticmethod(lambda: {"operator_reputation": 7.5})})()
+    monkeypatch.setattr(OP, "requests", type("R", (), {"post": staticmethod(fake_post)}))
+    assert OP.rate("job1", "8") == 0
+    assert seen["headers"]["X-User-Secret"] == "SEC-CACHED"
+    assert "reputation" in capsys.readouterr().out
+
+
+def test_fetch_error_message_names_pw_ask(op_module, monkeypatch, capsys):
+    monkeypatch.delenv("PW_COORDINATOR", raising=False)
+    monkeypatch.delenv("PW_USER_SECRET", raising=False)
+    assert op_module.fetch("job1", "/tmp/out") == 2
+    assert "pw ask" in capsys.readouterr().out
 
 
 # --------------------------------------------------------- local crypto/trust verbs

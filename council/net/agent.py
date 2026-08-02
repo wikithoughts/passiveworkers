@@ -48,6 +48,21 @@ def _env(k: str, default: str = "") -> str:
     return os.environ.get(k, default)
 
 
+def _fix_hint(exc: Exception) -> str:
+    """Map a task-execution exception to an actionable hint instead of the raw string (R10
+    review) — the worker daemon's own console is often the only place an operator ever sees
+    a failure."""
+    msg, name = str(exc), type(exc).__name__
+    low = msg.lower()
+    if isinstance(exc, requests.exceptions.ConnectionError) or "connection refused" in low:
+        return "can't reach Ollama — is it running? `ollama serve`"
+    if "404" in msg and ("/api/generate" in msg or "/api/chat" in msg):
+        return "the declared model isn't pulled — `ollama pull <model>`"
+    if isinstance(exc, requests.exceptions.Timeout) or "timed out" in low:
+        return "Ollama timed out — the model may be too slow/loaded for this task's deadline"
+    return f"{name}: {msg}"
+
+
 class Agent:
     def __init__(self):
         self.base = _env("PW_COORDINATOR").rstrip("/")
@@ -71,6 +86,8 @@ class Agent:
         # persisted to ~/.passiveworkers/join.json the moment register() succeeds.
         self._on_identity = None
         self._running = True
+        self._tasks_ok = 0
+        self._tasks_failed = 0
 
     # ------------------------------------------------------------------ http
     def _headers(self) -> dict:
@@ -120,7 +137,9 @@ class Agent:
     def heartbeat(self) -> None:
         load = (psutil.cpu_percent(interval=None) / 100.0) if psutil else 0.0
         try:
-            r = requests.post(f"{self.base}/nodes/heartbeat", json={"load": load},
+            r = requests.post(f"{self.base}/nodes/heartbeat",
+                              json={"load": load, "tasks_ok": self._tasks_ok,
+                                    "tasks_failed": self._tasks_failed},
                               headers=self._node_headers(), timeout=10)
             if r.status_code in (401, 404):  # coordinator restarted / forgot us
                 self.register()
@@ -250,14 +269,19 @@ class Agent:
             try:
                 result = self._do_answer(task) if kind == "answer" else self._do_judge(task)
             except Exception as exc:
-                print(f"[agent] task {task['task_id'][:8]} FAILED: {exc}")
+                print(f"[agent] task {task['task_id'][:8]} FAILED: {_fix_hint(exc)}")
                 result = {"text": "", "error": str(exc), "scores": {}, "merged": ""}
+            if result.get("error"):
+                self._tasks_failed += 1
+            else:
+                self._tasks_ok += 1
             try:
                 requests.post(f"{self.base}/tasks/{task['task_id']}/result", json=result,
                               headers=self._node_headers(), timeout=30)
             except requests.RequestException as exc:
                 print(f"[agent] result POST failed (task {task['task_id'][:8]}): {exc}")
-            print(f"[agent] {kind} done in {time.monotonic() - t0:.0f}s")
+            outcome = "FAILED" if result.get("error") else "done"
+            print(f"[agent] {kind} {outcome} in {time.monotonic() - t0:.0f}s")
 
     def stop(self, *_):
         print("\n[agent] shutting down…")
@@ -302,6 +326,18 @@ def _save_join(state: dict) -> None:
             os.chmod(p, 0o600)
         except Exception:
             pass
+
+
+def _installed_models(base_url: str) -> set[str] | None:
+    """Models actually pulled in this node's local Ollama. None = couldn't check (Ollama
+    unreachable) — distinct from an empty/mismatched set (checked, and it's missing). R10/F34
+    review: the coordinator only verifies the DECLARED model name, never that it's installed."""
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=5)
+        r.raise_for_status()
+        return {m["name"] for m in r.json().get("models", [])}
+    except Exception:
+        return None
 
 
 def _parse_join_args(rest: list) -> tuple[list, dict]:
@@ -356,6 +392,25 @@ def join(argv: list) -> int:
     cfg["judge_model"] = (flags.get("judge-model", cfg.get("judge_model", ""))
                           or (cfg["answer_model"] if cfg["can_judge"] else ""))
     cfg["web_backend"] = flags.get("web", cfg.get("web_backend", "ddgs"))   # joined nodes research by default
+
+    # Model preflight (R10/F34 review): a node used to join cleanly and then fail every task at
+    # inference because nothing checked the declared model was actually pulled. Run BEFORE any
+    # side effects (env-seeding, _save_join, Agent construction) so a bad join never persists.
+    base_ollama = os.environ.get("PW_OLLAMA_BASE", "http://localhost:11434")
+    installed = _installed_models(base_ollama)
+    wanted = sorted({m for m in (cfg["answer_model"], cfg.get("judge_model") or "") if m})
+    if installed is not None:
+        missing = [m for m in wanted if m not in installed]
+        if missing:
+            pulls = "\n".join(f"  ollama pull {m}" for m in missing)
+            raise SystemExit(
+                f"✗ model(s) not pulled: {', '.join(missing)}\nPull them, then re-run `pw join`:\n"
+                f"{pulls}\n(otherwise this machine joins cleanly, then fails every task at "
+                "inference)")
+    elif wanted:
+        print(f"  ⚠ could not reach Ollama at {base_ollama} to verify {', '.join(wanted)} is "
+              "pulled — continuing, but tasks will fail if it isn't. `ollama serve` first if "
+              "unsure.")
 
     # The chosen seam: the Agent reads PW_* from os.environ (incl. PW_WEB_BACKEND in hot paths) —
     # seed them from the resolved config BEFORE constructing it, so web research isn't silently off.

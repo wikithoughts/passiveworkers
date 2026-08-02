@@ -158,6 +158,19 @@ def _chunk(text: str) -> list[str]:
 
 
 # ------------------------------------------------------------------ embeddings
+def _embedder_installed() -> bool | None:
+    """Whether EMBED_MODEL is actually pulled in Ollama. None = couldn't check (Ollama
+    unreachable); True/False = checked. Before this, a missing embedder only surfaced as a
+    404-per-file skip on a directory add, or a raw traceback on a single-file add (R12 review)."""
+    try:
+        r = requests.get(f"{OLLAMA}/api/tags", timeout=10)
+        r.raise_for_status()
+        names = {m["name"] for m in r.json().get("models", [])}
+        return EMBED_MODEL in names or any(n.split(":")[0] == EMBED_MODEL.split(":")[0] for n in names)
+    except Exception:
+        return None
+
+
 def embed(texts: list[str]) -> list[list[float]]:
     """Embed via local Ollama. One call per text (Ollama's embeddings API is single-input)."""
     vecs = []
@@ -229,10 +242,16 @@ class Library:
 
     def add(self, path: str) -> int:
         """Index a file or directory (confined to PW_LIBRARY_ROOTS). Returns chunks added."""
+        self._last_add_errors: list[str] = []
         p = pathlib.Path(path).expanduser().resolve()
         if not _within_roots(p):
             raise ValueError(f"path outside allowed roots ({', '.join(map(str, _ROOTS))}); "
                              "set PW_LIBRARY_ROOTS to widen")
+        if _embedder_installed() is False:
+            raise SystemExit(
+                f"The embedding model isn't pulled: ollama pull {EMBED_MODEL}\n"
+                "(needed before indexing anything — this used to only surface as a 404-per-file "
+                "skip, or a raw traceback on a single-file add)")
         if p.is_dir():
             total = files = tbytes = 0
             for f in sorted(p.rglob("*")):
@@ -261,9 +280,16 @@ class Library:
                         # installs the extra and re-runs (incremental indexing resumes cleanly).
                         raise
                     except Exception as e:
+                        self._last_add_errors.append(f"{f.name}: {e}")
                         print(f"  skip {f.name}: {e}", flush=True)
             return total
         return self._add_file(p)
+
+    @property
+    def last_add_had_errors(self) -> bool:
+        """True when the most recent add() skipped ≥1 file due to a real error (as opposed to
+        the legitimate 'unchanged — skipped (incremental)' no-op) (R12 review)."""
+        return bool(getattr(self, "_last_add_errors", None))
 
     def _add_file(self, p: pathlib.Path) -> int:
         if not _within_roots(p):
@@ -417,6 +443,12 @@ def main() -> int:
             n = lib.add(args[1])
         except SystemExit as e:        # missing optional extra (e.g. [docs]) — a fix, not a traceback
             print(e); return 1
+        if n == 0 and lib.last_add_had_errors:
+            # Distinguish "0 chunks, all unchanged (legitimate incremental no-op)" from "0
+            # chunks, everything errored" — the old code printed the same ✓ for both (R12 review).
+            print(f"✗ 0 chunks indexed — every file failed ({len(lib._last_add_errors)} "
+                  "error(s) above).")
+            return 1
         print(f"✓ {n} chunks indexed.")
         return 0
     if cmd == "remove":

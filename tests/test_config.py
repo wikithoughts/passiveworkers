@@ -117,3 +117,13 @@ def test_set_value_tolerates_spaces():
 def test_path_command(capsys):
     assert C.main(["path"]) == 0
     assert "config.json" in capsys.readouterr().out
+
+
+def test_known_includes_new_review_round_knobs(capsys):
+    # R12/R15/R17 review: these must be discoverable via `pw config list`, not env-var-only.
+    for key in ("PW_CONTEXTUAL_CHUNKS", "PW_PAGE_EVIDENCE", "PW_DDG_BREAKER"):
+        assert key in C.KNOWN
+    assert C.main(["list"]) == 0
+    out = capsys.readouterr().out
+    for key in ("PW_CONTEXTUAL_CHUNKS", "PW_PAGE_EVIDENCE", "PW_DDG_BREAKER"):
+        assert key in out

@@ -125,6 +125,10 @@ def test_join_resume_reuses_identity_without_register(joindir, monkeypatch):
     # register() would raise if called (no token persisted), proving resume must NOT register:
     monkeypatch.setattr(A.Agent, "register",
                         lambda self: (_ for _ in ()).throw(AssertionError("must not re-register")))
+    # The R10 model preflight calls _installed_models() -> requests.get() unconditionally, even on
+    # a bare resume. Without mocking this, the test's pass/fail depended on whether THIS machine's
+    # real local Ollama happened to be reachable at the moment pytest ran (flaky, found in review).
+    monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "old-nid", "node_secret": "old-sec"}))
 
     rc = A.join(["work"])                                   # bare resume, no url/token
     assert rc == 0
@@ -136,6 +140,47 @@ def test_join_without_url_or_saved_default_errors(joindir, monkeypatch):
     monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "n", "node_secret": "s"}))
     with pytest.raises(SystemExit):
         A.join(["join"])                                   # no url given, nothing cached
+
+
+# ---------------------------------------------------------------- R10: model preflight
+class _FakeRequestsWithTags(_FakeRequests):
+    """Like _FakeRequests, but /api/tags succeeds with a given model list."""
+
+    def __init__(self, reg_payload, installed_models):
+        super().__init__(reg_payload)
+        self._models = installed_models
+
+    def get(self, url, timeout=None):
+        return _Resp({"models": [{"name": m} for m in self._models]})
+
+
+def test_join_refuses_when_declared_model_not_pulled(joindir, monkeypatch):
+    fake = _FakeRequestsWithTags({"node_id": "n", "node_secret": "s"}, ["other:model"])
+    monkeypatch.setattr(A, "requests", fake)
+    with pytest.raises(SystemExit) as e:
+        A.join(["join", "https://hub", "tok", "--model", "qwen3:14b"])
+    assert "qwen3:14b" in str(e.value)
+    assert "ollama pull" in str(e.value)
+    assert not fake.posts   # register() must never have been reached
+
+
+def test_join_succeeds_when_declared_model_is_pulled(joindir, monkeypatch):
+    fake = _FakeRequestsWithTags({"node_id": "n", "node_secret": "s"}, ["qwen3:14b", "other:model"])
+    monkeypatch.setattr(A, "requests", fake)
+    monkeypatch.setattr(A.Agent, "run", lambda self: self.register())
+    rc = A.join(["join", "https://hub", "tok", "--model", "qwen3:14b"])
+    assert rc == 0
+    assert fake.posts   # register() did run
+
+
+def test_join_warns_but_continues_when_ollama_unreachable_for_preflight(joindir, monkeypatch, capsys):
+    # _FakeRequests.get() always raises RequestException — the existing "unreachable" behavior;
+    # pinned explicitly here (R10 review) rather than only implicitly by every other passing test.
+    monkeypatch.setattr(A, "requests", _FakeRequests({"node_id": "n", "node_secret": "s"}))
+    monkeypatch.setattr(A.Agent, "run", lambda self: self.register())
+    rc = A.join(["join", "https://hub", "tok", "--model", "qwen3:14b"])
+    assert rc == 0   # continues rather than hard-refusing on an unrelated outage
+    assert "could not reach Ollama" in capsys.readouterr().out
 
 
 def test_save_join_fallback_path_is_still_owner_only(joindir, monkeypatch):

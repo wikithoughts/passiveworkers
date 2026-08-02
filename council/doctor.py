@@ -69,18 +69,37 @@ def main() -> int:
     except Exception as e:
         print(f"  · Library: unavailable ({type(e).__name__})")
 
+    # 2b. The embedding model `pw library add`/--local research depends on (R12 review):
+    # informational only — never flips overall `healthy`, matching the Library row's severity.
+    try:
+        from council.library import EMBED_MODEL, _embedder_installed
+        installed = _embedder_installed()
+        if installed is True:
+            print(f"  ✓ Embedder: {EMBED_MODEL} pulled")
+        elif installed is False:
+            print(f"  · Embedder: {EMBED_MODEL} not pulled — `ollama pull {EMBED_MODEL}` "
+                  "(needed for `pw library add` / `--local` research)")
+        else:
+            print("  · Embedder: could not check (Ollama unreachable)")
+    except Exception as e:
+        print(f"  · Embedder: unavailable ({type(e).__name__})")
+
     # 3. Network membership (have we joined a coordinator?)
     try:
         from council.net.agent import _load_join
-        joined = _load_join()
-        if joined:
-            for url, c in joined.items():
+        coordinators = paths.coordinator_entries(_load_join())
+        if coordinators:
+            for url, c in coordinators.items():
                 print(f"  ✓ Joined {url} as {c.get('owner', '?')} "
                       f"({c.get('answer_model', '?')}) — resume with `pw work`")
         else:
             print("  · Not joined — `pw join <url> <token>` to contribute this machine")
-    except Exception:
-        print("  · Not joined — `pw join <url> <token>` to contribute this machine")
+    except Exception as e:
+        # A user-facing status path must say what happened, never silently substitute a guess —
+        # this except swallowing an AttributeError is exactly what let the "default" sentinel key
+        # in join.json print a false "Not joined" alongside a true "Joined" line (F1).
+        print(f"  · Not joined — `pw join <url> <token>` to contribute this machine "
+              f"(membership check failed: {type(e).__name__})")
 
     # 4. Where reports live + how many
     rd = paths.reports_dir()

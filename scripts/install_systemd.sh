@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 # Runs ON the VPS (via: ssh HOST 'bash -s' < scripts/install_systemd.sh).
-# Installs systemd units for the coordinator + the Finnish worker so the hub is
-# ALWAYS-ON (survives reboot, auto-restarts). Replaces the tmux session.
-# Provider-agnostic: units reference the venv + /opt/passiveworkers/.env (relocatable).
+# Installs systemd units for the coordinator + one worker so the hub is ALWAYS-ON (survives
+# reboot, auto-restarts). Replaces the tmux session. Provider-agnostic: reads all deployment
+# identity (owner/country/model/…) from $DIR/.env — set PW_REMOTE_DIR to relocate, and put your
+# own PW_OWNER/PW_NAME/PW_COUNTRY/PW_ANSWER_MODEL in .env before running this (no defaults are
+# baked into the unit — R22 review).
 set -euo pipefail
-DIR=/opt/passiveworkers
+DIR=${PW_REMOTE_DIR:-/opt/passiveworkers}
 PY="$DIR/.venv/bin/python"
 # shellcheck disable=SC1091
 set -a; source "$DIR/.env"; set +a
 URL="http://127.0.0.1:${PW_PORT}"
+
+# Fail loudly (not with a silently-wrong default) if this operator hasn't configured identity.
+: "${PW_OWNER:?set PW_OWNER in $DIR/.env — the account this worker credits}"
+: "${PW_NAME:?set PW_NAME in $DIR/.env — the display name for this node}"
+: "${PW_COUNTRY:?set PW_COUNTRY in $DIR/.env — ISO country code (the egress-diversity moat)}"
+: "${PW_ANSWER_MODEL:?set PW_ANSWER_MODEL in $DIR/.env — an Ollama model already pulled here}"
 
 # Stop the old tmux hub (we're switching to systemd).
 tmux kill-session -t pw 2>/dev/null || true
@@ -33,23 +41,14 @@ UNIT
 
 cat >/etc/systemd/system/pw-worker.service <<UNIT
 [Unit]
-Description=Passive Workers — worker (Helsinki/FI)
+Description=Passive Workers — worker ($PW_NAME/$PW_COUNTRY)
 After=pw-coordinator.service network-online.target
 Wants=pw-coordinator.service
 [Service]
 WorkingDirectory=$DIR
 EnvironmentFile=$DIR/.env
 Environment=PW_COORDINATOR=$URL
-Environment=PW_OWNER=helsinki
-Environment=PW_NAME=hel
-Environment=PW_COUNTRY=FI
-Environment=PW_ANSWER_MODEL=llama3.2:latest
-Environment=PW_LENS=first_principles
-Environment=PW_POLL=2
-Environment=PW_WEB_BACKEND=ddgs
 Environment=PYTHONUNBUFFERED=1
-Environment=PW_OLLAMA_TIMEOUT=480
-Environment=PW_RESEARCH_GEN_TIMEOUT=900
 ExecStart=$PY -m council.net.agent
 Restart=always
 RestartSec=3
