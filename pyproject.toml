@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "passiveworkers"
-version = "0.4.0"
+version = "0.5.0"
 description = "The research engine you own: many local models research the live web as independent analysts, and a blind editor writes one cited report that keeps their disagreements. Opt-in: a commons where idle computers do research for each other, no token and no cloud in the middle."
 readme = "README.md"
 license = "MIT"

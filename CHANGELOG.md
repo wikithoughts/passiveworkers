@@ -5,6 +5,54 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [0.5.0] — 2026-08-02
+Two rounds (37 and 38): a founder-review-driven pass across the whole product surface, then the
+two recommendations deferred from it. Two Workflow adversarial review passes before commit found
+27 real, confirmed bugs total (16 in Round 37, 11 in Round 38) — including one genuine credential-
+permission bug in engine code, caught by a *docs* review checking its own claims against reality.
+### Added
+- **`pw ask` / `pw credit` / `pw invite`** — a persisted asker identity (fixes a mint-and-forget
+  secret bug), a node's own balance/reputation without minting a throwaway identity, and a real
+  CLI for minting enrollment tokens instead of hand-rolled curl.
+- **Stage-level research progress** (planning / searching / refining / fetching / drafting /
+  citation-check), surfaced in `pw research`'s terminal output, `pw serve`'s live log, and as real
+  MCP progress notifications on the `research` tool (verified live, not just unit-tested).
+- **`pw status --eta`** — an opt-in tok/s probe with a structural low/high time estimate per
+  research depth; default `pw status` stays the documented ~1-second preflight.
+- **A "🖥️ Join the network" waitlist** (`.github/ISSUE_TEMPLATE/join-the-network.yml`) — the
+  network stays invite-only, but there's now a real door to ask through instead of "open an issue
+  or reach the maintainer." GitHub Private Vulnerability Reporting is now enabled for this repo.
+- `docs/VISION.md`, `SECURITY.md`, `docs/INSTALL.md`, `llms.txt`, `CLAUDE.md`/`AGENTS.md`,
+  `docs/network/SELF_HOST.md` + `ASKING.md` — new docs consolidating positioning, the full threat
+  model, and agent-executable onboarding. `docs/GLOSSARY.md` and `docs/ARCHITECTURE.md` rewritten
+  to current vocabulary. Full README rewrite.
+- `.dockerignore` (600MB+ → ~5KB build context), a coordinator `docker-compose` service, a
+  `release.yml` for tag-triggered PyPI Trusted Publishing.
+### Fixed
+- `pw status` no longer crashes on a joined machine (was iterating a `"default"` sentinel key as
+  if it were a node entry); a research run that gathers zero sources now refuses to compile a
+  report instead of shipping an empty one; the DDG circuit breaker got a TTL cooldown (it used to
+  stay open for a whole process's lifetime once tripped); analyst/judge/editor failures degrade
+  instead of crashing the whole run.
+- `operator.json` (a bearer node-secret) was still written world-readable-then-chmod'd — the exact
+  anti-pattern `join.json`/`asker.json` had already been fixed to avoid. Routed through the same
+  owner-only write helper, with a regression test.
+- A stalled/broken MCP client used to leave a progress notification scheduled-but-abandoned; since
+  MCP's stdio transport serializes every write (including the eventual tool response) through one
+  shared channel, this could have blocked a finished report from ever being delivered. Now cancelled
+  on timeout.
+- The `pw status --eta` formula silently omitted the default-on web-evidence reranker's generation
+  cost and a real draft-retry path, and assumed a token floor `judge.py`'s own math doesn't
+  guarantee on short fallback answers — all corrected; "quick" silently deepening for breaking-news
+  briefs is now a disclosed caveat rather than a false computation.
+- SECURITY.md and README.md overstated privacy guarantees for the network's default `chat` job type
+  and `--editor api` (both send more than "just derived search queries") — now disclosed plainly,
+  alongside corrected DNS-rebinding and reputation-gating claims.
+### Docs
+- The network's consent promise reworded ("you always see and consent to what your machine does"
+  overstated a daemon that auto-runs most task classes) — now states honest, class-level consent
+  matching the tiered-consent design already in place, not a behavior change.
+
 ## [0.4.0] — 2026-07-10
 A broad round (R36 / D52): two flagship research-quality levers, a code-hardening sweep, and a
 bigger-model evidence pass. Everything is pure local code; adversarially reviewed before commit.
