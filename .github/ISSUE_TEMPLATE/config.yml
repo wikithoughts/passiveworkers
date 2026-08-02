@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Bug report or question
+    url: https://github.com/wikithoughts/passiveworkers/issues/new
+    about: Open a blank issue — see CONTRIBUTING.md's "Questions → open an issue."

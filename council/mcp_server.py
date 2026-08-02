@@ -17,11 +17,27 @@ Claude Desktop config (claude_desktop_config.json):
 Tools:
   research(brief, depth="quick", analysts=2, scope="both") -> {report, sources_web,
       sources_local, n_sources, analysts_used, depth_requested, depth_achieved, error}
+      Sends MCP progress notifications as research advances, if the client sent a
+      progressToken (R26) — a side channel; the returned dict is unaffected.
   library_search(query, k=5)                               -> your private-document hits
   library_add(path)                                        -> index a file/dir into the library
 """
 
 from __future__ import annotations
+
+import asyncio
+
+try:
+    from mcp.server.fastmcp import Context, FastMCP
+except ImportError:
+    # Kept optional (pw mcp / build_server() give the actual install hint) — but `Context` must
+    # still be a real MODULE-level name when the extra IS installed: `from __future__ import
+    # annotations` makes every annotation a lazy string, and FastMCP resolves tool signatures via
+    # `inspect.signature(fn, eval_str=True)` against `fn.__globals__` — a name only ever imported
+    # inside build_server()'s own local scope is invisible to that lookup and raises
+    # InvalidSignature at registration time, not at import time (found via the actual test run).
+    Context = None    # type: ignore[assignment]
+    FastMCP = None    # type: ignore[assignment]
 
 
 def _normalize_research_args(brief: str, depth: str, analysts, scope):
@@ -42,7 +58,7 @@ def _normalize_research_args(brief: str, depth: str, analysts, scope):
     return brief, depth, analysts, scope, ""
 
 
-def _run_research_structured(brief: str, depth: str, analysts, scope) -> dict:
+def _run_research_structured(brief: str, depth: str, analysts, scope, on_progress=None) -> dict:
     """The research() tool body: normalize the args, run, and return the machine-readable
     degradation signals (sources_web/sources_local/analysts_used/depth_requested/depth_achieved)
     an agent caller can act on (R2 review) instead of grepping report prose. Honors the module
@@ -54,7 +70,8 @@ def _run_research_structured(brief: str, depth: str, analysts, scope) -> dict:
     if err:
         return {"report": "", "error": err}
     try:
-        path = run(brief, depth=depth, n_analysts=analysts, scope=scope, as_json=True)
+        path = run(brief, depth=depth, n_analysts=analysts, scope=scope, as_json=True,
+                   on_progress=on_progress)
         payload = _json.loads(path.with_suffix(".json").read_text())
         return {
             "report": payload.get("report", ""),
@@ -70,6 +87,57 @@ def _run_research_structured(brief: str, depth: str, analysts, scope) -> dict:
         return {"report": "", "error": str(exc)}
     except Exception as exc:
         return {"report": "", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _make_mcp_progress(ctx, loop, timeout: float = 5.0):
+    """R26: bridges council.local.run()'s synchronous on_progress(msg) callback — invoked from
+    the worker thread asyncio.to_thread() runs the blocking research() call in — to an async
+    ctx.report_progress() call on the event loop. asyncio.run_coroutine_threadsafe is the
+    standard way to schedule a coroutine onto a loop from a different thread; blocking (bounded
+    by `timeout`) on the returned future makes delivery deterministic rather than fire-and-forget
+    (cheap: a stdio write). A stuck/broken client must never stall the actual research run — on
+    timeout we CANCEL the scheduled future, not just stop waiting on it (review finding): the
+    stdio transport serializes every write, including the eventual tool response, through one
+    zero-buffer channel (mcp.server.stdio's anyio memory stream) — an abandoned-but-not-cancelled
+    send from a stalled client would sit in that channel forever and could block the finished
+    report from ever reaching the client, not just cost this one call its timeout. Progress is a
+    plain increasing step counter with total=None (indeterminate) — the real step count varies
+    with scope/depth/whether the citation-fidelity repair fires, so a precomputed total would be
+    false precision dressed up as a number. ctx=None (a client that never opens a Context, or
+    report_progress() with no progressToken) is a safe no-op either way — report_progress()
+    itself no-ops without a token."""
+    counter = {"n": 0}
+    pending = {"fut": None}
+
+    def on_progress(msg: str) -> None:
+        counter["n"] += 1
+        if ctx is None:
+            return
+        # Bound the backlog to at most one outstanding notification — if an earlier one is
+        # still in flight (shouldn't happen in today's single-worker-thread call pattern, but
+        # cheap to guard), cancel it before scheduling another rather than letting them pile up.
+        prev = pending["fut"]
+        if prev is not None and not prev.done():
+            prev.cancel()
+        fut = asyncio.run_coroutine_threadsafe(
+            ctx.report_progress(progress=float(counter["n"]), total=None, message=msg), loop)
+        pending["fut"] = fut
+        try:
+            fut.result(timeout=timeout)
+        except Exception:
+            fut.cancel()
+    return on_progress
+
+
+async def _research_tool(brief: str, depth: str, analysts, scope, ctx=None) -> dict:
+    """Async body of the research() MCP tool, extracted for testing without a real FastMCP
+    transport/session — same pattern as _run_research_structured. The blocking call chain
+    (council.local.run -> ResearchWorker.research) runs in a thread so progress notifications
+    (and any other concurrent MCP traffic) aren't stalled behind it."""
+    loop = asyncio.get_running_loop()
+    on_progress = _make_mcp_progress(ctx, loop)
+    return await asyncio.to_thread(_run_research_structured, brief, depth, analysts, scope,
+                                   on_progress)
 
 
 def _library_add_text(path: str) -> str:
@@ -88,24 +156,23 @@ def _library_add_text(path: str) -> str:
 
 
 def build_server():
-    try:
-        from mcp.server.fastmcp import FastMCP
-    except ImportError as exc:
-        raise SystemExit("The MCP server needs the optional extra: pip install 'passiveworkers[mcp]'"
-                         f"  [{exc}]")
+    if FastMCP is None:
+        raise SystemExit("The MCP server needs the optional extra: pip install 'passiveworkers[mcp]'")
 
     mcp = FastMCP("passive-workers")
 
     @mcp.tool()
-    def research(brief: str, depth: str = "quick", analysts: int = 2,
-                 scope: str = "both") -> dict:
+    async def research(brief: str, depth: str = "quick", analysts: int = 2,
+                       scope: str = "both", ctx: Context | None = None) -> dict:
         """Run multi-model local deep research (live web + your private library) and return a
         cited markdown report plus degradation signals. depth: quick|standard|deep (this tool
         defaults lower than `pw research`'s standard/3 to respect client timeouts — see
-        depth_requested vs depth_achieved). scope: both|web|local. Takes minutes.
+        depth_requested vs depth_achieved). scope: both|web|local. Takes minutes. Sends MCP
+        progress notifications as research advances if the client provided a progressToken —
+        a pure side channel; the returned dict's shape never changes based on it.
         Fields: report, sources_web, sources_local, n_sources, analysts_used, depth_requested,
         depth_achieved, error (null on success — always check this before trusting `report`)."""
-        return _run_research_structured(brief, depth, analysts, scope)
+        return await _research_tool(brief, depth, analysts, scope, ctx)
 
     @mcp.tool()
     def library_search(query: str, k: int = 5) -> str:

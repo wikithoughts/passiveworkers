@@ -24,6 +24,7 @@ import datetime as _dt
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 from council import ollama as _ollama
 from council.judge import _extract_json
@@ -241,7 +242,20 @@ class ResearchWorker:
         return revised if accept else draft
 
     # ------------------------------------------------------------------ entry
-    def research(self, brief: str) -> dict:
+    def research(self, brief: str, on_progress: Callable[[str], None] | None = None) -> dict:
+        # R26: stage-level progress for a caller that wants it (council/local.py's per-analyst
+        # wiring, the MCP progress bridge). Kept OUTSIDE the private stage methods themselves
+        # (_plan_queries/_refine_queries/_draft/_repair_draft) — those are monkeypatched with
+        # fixed-arity lambdas across several tests, so their signatures must not change; this
+        # local closure wraps each call site here instead. Swallows exceptions like
+        # council.local's own _make_emit — a broken progress sink must never break a run.
+        def _emit(msg: str) -> None:
+            if on_progress:
+                try:
+                    on_progress(msg)
+                except Exception:
+                    pass
+
         t0 = time.monotonic()
         evidence: list[dict] = []
         seen_urls: set[str] = set()
@@ -255,6 +269,7 @@ class ResearchWorker:
         # Local-documents retrieval (D19): draw on the private library alongside the web.
         local: list[dict] = []
         if self.scope in ("both", "local"):
+            _emit("searching your library…")
             try:
                 from council.library import Library
                 k = {"quick": 4, "deep": 8}.get(depth, 6)
@@ -289,7 +304,9 @@ class ResearchWorker:
                         evidence.append(row)
 
         if self.scope in ("both", "web"):
+            _emit("planning search queries…")
             _collect(self._plan_queries(brief), per_query=4)
+            _emit(f"searching the web — {len(evidence)} source(s) so far…")
         # Adaptive gap-driven deepening (R36/D52): keep issuing follow-up queries while the model
         # still names gaps AND a round keeps surfacing NEW sources — instead of a fixed round count.
         # Hard bounds keep it from ever running away: a max round count, a wall-clock budget (the
@@ -308,6 +325,7 @@ class ResearchWorker:
                 if time.monotonic() >= deadline:
                     deadline_hit = True
                     break
+                _emit(f"refining search — round {rounds + 1} of {max_rounds}…")
                 follow = self._refine_queries(brief, evidence)
                 if not follow:                        # model says the brief is well covered → stop
                     break
@@ -346,6 +364,7 @@ class ResearchWorker:
         # the single biggest quality lever the ecosystem leaders proved. Best-effort.
         if self.page_evidence and evidence:
             n_pages = {"quick": 2, "deep": 4}.get(depth, 3)
+            _emit(f"fetching {min(n_pages, len(evidence))} page(s)…")
             for e in evidence[:n_pages]:
                 try:
                     e["page"], e["date"] = fetch_extract(e["url"], max_chars=1500, with_date=True)
@@ -368,6 +387,7 @@ class ResearchWorker:
 
         # Slow/contended nodes: retry once with a smaller prompt; if synthesis still fails,
         # contribute the SOURCES alone — this node's geo-discovery is valuable by itself.
+        _emit("drafting findings…")
         try:
             draft, tokens = self._draft(brief, evidence, local)
         except Exception:
@@ -383,6 +403,7 @@ class ResearchWorker:
         # out (A/B measurement, speed). Skipped when there are no sources to check a claim against.
         repair_trace = None
         if os.environ.get("PW_FIDELITY_REPAIR", "1") != "0" and draft and (evidence or local):
+            _emit("checking citation fidelity…")
             pre_repair = draft
             try:
                 draft = self._repair_draft(brief, draft, evidence, local)

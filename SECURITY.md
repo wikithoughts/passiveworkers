@@ -107,19 +107,14 @@ This table is excerpted in [README.md](README.md); this file is the source of tr
 
 ## 6. Vulnerability disclosure
 
-<!-- TODO(founder): this section needs a REAL, monitored contact before it's accurate.
-     Do not ship this file to strangers with a placeholder still in it. Options: a
-     dedicated security@ address, GitHub Private Vulnerability Reporting (Settings →
-     Security → enable it), or both. -->
-
 - **Preferred:** [GitHub Private Vulnerability Reporting](https://github.com/wikithoughts/passiveworkers/security/advisories/new)
-  — enable it in the repo's Security tab if it isn't already.
-- **Email:** not yet configured. An anonymous maintainer asking strangers to run a
-  network agent on their machine is this project's sharpest trust tension (see
-  `docs/REVIEW_2026-07.md` F21). Shipping this file with a real, monitored contact is a
-  prerequisite for opening the network to strangers, not an afterthought — don't
-  publish an announcement that links this file until this line is fixed.
-- **Acknowledgment SLA:** target 72 hours once a real contact exists.
+  — enabled (Round 38). This is a real, monitored channel: reports go straight to the
+  maintainer's GitHub notifications, privately, with no personal email or identity
+  required — this satisfies the "anonymous maintainer asking strangers to run a network
+  agent" trust tension (`docs/REVIEW_2026-07.md` F21) without de-anonymizing anyone.
+- **Email:** not configured, and not required — GitHub Private Vulnerability Reporting
+  above is the real channel.
+- **Acknowledgment SLA:** target 72 hours.
 - **Supported versions:** the latest `0.x` release on PyPI. This is pre-1.0 software —
   there is no long-term-support branch yet.
 - **Scope:** this repository and the coordinator/agent code it ships. Third-party

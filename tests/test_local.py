@@ -73,7 +73,7 @@ class _FakeRW:
     def __init__(self, *a, **k):
         pass
 
-    def research(self, brief):
+    def research(self, brief, on_progress=None):
         return {"text": "a finding [S1]", "tokens": 10, "elapsed_s": 1.0,
                 "research": {"country": "x", "sources": [{"id": "S1", "title": "t", "url": "u",
                                                           "host": "h"}], "local_sources": []}}
@@ -101,6 +101,44 @@ def test_run_writes_report_end_to_end(monkeypatch, tmp_path):
     assert "Report" in out.read_text()
 
 
+# ---------------------------------------------------------------- R26: per-analyst progress prefix
+def test_run_prefixes_stage_progress_with_correct_analyst_index(monkeypatch, tmp_path):
+    # Regression guard for the classic closure-over-loop-variable bug: without binding `prefix`
+    # via a default argument at closure-creation time, EVERY analyst's stage messages would show
+    # under whichever analyst's prefix happens to be live when the callback actually fires.
+    class _StageRW:
+        def __init__(self, worker_id, **k):
+            self.worker_id = worker_id
+
+        def research(self, brief, on_progress=None):
+            if on_progress:
+                on_progress(f"stage-from-{self.worker_id}")
+            return {"text": "a finding [S1]", "tokens": 5, "elapsed_s": 0.1,
+                    "research": {"country": "x", "sources": [{"id": "S1", "title": "t",
+                                                              "url": "u", "host": "h"}],
+                                "local_sources": []}}
+
+    monkeypatch.setattr(L, "detect_models", lambda: [{"name": "model-a", "size": 3e9},
+                                                     {"name": "model-b", "size": 4e9}])
+    monkeypatch.setattr(L, "plan_angles", lambda *a, **k: [])
+    monkeypatch.setattr(L._research, "reset_ddg_breaker", lambda: None)
+    monkeypatch.setattr(L, "ResearchWorker", _StageRW)
+    monkeypatch.setattr(L, "Judge", _FakeJudge)
+
+    lines = []
+    L.run("what is X", depth="quick", out_dir=str(tmp_path / "reports"), n_analysts=2,
+         on_progress=lines.append)
+
+    # pick_cast may reorder the cast (family/size-diverse selection) — don't assume which
+    # analyst index either model lands at. The regression this guards against is a stage
+    # line's prefix naming the WRONG model, not a specific ordering.
+    a_lines = [ln for ln in lines if "stage-from-model-a" in ln]
+    b_lines = [ln for ln in lines if "stage-from-model-b" in ln]
+    assert a_lines and b_lines
+    assert all("model-a" in ln.split(":")[0] for ln in a_lines)   # prefix (before the colon) names model-a
+    assert all("model-b" in ln.split(":")[0] for ln in b_lines)   # prefix names model-b, never model-a's
+
+
 def test_run_surfaces_friendly_no_ollama(monkeypatch):
     monkeypatch.setattr(L, "detect_models",
                         lambda: (_ for _ in ()).throw(SystemExit("Can't reach Ollama … `ollama serve`")))
@@ -114,7 +152,7 @@ class _ZeroSourceRW:
     def __init__(self, *a, **k):
         pass
 
-    def research(self, brief):
+    def research(self, brief, on_progress=None):
         return {"text": "(No web or local sources reachable for this brief; no findings to report.)",
                 "tokens": 0, "elapsed_s": 0.1,
                 "research": {"country": "x", "sources": [], "local_sources": []}}
@@ -145,7 +183,7 @@ def test_run_local_scope_with_library_sources_does_not_raise(monkeypatch, tmp_pa
         def __init__(self, *a, **k):
             pass
 
-        def research(self, brief):
+        def research(self, brief, on_progress=None):
             return {"text": "a library finding [L1]", "tokens": 5, "elapsed_s": 0.1,
                     "research": {"country": "x", "sources": [],
                                 "local_sources": [{"id": "L1", "title": "notes", "source": "/n.md"}]}}
@@ -167,7 +205,7 @@ def test_analyst_crash_does_not_discard_other_analysts_contributions(monkeypatch
         def __init__(self, *a, **k):
             pass
 
-        def research(self, brief):
+        def research(self, brief, on_progress=None):
             _FlakyRW.calls += 1
             if _FlakyRW.calls == 2:
                 raise RuntimeError("simulated Ollama timeout")
@@ -189,7 +227,7 @@ def test_all_analysts_failing_raises_systemexit_naming_them(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def research(self, brief):
+        def research(self, brief, on_progress=None):
             raise RuntimeError("Ollama down")
 
     monkeypatch.setattr(L, "ResearchWorker", _AlwaysFailRW)
@@ -273,7 +311,7 @@ def test_local_run_final_summary_counts_local_sources(monkeypatch, tmp_path):
         def __init__(self, *a, **k):
             pass
 
-        def research(self, brief):
+        def research(self, brief, on_progress=None):
             return {"text": "a finding [L1]", "tokens": 5, "elapsed_s": 0.1,
                     "research": {"country": "x", "sources": [],
                                 "local_sources": [{"id": "L1", "title": "notes", "source": "/n.md"}]}}

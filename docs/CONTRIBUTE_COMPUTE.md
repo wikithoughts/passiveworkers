@@ -111,4 +111,6 @@ Want to run your own coordinator instead of joining someone else's? See
 [docs/network/SELF_HOST.md](network/SELF_HOST.md). Want to *ask* the network for work
 rather than contribute compute? See [docs/network/ASKING.md](network/ASKING.md).
 
-Questions, or want a coordinator URL + token? Open an issue or reach the maintainer.
+Want a coordinator URL + token from the maintainer instead of self-hosting? Use the
+[join-the-network waitlist](https://github.com/wikithoughts/passiveworkers/issues/new?template=join-the-network.yml).
+Other questions → open an issue.

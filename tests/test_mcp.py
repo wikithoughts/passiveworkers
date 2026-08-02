@@ -94,6 +94,82 @@ def test_library_add_tool_happy_path(monkeypatch):
     assert M._library_add_text("/docs") == "Indexed 7 chunks from /docs."
 
 
+# ---------------------------------------------------------------- R26: MCP progress bridge
+def test_mcp_progress_bridge_schedules_report_progress_on_loop():
+    calls = []
+
+    class FakeCtx:
+        async def report_progress(self, progress, total=None, message=None):
+            calls.append((progress, total, message))
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        on_progress = M._make_mcp_progress(FakeCtx(), loop)
+        # Call from a DIFFERENT thread, like the real asyncio.to_thread() worker does — calling
+        # it directly on the loop's own thread would deadlock: on_progress blocks on
+        # fut.result(), and the loop can't run the scheduled coroutine while its own thread
+        # is the one blocked waiting for it.
+        await asyncio.to_thread(on_progress, "a")
+        await asyncio.to_thread(on_progress, "b")
+
+    asyncio.run(go())
+    assert calls == [(1.0, None, "a"), (2.0, None, "b")]
+
+
+def test_mcp_progress_bridge_cancels_on_timeout_instead_of_abandoning(monkeypatch):
+    # Review finding: a stalled client's report_progress must be CANCELLED on timeout, not just
+    # stopped-waiting-on — an abandoned (uncancelled) send would sit forever in the stdio
+    # transport's shared, zero-buffer write channel and could eventually block the real tool
+    # response from ever being delivered, not just cost this one call its timeout.
+    import asyncio as _asyncio
+
+    class StalledCtx:
+        async def report_progress(self, progress, total=None, message=None):
+            await _asyncio.sleep(999)   # never returns — simulates a client that stopped reading
+
+    async def go():
+        loop = _asyncio.get_running_loop()
+        on_progress = M._make_mcp_progress(StalledCtx(), loop, timeout=0.05)
+        await _asyncio.to_thread(on_progress, "a")
+        # give the loop a beat to actually process the cancellation
+        await _asyncio.sleep(0.1)
+        pending = [t for t in _asyncio.all_tasks() if not t.done() and t is not _asyncio.current_task()]
+        assert pending == [], f"a stalled progress send was left running instead of cancelled: {pending}"
+
+    asyncio.run(go())
+
+
+def test_mcp_progress_bridge_ctx_none_is_a_noop():
+    async def go():
+        loop = asyncio.get_running_loop()
+        on_progress = M._make_mcp_progress(None, loop)
+        on_progress("a")   # must not raise — no ctx means no client ever asked for progress
+    asyncio.run(go())
+
+
+def test_research_tool_forwards_progress_and_return_value_unchanged(monkeypatch):
+    def fake_structured(brief, depth, analysts, scope, on_progress=None):
+        if on_progress:
+            on_progress("stage one")
+            on_progress("stage two")
+        return {"report": "R", "sources_web": 1, "sources_local": 0, "n_sources": 1,
+                "analysts_used": 1, "depth_requested": depth, "depth_achieved": depth,
+                "error": None}
+    monkeypatch.setattr(M, "_run_research_structured", fake_structured)
+
+    calls = []
+
+    class FakeCtx:
+        async def report_progress(self, progress, total=None, message=None):
+            calls.append(message)
+
+    result = asyncio.run(M._research_tool("q", "quick", 2, "both", ctx=FakeCtx()))
+    assert calls == ["stage one", "stage two"]
+    assert result == {"report": "R", "sources_web": 1, "sources_local": 0, "n_sources": 1,
+                      "analysts_used": 1, "depth_requested": "quick", "depth_achieved": "quick",
+                      "error": None}
+
+
 def test_build_server_registers_the_three_documented_tools():
     """G9 review: build_server()/tool registration had zero coverage — CI installs the [mcp]
     extra but never actually instantiates the server. Confirms the FastMCP instance exists with

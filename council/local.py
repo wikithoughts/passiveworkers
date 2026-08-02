@@ -249,15 +249,24 @@ def run(brief: str, depth: str = "standard", editor_mode: str = "local",
         if should_cancel and should_cancel():          # cooperative cancel at each analyst boundary
             raise Cancelled()
         angle = angles[i - 1] if i <= len(angles) else ""
-        emit(f"[{i}/{len(analysts)}] {model} researching the live web…"
-             + (f" (angle: {angle})" if angle else ""))
+        prefix = f"[{i}/{len(analysts)}] {model}"
+        emit(f"{prefix} researching the live web…" + (f" (angle: {angle})" if angle else ""))
         t = time.monotonic()
+
+        # R26: stage-level progress from inside THIS analyst's research() call, prefixed so it's
+        # distinguishable from other analysts' lines. `_prefix=prefix` binds the CURRENT loop
+        # value as a default argument, evaluated now — not a live closure over the loop variable
+        # `prefix`, which is reassigned every iteration and would otherwise make every analyst's
+        # stage messages render under whichever analyst finishes the loop last.
+        def _stage(msg: str, _prefix: str = prefix) -> None:
+            emit(f"    {_prefix}: {msg}")
+
         try:
             rw = ResearchWorker(worker_id=model, model=model, lens="independent analyst",
                                 country=os.environ.get("PW_COUNTRY", "your location"),
                                 depth=depth, angle=angle, page_evidence=page_evidence, scope=scope,
                                 ollama_base=OLLAMA)   # same endpoint as detection (honors PW_OLLAMA_BASE)
-            out = rw.research(brief)
+            out = rw.research(brief, on_progress=_stage)
         except Cancelled:
             raise
         except Exception as exc:

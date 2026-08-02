@@ -1,0 +1,70 @@
+name: "🖥️ Join the network"
+description: Ask to join the opt-in compute commons — contribute a machine, or ask the network for work.
+title: "[waitlist] "
+labels: ["waitlist"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The network is invite-only while it hardens. This isn't a rejection — it's a
+        queue. Read [SECURITY.md](../../SECURITY.md) and
+        [docs/CONTRIBUTE_COMPUTE.md](../../docs/CONTRIBUTE_COMPUTE.md) (or
+        [docs/network/ASKING.md](../../docs/network/ASKING.md) if you want to *ask* the
+        network for work rather than contribute a machine) first, then fill this in.
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: What draws you?
+      options:
+        - Contribute my machine's idle compute (operator)
+        - Ask the network for research work (asker)
+        - Both
+        - Just curious / following along
+    validations:
+      required: true
+
+  - type: input
+    id: contact
+    attributes:
+      label: How should we reach you?
+      description: A GitHub handle is enough — we'll reply on this issue thread.
+      placeholder: "@yourhandle"
+    validations:
+      required: true
+
+  - type: input
+    id: country
+    attributes:
+      label: What country would your machine run from?
+      description: >-
+        Only relevant if you're contributing compute — a node's own internet egress is
+        the geo-diversity moat (different countries see genuinely different search
+        results), so under-represented regions are especially valuable. Leave blank if
+        you're only interested in asking.
+      placeholder: "e.g. DE, BR, IN"
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware summary (operators only)
+      description: RAM, GPU (if any), and whether the machine is always-on or occasional.
+      placeholder: "16GB RAM, no GPU, always-on Linux box"
+
+  - type: checkboxes
+    id: read-the-docs
+    attributes:
+      label: Before submitting
+      options:
+        - label: >-
+            I've read SECURITY.md and CONTRIBUTE_COMPUTE.md (or ASKING.md) and understand
+            this is early-access, invite-only software.
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **On response time, honestly:** every request here gets a reply — even if that
+        reply is "not yet." This is unpaid open-source work, so timing varies; we're not
+        going to promise a number we can't keep.

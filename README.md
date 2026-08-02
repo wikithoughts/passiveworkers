@@ -199,7 +199,9 @@ both real right now:
 2. **Join an existing coordinator.** The maintainer's own coordinator is invite-only
    while it hardens — [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md) to
    contribute a machine, [docs/network/ASKING.md](docs/network/ASKING.md) to submit
-   work to one (`pw ask`).
+   work to one (`pw ask`). No invite yet? Use the
+   [join-the-network waitlist](https://github.com/wikithoughts/passiveworkers/issues/new?template=join-the-network.yml)
+   — every request gets a reply.
 
 Two invariants hold regardless of which door: **you choose the kinds of work your
 machine accepts when you join** (research, judging, batch, assisted) — every task it

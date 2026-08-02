@@ -7,7 +7,8 @@ Make your computer work for you (and, opt-in, for others). Research is the flags
   Single-player — run jobs on your own machine:
     pw research "your brief" [--quick|--deep] [--editor api] [--analysts N] [--local|--web] [--json] [--html]
     pw serve                       # local research desk at http://127.0.0.1:8770
-    pw status                      # is Ollama up? which models? library? joined?  (alias: pw doctor)
+    pw status [--eta]               # is Ollama up? which models? library? joined?  (alias: pw doctor)
+                                     # --eta probes tok/s and prints a real time estimate per depth
     pw reports                     # list past reports
     pw library add <path|dir>      # index your own documents (private, local RAG)
     pw library list | search <query> | remove <path> | clear
@@ -60,7 +61,7 @@ def main() -> int:
         return 0
     if cmd in ("status", "doctor"):
         from council.doctor import main as doctor_main
-        return doctor_main()
+        return doctor_main(rest)
     if cmd == "reports":
         return _list_reports()
     if cmd == "library":
