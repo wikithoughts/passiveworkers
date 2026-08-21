@@ -13,4 +13,3 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .coverage
-.claude/
