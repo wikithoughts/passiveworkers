@@ -1,0 +1,21 @@
+# .orchestration/lanes.yml — PassiveWorkers
+# Python project (ruff + pyright + pytest, coverage floor 75% enforced in CI). `gh-pages`
+# is a separate content branch (the live wikithoughts.github.io/passiveworkers/ source),
+# not something any lane will touch. release.yml triggers on version tags, not on merge —
+# no merge-triggered deploy exists for this repo.
+verify: "ruff check . && pytest tests/ -q --cov=council --cov-fail-under=75"
+
+hot_files: []
+counters: {}
+singleton_paths: []
+deploy_on_merge: []
+
+setup:
+  run: null
+  copy_env: []
+  ports: {}
+
+required_checks: [ci]
+merge: squash
+force_push: allowed
+serialized_ci: []
