@@ -31,6 +31,7 @@ from council.judge import _extract_json
 from council.research import (extract_date_hint, fetch_extract, inject_recency, is_breaking,
                               is_time_sensitive, order_by_recency, route_engines,
                               search_structured)
+from council.worker import LENSES
 
 
 def _num_env(key: str, default, cast):
@@ -161,9 +162,11 @@ class ResearchWorker:
         cite = " and ".join(p for p in (
             ("[S#] for web sources" if evidence else ""),
             ("[L#] for your documents" if local else "")) if p) or "[S#]"
+        lens_instruction = LENSES.get(self.lens, LENSES["neutral"])
         return self._generate(
             f"{role} Today is {self._today()}. Using ONLY the sources below, "
             "write your findings on the brief:\n"
+            f"  • {lens_instruction}\n"
             "  • Lead with the most decision-relevant findings; concrete numbers and dates.\n"
             "  • CURRENCY MATTERS: when sources span time or conflict, trust the MOST RECENT "
             "(sources are listed with their dates, freshest first), and STATE the date of any "
