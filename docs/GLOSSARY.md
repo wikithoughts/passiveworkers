@@ -49,7 +49,8 @@ uses the old names in its older entries.
   work over time while leaving ungated work open to newcomers.
 - **Lens** — an angle of attack given to an analyst/node via its prompt (e.g.
   `opportunity`, `skeptic`, `first_principles`, `practical`) to pull different ideas
-  from the same or different models.
+  from the same or different models (applies uniformly to both chat jobs, `pw ask`,
+  and research jobs, `pw research`/network research jobs — R38).
 - **Model-downgrade** — the real cheat under a non-cash credit: a node silently running
   a smaller or more-quantized model than it claims, to earn credit for less work.
 - **Cross-hardware verification** — confirming that honest answers from different
