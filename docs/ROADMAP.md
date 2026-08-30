@@ -89,6 +89,58 @@ excerpts in `docs/TRIAL_RESULTS.md`). The merge lost on substance; the ONLY coun
 judge). Steering: lead with geo-research/privacy/commons, add a ≥14B local anchor mind, deepen
 research + show citations; the founder should repeat the protocol in the app for the human signal.
 
+## Round 39 — full-repo audit + parallel PR batch (2026-08-30)
+Three parallel research passes (docs staleness/conflicts, code/pending-work, external
+ecosystem) fed a file-disjoint 8-lane PR batch, built and verified in parallel worktrees and
+squash-merged together same-day:
+- **Docs honesty fixes** — `docs/FEDERATION_V2.md` had drifted stale in the *inverted*
+  direction (claiming "design"/"roadmap" for D19/D21/D22/D24/D53 work shipped months earlier);
+  rewritten to present-tense shipped status per section. `docs/ECONOMICS.md` pointed at the
+  legacy demo path's constants as "current parameters"; now distinguishes that from the live
+  network's real source of truth (`council/net/config.py`'s `pool_for()`, D50).
+  `docs/CONTRIBUTE_COMPUTE.md` called per-operator enrollment tokens "the next step" two
+  paragraphs after telling the reader to use one; fixed to describe the shipped D37 mechanism.
+  `docs/PRIOR_ART.md` gained external validation (arXiv:2605.06635 on citation-accuracy floors,
+  validating D27's framing) and a stated differentiator (no comparable non-token,
+  non-transferable-credit peer network found in the wider ecosystem). `README.md`/`llms.txt`
+  now link previously-orphaned docs (`CHANGELOG.md`, `AGENTS.md`, `docs/PRIOR_ART.md`, etc.).
+- **R38 (lens-axis) closed** — `lens` previously only shaped chat-job prompts (`council/worker.py`);
+  `council/researcher.py`'s `_draft()` now injects the same `LENSES` instruction into research-job
+  prompts, so `pw research`'s network path gets real lens-driven diversity, matching what
+  `docs/GLOSSARY.md`'s Lens entry already implied. Single-player `pw research`
+  (`council/local.py`'s hardcoded lens string) verified unaffected via a regression test.
+- **New: OpenAI-compatible inference backend** — `council/ollama.py` (the one shared client
+  every analyst/judge/worker/batch/rerank call goes through) now dispatches to either Ollama's
+  native API or an OpenAI-compatible `/v1/chat/completions` endpoint (`PW_INFERENCE_BACKEND=openai`
+  + `PW_INFERENCE_API_BASE`), so a node can run against llama.cpp-server or LM Studio instead of
+  Ollama with zero changes to any caller. No new hard dependency.
+- **Coverage gap closed** — `council/paths.py` (AGENTS.md names `write_private_json` explicitly
+  as security-sensitive) had no dedicated test; `tests/test_paths.py` now covers the `0600`-write
+  path, the `"default"`-sentinel-exclusion bug `coordinator_entries()` exists to prevent, and both
+  path-resolution functions' env-var overrides.
+- **Found, not fixed this round**: a genuine pre-existing CI issue on `main` — the `types`
+  (pyright) job and several test-matrix legs (`test (3.10)`–`test (3.14)`) are failing
+  independently of any of this round's changes (confirmed on `main`'s last two pushes, before
+  this round started); and a flaky test (`tests/test_credit_invite.py::test_invite_then_ask_with_enroll_token_gets_starter_grant`)
+  whose randomly-generated enroll token occasionally starts with `-`, which argparse then
+  misparses as a flag. Both need their own follow-up, not folded into this docs/backlog batch.
+- **Explicitly deferred, same as before**: R30 (currency i18n), R34 (two-identities merge, still
+  gated on assisted-task volume), R35 (Windows CI vs. classifier), R36 (`council`/`pw` package-name
+  collision — a pre-1.0 decision), R37 (store.py extraction, still gated on a second contributor).
+
+## Round 38 — waitlist + progress/ETA, the Round 37 follow-up (2026-08-02)
+Shipped same day as Round 37, as `[0.5.0]`'s second half (see `CHANGELOG.md`) — this file never
+got its own heading for it until Round 39's audit caught the gap. Closes the two items Round 37
+explicitly deferred (R25, R26):
+- **R25 — waitlist door** — a "🖥️ Join the network" issue template
+  (`.github/ISSUE_TEMPLATE/join-the-network.yml`); the network stays invite-only, but there's now
+  a real door to ask through. GitHub Private Vulnerability Reporting also enabled for this repo.
+- **R26 — progress/ETA** — stage-level research progress (planning / searching / refining /
+  fetching / drafting / citation-check) surfaced in `pw research`'s terminal output, `pw serve`'s
+  live log, and as real MCP progress notifications on the `research` tool; `pw status --eta`, an
+  opt-in tok/s probe giving a structural low/high time estimate per research depth (default
+  `pw status` stays the documented ~1-second preflight).
+
 ## Round 37 — the PM review, executed (D53, 2026-08-02)
 
 > Spelled out as "Round 37," not "R37" — this batch's own source, `docs/REVIEW_2026-07.md`,
@@ -145,14 +197,16 @@ passes, not zero:
   derived search queries." All fixed; regression tests added where the bug was in code.
 
 **What this round deliberately did NOT do**: R25 (waitlist UI) and R26 (progress/ETA — needs a
-new hook threaded through the whole pipeline) were scoped out for a follow-up pass; R30
-(currency i18n) stays deferred; R34–R38 remain the review's own named deferrals. `PW_ENROLL`
-defaults to on in the new `docker-compose.yml` coordinator service, but the live two-country VPS
-deployment's actual enrollment setting was deliberately left untouched — flipping a production
-coordinator's registration behavior is a real operational decision, not a docs-consistency fix.
+new hook threaded through the whole pipeline) were scoped out for a follow-up pass (shipped
+same-day as Round 38, below); R30 (currency i18n) stays deferred; R34–R37 remain the review's own
+named deferrals, and R38 (lens-axis) was closed in Round 39. `PW_ENROLL` defaults to on in the new
+`docker-compose.yml` coordinator service, but the live two-country VPS deployment's actual
+enrollment setting was deliberately left untouched — flipping a production coordinator's
+registration behavior is a real operational decision, not a docs-consistency fix.
 
-Next: founder's call on whether to publish this as a release, and on Arc 2's remaining
-door-openers (R25/R26) as their own pass.
+Next: see Round 38/39 above — R25/R26 shipped same-day, R38 closed in Round 39. Open: the
+founder's call on R36's package-name collision, and Round 39's newly-found pre-existing CI
+failure on `main`.
 
 ## R36 — Rerank + recursive research + hardening sweep (D52, 2026-07-10)
 Founder chose **"do them all"** across the four next-move candidates → a broad 0.4.0 round:
