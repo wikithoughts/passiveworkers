@@ -26,4 +26,26 @@ we own end to end. (See `docs/DECISIONS.md` D18 for the reuse policy.)
   fully-local research with adaptive engine selection and SearXNG; their private-documents RAG is on
   our roadmap.
 
+## What the wider ecosystem confirms
+
+- **The "floor, not verified-true" framing is externally validated.** ["Cited but Not
+  Verified"](https://arxiv.org/abs/2605.06635) (arXiv:2605.06635, May 2026) benchmarked frontier
+  deep-research agents and found only 39–77% factual/citation accuracy — and accuracy *drops* as
+  tool-call count scales up. `council/fidelity.py` (D27) already refuses to overclaim: it's an
+  explicit lexical **grounding floor** (content-token overlap plus fabricated-number detection), and
+  a GROUNDED verdict is documented as "not obviously fabricated," never "verified true." This paper
+  is independent confirmation that the framing is the honest stance, not an undersell — if
+  well-resourced frontier systems can't clear the bar of "verified," a tool that states plainly it
+  measures a floor is more trustworthy than one that implies otherwise.
+- **No comparable non-token peer network exists.** Among local/decentralized-compute-sharing
+  projects we surveyed — [GaiaNet](https://github.com/GaiaNet-AI) (added staking/validator
+  incentives in 2026), [Petals](https://github.com/bigscience-workshop/petals) (BitTorrent-style LLM
+  sharding with no incentive layer at all, flagged in research literature as vulnerable to
+  free-riding without one), and SwarmHarness ([arXiv:2605.28764](https://arxiv.org/abs/2605.28764), a
+  2026 academic proposal for token/incentive-aligned agent networks) — none implement a
+  non-transferable, no-token, earned-only credit model. D1 in `docs/DECISIONS.md` commits us to
+  exactly that: internal, non-transferable credit, no tradeable token, ever. Worth stating explicitly
+  rather than leaving implicit: as far as this survey found, that combination is a real positioning
+  differentiator, not just a self-imposed constraint.
+
 Thank you to these authors and communities.
