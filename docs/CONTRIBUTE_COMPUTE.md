@@ -97,8 +97,11 @@ the limit key is the **socket peer**, which behind a tunnel is loopback — i.e.
 **global** cap that is spoof-proof. Running more than a handful of operators? Put the coordinator
 behind a reverse proxy that **sets and sanitizes** `X-Forwarded-For`, then set `PW_TRUST_XFF=1` for
 per-client limits. Do **not** set `PW_TRUST_XFF` without such a proxy — clients could rotate the
-header to bypass the limits. (Rate limits bound abuse *rate*; gating *who* may register at all is the
-next step — per-operator enrollment tokens.)
+header to bypass the limits. Rate limits bound abuse *rate*; gating *who* may register at all is a
+separate, already-shipped mechanism (D37): with `PW_ENROLL` on, `/nodes/register` requires a valid
+`X-Enroll-Token` minted by an operator via `/admin/enroll`, and `/users` (asker signup) stays open
+but grants **zero** starter credit without one — so identity creation stays frictionless while free
+credit stays gated.
 
 ## The geo-diversity moat
 
