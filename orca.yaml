@@ -1,0 +1,26 @@
+scripts:
+  setup: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MAIN="${ORCA_ROOT_PATH:-$(dirname "$(git rev-parse --git-common-dir)")}"
+    seed() {  # seed <relative-path> [template-to-fall-back-to]
+      local rel="$1" tpl="${2:-}"
+      if [ -f "$MAIN/$rel" ]; then
+        mkdir -p "$(dirname "$rel")"; cp -p "$MAIN/$rel" "$rel"; echo "  seeded $rel"
+      elif [ -n "$tpl" ] && [ -f "$tpl" ]; then
+        cp "$tpl" "$rel"; echo "  WARNING: no real $rel in main checkout -- copied $tpl"
+      else
+        echo "  SKIP: no $rel in main checkout and no template"
+      fi
+    }
+
+    echo "== python venv + editable install =="
+    python3 -m venv .venv
+    .venv/bin/python -m pip install --upgrade pip
+    .venv/bin/pip install -e '.[dev,all]'
+
+    echo "== Seed env file from the main checkout =="
+    seed .vps.env
+
+    echo "Worktree setup complete."
+    echo "Not run automatically: docker compose up (binds 8080/8770/8088), ollama pull, pw serve"
