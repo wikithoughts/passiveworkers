@@ -223,11 +223,11 @@ the alternatives we rejected and the reasoning, is in
 
 | For | Docs |
 |---|---|
-| **Users** | [USE_CASES.md](docs/USE_CASES.md) (who this helps, 15 scenarios) · [VISION.md](docs/VISION.md) (why) |
+| **Users** | [USE_CASES.md](docs/USE_CASES.md) (who this helps, 15 scenarios) · [VISION.md](docs/VISION.md) (why) · [CONTEXT.md](docs/CONTEXT.md) (short pointer to VISION.md) · [preview/sample-report.md](docs/preview/sample-report.md) (example report output) |
 | **Network operators** | [CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md) · [network/SELF_HOST.md](docs/network/SELF_HOST.md) · [network/ASKING.md](docs/network/ASKING.md) |
-| **Contributors** | [CONTRIBUTING.md](CONTRIBUTING.md) · [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [GLOSSARY.md](docs/GLOSSARY.md) · [ROADMAP.md](docs/ROADMAP.md) · [RELEASING.md](docs/RELEASING.md) |
-| **Skeptics** | [DECISIONS.md](docs/DECISIONS.md) · [ECONOMICS.md](docs/ECONOMICS.md) · [TRIAL_RESULTS.md](docs/TRIAL_RESULTS.md) · [SECURITY.md](SECURITY.md) |
-| **AI assistants** | [llms.txt](llms.txt) · [INSTALL.md](docs/INSTALL.md) · [CLAUDE.md](CLAUDE.md) |
+| **Contributors** | [CONTRIBUTING.md](CONTRIBUTING.md) · [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [GLOSSARY.md](docs/GLOSSARY.md) · [ROADMAP.md](docs/ROADMAP.md) · [RELEASING.md](docs/RELEASING.md) · [CHANGELOG.md](CHANGELOG.md) · [PRIOR_ART.md](docs/PRIOR_ART.md) · [ANNOUNCE.md](docs/ANNOUNCE.md) |
+| **Skeptics** | [DECISIONS.md](docs/DECISIONS.md) · [ECONOMICS.md](docs/ECONOMICS.md) · [TRIAL_RESULTS.md](docs/TRIAL_RESULTS.md) · [TRIAL_PROTOCOL.md](docs/TRIAL_PROTOCOL.md) · [SECURITY.md](SECURITY.md) |
+| **AI assistants** | [llms.txt](llms.txt) · [INSTALL.md](docs/INSTALL.md) · [CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md) |
 
 ## Status
 

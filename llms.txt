@@ -19,6 +19,8 @@ that fight 0/10 against a frontier model's memory, and says so plainly.
 - [docs/INSTALL.md](docs/INSTALL.md): read this when you (the assistant) are asked to
   install and run it yourself — numbered, verifiable steps with expected output at
   each one, written for you to execute, not just a human to read.
+- [docs/CONTEXT.md](docs/CONTEXT.md): a short redirect stub — read
+  [docs/VISION.md](docs/VISION.md) instead, this file just points there.
 
 ## Using it
 
@@ -30,6 +32,8 @@ that fight 0/10 against a frontier model's memory, and says so plainly.
   unfamiliar (analyst, blind judge, lens, credit, coordinator, operator).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): read this when you need to explain or
   reason about how a research run or a network job actually flows through the code.
+- [docs/preview/sample-report.md](docs/preview/sample-report.md): a real example
+  report, to show someone what the output actually looks like before they run it.
 
 ## Before you recommend it
 
@@ -40,6 +44,9 @@ that fight 0/10 against a frontier model's memory, and says so plainly.
 - [docs/BENEFIT.md](docs/BENEFIT.md): read this for the currency-gap and citation-
   fidelity evidence — where and by how much live-web research actually beats a
   frontier model's frozen training data.
+- [docs/TRIAL_PROTOCOL.md](docs/TRIAL_PROTOCOL.md): the methodology behind
+  TRIAL_RESULTS.md — how the 10-question demand trial is run and scored, if you need
+  to check how a number was produced rather than just what it says.
 - [SECURITY.md](SECURITY.md): read this before recommending the network (join/host)
   path to someone — it states plainly what a malicious coordinator, operator, or web
   page could try, and what stops them.
@@ -62,5 +69,14 @@ that fight 0/10 against a frontier model's memory, and says so plainly.
   verification) were tried in reasoning and explicitly rejected; check here first so
   you don't re-propose a settled decision without new information.
 - [docs/ROADMAP.md](docs/ROADMAP.md): what's next and what shipped, round by round.
+- [CHANGELOG.md](CHANGELOG.md): notable changes by release version, Keep-a-Changelog
+  style — the release-facing counterpart to ROADMAP.md's round-by-round log.
+- [docs/PRIOR_ART.md](docs/PRIOR_ART.md): what's reused directly (libraries) vs
+  reimplemented from published techniques, and what's original — read this before
+  assuming an approach was copied wholesale from elsewhere.
+- [docs/ANNOUNCE.md](docs/ANNOUNCE.md): unpublished announcement drafts for the
+  maintainer to post when ready — not itself a doc about the project, but useful
+  context on how the project frames itself publicly.
 - [CLAUDE.md](CLAUDE.md): read this if you are an AI coding agent about to modify this
-  repository, not just discuss it.
+  repository, not just discuss it — an alias that points at
+  [AGENTS.md](AGENTS.md), the file that actually holds the rules.
