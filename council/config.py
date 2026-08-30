@@ -43,6 +43,8 @@ KNOWN: dict[str, dict] = {
     "PW_OLLAMA_BASE":       {"help": "Ollama endpoint (default http://localhost:11434)", "secret": False},
     "PW_OLLAMA_KEEP_ALIVE": {"help": "how long Ollama keeps a model warm (default 30m)",  "secret": False},
     "PW_OLLAMA_TIMEOUT":    {"help": "per-generation timeout seconds (default 300)",      "secret": False},
+    "PW_INFERENCE_BACKEND":  {"help": "ollama | openai — which inference API shape to speak (default ollama)", "secret": False},
+    "PW_INFERENCE_API_BASE": {"help": "OpenAI-compatible endpoint (llama.cpp-server/LM Studio) when PW_INFERENCE_BACKEND=openai", "secret": False},
     "PW_MODEL_CAP_GB":      {"help": "skip models larger than this many GB (0 = no cap)", "secret": False},
     "PW_PAGE_EVIDENCE":     {"help": "fetch full source pages for drafting, not just snippets (default 1)", "secret": False},
     "PW_COUNTRY":           {"help": "your location, tags the analyst vantage point",     "secret": False},
