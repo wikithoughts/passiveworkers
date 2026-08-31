@@ -208,7 +208,7 @@ class Store:
             f = float(grant)
             amount = f if (math.isfinite(f) and f >= 0.0) else 0.0
         max_uses = max(1, int(max_uses))
-        token = _secrets.token_urlsafe(24)
+        token = _secrets.token_hex(24)
         with self.lock:
             self.conn.execute(
                 "INSERT INTO enroll_tokens VALUES(?,?,?,?,?,?,?)",
@@ -282,7 +282,7 @@ class Store:
             revert = self._open_account_reversible(owner, grant_amount)
             try:
                 node_id = str(uuid.uuid4())
-                secret = _secrets.token_urlsafe(24)
+                secret = _secrets.token_hex(24)
                 self.conn.execute(
                     "INSERT INTO nodes(node_id, name, country, owner, answer_model, lens, can_judge, "
                     "judge_model, profile, last_seen, load, status, ip, secret_hash, machine_id, "
@@ -350,7 +350,7 @@ class Store:
             if enroll_token is not None:
                 red = self._redeem_enrollment_locked(enroll_token, enroll_kind)
                 grant_amount = red.get("grant") if red.get("ok") else 0.0   # bad token → 0 grant, still open
-            secret = _secrets.token_urlsafe(24)
+            secret = _secrets.token_hex(24)
             revert = self._open_account_reversible(handle, grant_amount)
             try:
                 self.conn.execute("INSERT INTO users(handle, secret_hash, created) VALUES(?,?,?)",
@@ -579,7 +579,7 @@ class Store:
                  pool, job_type, then_spec, 1 if (as_file and task_behavior(job_type).sharded) else 0))
             beh = task_behavior(job_type)
             for n in workers:
-                payload = {"question": question, "job_type": job_type}
+                payload: dict[str, Any] = {"question": question, "job_type": job_type}
                 if beh.sharded:
                     payload["shard"] = shards.get(n["node_id"], [])
                     # Type drives fetching, not the asker (review): download_extract ALWAYS fetches
