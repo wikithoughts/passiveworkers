@@ -41,10 +41,17 @@ def test_agent_run_drains_answer_and_judge_tasks_via_real_coordinator(
     assert job["status"] == "pending_answers"
 
     # run()'s while loop only sleeps on "nothing to do yet" branches (RequestException / 401 /
-    # 204-empty) — never mid-task — so making the mocked sleep stop the loop on first call drains
-    # every currently-queued task (answer, then judge) before halting cleanly.
+    # 204-empty) — never mid-task — but how many such "nothing to do" gaps land between draining
+    # the answer task and the judge task (or after) isn't guaranteed to be a fixed count. Poll the
+    # job's actual status on each sleep and only halt once it has truly reached its terminal state;
+    # the call cap is just a safety net against a genuine infinite-loop regression.
+    calls = {"n": 0}
+
     def fake_sleep(_s):
-        agent._running = False
+        calls["n"] += 1
+        view = coord_client.get(f"/jobs/{job['job_id']}").json()
+        if view["status"] == "done" or calls["n"] >= 20:
+            agent._running = False
     monkeypatch.setattr(A.time, "sleep", fake_sleep)
 
     agent.run()
@@ -79,11 +86,16 @@ def test_agent_run_reports_task_failure_via_fix_hint_and_counters(
     job = coord_client.post("/jobs", json={"question": "test brief", "type": "chat", "minds": 1},
                             headers={"X-User-Secret": asker}).json()
 
+    # Same fix as the sibling test above: poll the job's actual status on each sleep and only
+    # halt once it has truly reached its terminal ("failed") state, rather than assuming a fixed
+    # call count is always enough to drain the queue. The call cap is just a safety net against a
+    # genuine infinite-loop regression.
     calls = {"n": 0}
 
     def fake_sleep(_s):
         calls["n"] += 1
-        if calls["n"] >= 3:      # bound the loop even if it keeps finding failed-then-retried work
+        view = coord_client.get(f"/jobs/{job['job_id']}").json()
+        if view["status"] == "failed" or calls["n"] >= 20:
             agent._running = False
     monkeypatch.setattr(A.time, "sleep", fake_sleep)
 
