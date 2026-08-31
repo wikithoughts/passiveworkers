@@ -71,7 +71,9 @@ def test_helped_counted_once(store):
 
 
 def test_expiry_after_accept_refunds_and_blocks_late_deliver(store, monkeypatch):
-    import council.net.store as st
+    # _reap_once/_reap_loop live in _store_jobs (R37 mixin split) — that's the module whose
+    # `_now` the reaper actually reads, so that's what needs patching (not council.net.store).
+    import council.net._store_jobs as st
     j = _offer(store, asker="alice")
     tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
     store.accept_assisted(tid, "bobnode", "bob")
@@ -92,7 +94,8 @@ def test_expiry_after_accept_refunds_and_blocks_late_deliver(store, monkeypatch)
 def test_expiry_refund_failure_does_not_strand_hold(store, monkeypatch):
     # R36: a refund that raises (e.g. a ledger desync) must NOT fail-and-strand the asker's hold —
     # the reaper leaves the offer open and the NEXT tick self-heals once the refund path recovers.
-    import council.net.store as st
+    # _reap_once/_reap_loop live in _store_jobs (R37 mixin split) — patch `_now` there.
+    import council.net._store_jobs as st
     j = _offer(store, asker="alice")
     tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
     store.accept_assisted(tid, "bobnode", "bob")
