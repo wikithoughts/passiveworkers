@@ -80,6 +80,28 @@ def test_identity_is_cached_across_operators(coord_client, op_module, shim_facto
     assert (a.node_id, a.secret) == (b.node_id, b.secret)
 
 
+def test_identity_prefers_join_json_over_fresh_register(op_module, monkeypatch):
+    """A machine that already `pw join`ed this coordinator shares that node identity for
+    `pw tasks`/`pw accept`/`pw deliver` too, instead of minting (and appearing on the live
+    map as) a second node (R34). Mirrors _cached_node_secret()'s join.json-first lookup."""
+    OP = op_module
+    monkeypatch.setenv("PW_COORDINATOR", BASE)
+    monkeypatch.setenv("PW_TOKEN", "tok")
+    monkeypatch.setenv("PW_OWNER", "bob")
+
+    from council.net.agent import _save_join
+    _save_join({BASE: {"node_id": "joined-node-id", "node_secret": "joined-node-secret"},
+                "default": BASE})
+
+    def _boom(*a, **kw):
+        raise AssertionError("must not register a fresh node when a join.json identity exists")
+    monkeypatch.setattr(OP, "requests", type("R", (), {"post": staticmethod(_boom)}))
+
+    op = OP.Operator()
+    assert (op.node_id, op.secret) == ("joined-node-id", "joined-node-secret")
+    assert not OP.STATE.exists()   # never fell through to the operator.json cache-then-register path
+
+
 def test_operator_json_written_owner_only(coord_client, op_module, shim_factory, monkeypatch):
     """operator.json holds a bearer node_secret — must never have a world/group-readable window
     (review finding: the old write_text()-then-chmod() left one; now routed through
