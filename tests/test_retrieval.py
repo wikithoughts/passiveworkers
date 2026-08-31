@@ -1,5 +1,5 @@
 """Retrieval primitives: BM25 lexical scoring + reciprocal rank fusion (R8)."""
-from council.retrieval import BM25Okapi, tokenize, reciprocal_rank_fusion
+from passiveworkers.retrieval import BM25Okapi, tokenize, reciprocal_rank_fusion
 
 CORPUS = [
     "project polaris ships september budget aed",

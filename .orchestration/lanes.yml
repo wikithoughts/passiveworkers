@@ -3,7 +3,7 @@
 # is a separate content branch (the live wikithoughts.github.io/passiveworkers/ source),
 # not something any lane will touch. release.yml triggers on version tags, not on merge —
 # no merge-triggered deploy exists for this repo.
-verify: "ruff check . && pytest tests/ -q --cov=council --cov-fail-under=75"
+verify: "ruff check . && pytest tests/ -q --cov=passiveworkers --cov-fail-under=75"
 
 hot_files: []
 counters: {}

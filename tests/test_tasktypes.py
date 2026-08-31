@@ -8,7 +8,7 @@ import pytest
 
 # ----------------------------------------------------------------- registry mapping
 def test_registry_behaviors():
-    from council.net.config import task_behavior
+    from passiveworkers.net.config import task_behavior
     de = task_behavior("download_extract")
     assert de.executor == "batch" and de.sharded and de.fetch and de.judge == "spot_check"
     assert de.assemble == "shards" and de.framing
@@ -24,7 +24,7 @@ def test_registry_behaviors():
 
 
 def test_new_types_in_catalog():
-    from council.net.config import JOB_TYPES
+    from passiveworkers.net.config import JOB_TYPES
     assert "download_extract" in JOB_TYPES and "code_generation" in JOB_TYPES
 
 
@@ -34,11 +34,11 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "tt.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "100000")
     import importlib
-    import council.ledger as led
+    import passiveworkers.ledger as led
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 
@@ -123,7 +123,7 @@ def test_chat_and_research_are_not_sharded(store):
 # ----------------------------------------------------------------- worker-side framing dispatch
 def test_agent_applies_type_framing_and_fetch(monkeypatch):
     monkeypatch.setenv("PW_COORDINATOR", "http://127.0.0.1:9")
-    import council.net.agent as ag
+    import passiveworkers.net.agent as ag
     captured = {}
 
     class _BW:
@@ -135,7 +135,7 @@ def test_agent_applies_type_framing_and_fetch(monkeypatch):
             captured["fetch"] = fetch
             return {"text": "x", "results": [], "tokens": 0, "elapsed_s": 0.0}
 
-    monkeypatch.setattr("council.batch.BatchWorker", _BW)
+    monkeypatch.setattr("passiveworkers.batch.BatchWorker", _BW)
     agent = ag.Agent()
 
     agent._do_answer({"task_id": "t1", "country": "X", "payload": {

@@ -6,12 +6,12 @@ import importlib
 
 import pytest
 
-import council.net.geoip as G
+import passiveworkers.net.geoip as G
 
 
 def _reload():
-    for m in ("council.ledger", "council.net.config", "council.net.store",
-              "council.net.coordinator_app"):
+    for m in ("passiveworkers.ledger", "passiveworkers.net.config", "passiveworkers.net.store",
+              "passiveworkers.net.coordinator_app"):
         importlib.reload(importlib.import_module(m))
 
 
@@ -71,14 +71,14 @@ class _Req:
 
 
 def test_client_ip_ignores_xff_by_default(monkeypatch):
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     monkeypatch.delenv("PW_TRUST_XFF", raising=False)
     # an attacker's spoofed XFF must be IGNORED → the real socket peer is used (anti-geo-spoof)
     assert capp._client_ip(_Req("203.0.113.9", xff="8.8.8.8")) == "203.0.113.9"
 
 
 def test_client_ip_trusts_first_xff_hop_only_when_enabled(monkeypatch):
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     monkeypatch.setenv("PW_TRUST_XFF", "1")
     assert capp._client_ip(_Req("10.0.0.1", xff=" 8.8.8.8 , 10.0.0.1")) == "8.8.8.8"   # first hop, trimmed
     assert capp._client_ip(_Req("10.0.0.1")) == "10.0.0.1"                              # no XFF → peer
@@ -91,7 +91,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_TOKEN", "tok")
     monkeypatch.delenv("PW_ENROLL", raising=False)        # open registration for these tests
     _reload()
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     from fastapi.testclient import TestClient
     return capp, TestClient(capp.app)
 
@@ -143,7 +143,7 @@ def test_register_migration_adds_geo_column(tmp_path, monkeypatch):
 
     monkeypatch.setenv("PW_DB", str(db))
     _reload()
-    import council.net.store as st
+    import passiveworkers.net.store as st
     s = st.Store()                                         # boots → runs the migration
     cols = {r["name"] for r in s.conn.execute("PRAGMA table_info(nodes)")}
     assert "geo_country" in cols

@@ -21,7 +21,7 @@ for i in $(seq 1 30); do curl -sf "$URL/healthz" >/dev/null 2>&1 && break; sleep
 echo "✓ tunnel up to the live Helsinki hub"
 
 start(){ PW_NAME="$1" PW_OWNER="$2" PW_COUNTRY="$3" PW_ANSWER_MODEL="$4" PW_LENS="$5" \
-         PW_CAN_JUDGE="$6" PW_JUDGE_MODEL="$7" python -m council.net.agent >"/tmp/pw/mac_$1.log" 2>&1 & pids+=($!); }
+         PW_CAN_JUDGE="$6" PW_JUDGE_MODEL="$7" python -m passiveworkers.net.agent >"/tmp/pw/mac_$1.log" 2>&1 & pids+=($!); }
 start macA mac_dubai AE gemma3:4b  opportunity 0 ""
 start macB mac_dubai AE gemma2:9b  skeptic     0 ""
 start judge judge_mac AE ""        neutral     1 qwen2.5:14b

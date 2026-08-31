@@ -1,6 +1,6 @@
 """Local document library: chunk → (mocked) embed → cosine retrieval, with isolation."""
 
-import council.library as L
+import passiveworkers.library as L
 
 
 def _fake_embed(texts):
@@ -181,7 +181,7 @@ def test_cli_add_prints_fail_not_checkmark_when_all_skipped(tmp_path, monkeypatc
     monkeypatch.setattr(L, "requests", type("R", (), {"get": staticmethod(
         lambda *a, **k: (_ for _ in ()).throw(ConnectionError()))}))
     (tmp_path / "a.md").write_text("hello world " * 20)
-    monkeypatch.setattr("sys.argv", ["pw library", "add", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["pworkers library", "add", str(tmp_path)])
     rc = L.main()
     out = capsys.readouterr().out
     assert rc == 1

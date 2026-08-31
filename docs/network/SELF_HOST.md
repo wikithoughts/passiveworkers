@@ -1,9 +1,9 @@
 # Self-host a coordinator
 
-> **Honest interim note:** there is no `pw host` one-command wrapper yet. This
-> documents the real, working recipe — running `council/net/coordinator_app.py`
+> **Honest interim note:** there is no `pworkers host` one-command wrapper yet. This
+> documents the real, working recipe — running `passiveworkers/net/coordinator_app.py`
 > directly, the same thing `scripts/vps_run.sh` and `docker-compose.yml`'s
-> `coordinator` service already do. When `pw host` ships, this page gets simpler, not
+> `coordinator` service already do. When `pworkers host` ships, this page gets simpler, not
 > different.
 
 ## Why self-host
@@ -33,7 +33,7 @@ tokens for others. Losing it means regenerating and re-inviting everyone.
 ## 2. Run it — loopback first
 
 ```bash
-PW_TOKEN=$PW_TOKEN PW_ENROLL=1 python -m council.net.coordinator_app
+PW_TOKEN=$PW_TOKEN PW_ENROLL=1 python -m passiveworkers.net.coordinator_app
 ```
 `PW_ENROLL=1` is what actually makes step 3's enrollment tokens required — without it,
 registration falls back to accepting the raw admin `PW_TOKEN` for nodes, and `/users`
@@ -57,7 +57,7 @@ token — the shared `PW_TOKEN` above is the *admin* token, used only to mint th
 something you hand out. Mint one:
 ```bash
 PW_COORDINATOR=http://127.0.0.1:8088 PW_TOKEN=$PW_TOKEN \
-  pw invite --kind any --max-uses 5
+  pworkers invite --kind any --max-uses 5
 ```
 This prints a token plus the exact commands to hand to whoever you're inviting. This
 is safe to run against your own coordinator — you already control it.
@@ -66,22 +66,22 @@ is safe to run against your own coordinator — you already control it.
 
 They run, on their own machine:
 ```bash
-pw join http://<your-coordinator-host>:8088 <the-enrollment-token> \
+pworkers join http://<your-coordinator-host>:8088 <the-enrollment-token> \
   --owner <their-handle> --model qwen3:14b --country <their-ISO-code>
 ```
-(Full flag reference: [CONTRIBUTE_COMPUTE.md](../CONTRIBUTE_COMPUTE.md).) `pw join`
-persists their identity so `pw work` resumes later with no token needed.
+(Full flag reference: [CONTRIBUTE_COMPUTE.md](../CONTRIBUTE_COMPUTE.md).) `pworkers join`
+persists their identity so `pworkers work` resumes later with no token needed.
 
 ## 5. Optionally, run an operator on the coordinator host too
 
 There's nothing stopping the coordinator's own machine from also contributing compute
-— `pw join http://127.0.0.1:8088 <token> ...` on the same box, exactly like the other
+— `pworkers join http://127.0.0.1:8088 <token> ...` on the same box, exactly like the other
 operator. `scripts/vps_run.sh`/`install_systemd.sh` do this by default (a coordinator
 + one local worker together).
 
 ## 6. Point askers at it
 
-Once at least one operator is online, an asker submits work with `pw ask` — see
+Once at least one operator is online, an asker submits work with `pworkers ask` — see
 [ASKING.md](ASKING.md) for the full flow, using the coordinator URL from step 2 and an
 enrollment token minted the same way as step 3 (`--kind user` instead of `any`/`node`).
 

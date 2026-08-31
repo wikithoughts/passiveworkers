@@ -1,11 +1,11 @@
-"""The single-player web desk (council/serve.py): report listing/reading, the path-traversal guard
+"""The single-player web desk (passiveworkers/serve.py): report listing/reading, the path-traversal guard
 on /report/{name}, progress 404, and job spawn (research mocked — no Ollama)."""
 import time
 
 import pytest
 from fastapi import HTTPException
 
-import council.serve as serve
+import passiveworkers.serve as serve
 
 
 @pytest.fixture()
@@ -121,7 +121,7 @@ def test_research_accepts_scope_and_rejects_bad(client, reports, monkeypatch):
 
 
 def test_cancelled_run_reports_cancelled(client, reports, monkeypatch):
-    from council.local import Cancelled
+    from passiveworkers.local import Cancelled
     monkeypatch.setattr(serve, "run_research",
                         lambda *a, **k: (_ for _ in ()).throw(Cancelled()))
     jid = client.post("/research", json={"brief": "x"}).json()["job_id"]

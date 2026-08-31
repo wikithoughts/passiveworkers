@@ -1,21 +1,21 @@
 # Passive Workers — recommended setup: the research desk + a self-hosted SearXNG, and
 # (optionally) your own network coordinator.
 # SearXNG is the ecosystem's converged answer to public-search rate limiting AND keeps
-# your queries off commercial search providers. `pw research` auto-detects it.
+# your queries off commercial search providers. `pworkers research` auto-detects it.
 #
-#   docker compose up -d searxng                    # just the private meta-search (pw runs on the host)
+#   docker compose up -d searxng                    # just the private meta-search (pworkers runs on the host)
 #   docker compose up -d searxng research-desk       # search + research desk together
 #   PW_TOKEN=$(openssl rand -hex 24) docker compose up -d coordinator   # self-host a network hub
 #
 # Note: the research desk needs to reach your Ollama; on Docker Desktop (Mac/Windows) AND on Linux
 # Docker Engine (20.10+) `host.docker.internal` now resolves via the `extra_hosts` entry below.
-# Running `pw` directly on the host with only SearXNG in Docker is still the simplest setup.
+# Running `pworkers` directly on the host with only SearXNG in Docker is still the simplest setup.
 #
 # Note (Linux only): the image has no USER, so it runs as root by default — harmless on Docker
 # Desktop (its VirtioFS/gRPC-FUSE layer remaps bind-mount ownership to your host user), but on
 # plain Linux Docker Engine a bind mount does NOT remap UIDs, so container root would write
 # root-owned (and for 0600 credential files, root-only-readable) files into your shared
-# ~/.passiveworkers, locking out your host-native `pw` CLI. PW_UID/PW_GID below default to 1000
+# ~/.passiveworkers, locking out your host-native `pworkers` CLI. PW_UID/PW_GID below default to 1000
 # (the common first-user UID on single-user Linux boxes) — override them with `id -u`/`id -g` if
 # yours differ, e.g.: PW_UID=$(id -u) PW_GID=$(id -g) docker compose up -d research-desk
 
@@ -32,7 +32,7 @@ services:
   research-desk:
     build: .
     container_name: pw-desk
-    command: pw serve
+    command: pworkers serve
     user: "${PW_UID:-1000}:${PW_GID:-1000}"
     ports:
       - "127.0.0.1:8770:8770"
@@ -48,24 +48,24 @@ services:
                                                # harmless no-op on Docker Desktop, where it
                                                # already resolves
     volumes:
-      - ${HOME}/.passiveworkers:/app/data     # the SAME home the host's own `pw` CLI uses
-                                               # (council/paths.py) — survives `compose down`
+      - ${HOME}/.passiveworkers:/app/data     # the SAME home the host's own `pworkers` CLI uses
+                                               # (passiveworkers/paths.py) — survives `compose down`
     depends_on:
       - searxng
     restart: unless-stopped
 
-  # Self-hostable network hub (council/net/coordinator_app.py). Lets `pw join <url> <token>`
-  # (run on any other machine) register against a coordinator you run yourself. `pw host` — a
+  # Self-hostable network hub (passiveworkers/net/coordinator_app.py). Lets `pworkers join <url> <token>`
+  # (run on any other machine) register against a coordinator you run yourself. `pworkers host` — a
   # one-command wrapper around this — doesn't exist yet, so this runs the module directly,
   # exactly like scripts/vps_run.sh already does on a bare VPS. Swap the `command:` below for
-  # `pw host` once that verb ships.
+  # `pworkers host` once that verb ships.
   coordinator:
     build: .
     container_name: pw-coordinator
-    command: python -m council.net.coordinator_app
+    command: python -m passiveworkers.net.coordinator_app
     ports:
       # loopback-only by default: front it with a tunnel/reverse proxy + TLS before pointing a
-      # remote worker's `pw join` at it. Override PW_PORT to change the port.
+      # remote worker's `pworkers join` at it. Override PW_PORT to change the port.
       - "127.0.0.1:${PW_PORT:-8088}:${PW_PORT:-8088}"
     environment:
       # required, no default — the coordinator's own startup guard refuses to bind non-loopback

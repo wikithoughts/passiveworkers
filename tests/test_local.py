@@ -1,8 +1,8 @@
-"""Flagship single-player orchestration (council/local.py): model detection + friendly first-run
+"""Flagship single-player orchestration (passiveworkers/local.py): model detection + friendly first-run
 errors, capacity capping, family-diverse cast selection, and a mocked end-to-end run (no Ollama)."""
 import pytest
 
-import council.local as L
+import passiveworkers.local as L
 
 
 class _Resp:

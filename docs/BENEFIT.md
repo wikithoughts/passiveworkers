@@ -36,7 +36,7 @@ council does *not* out-think a frontier model. The benefit appears exactly where
 **recent** (+2.50) and **breaking** (+3.00) questions, live grounding wins. The frontier answers
 without web *by design* — this measures the value of live grounding, not model weakness.
 *Caveats: small samples (recent n=4, breaking n=2 ⚠ — noise at that size), an LLM grader, one curated
-reference per question, and quick-depth council. It's a real signal, not a universal verdict.*
+reference per question, and quick-depth passiveworkers. It's a real signal, not a universal verdict.*
 
 > **Replication at deeper depth (2026-06-14, same 10 verified questions, `--depth standard --analysts 2`):**
 > static **−0.25** (9.75 vs 10.00, control still ~tie), recent **+2.25** (5.00 vs 2.75), breaking
@@ -54,7 +54,7 @@ reference per question, and quick-depth council. It's a real signal, not a unive
   It's a floor against the common, damaging failure (off-topic/fabricated citations) — and it holds.
 
 ### 3. The actual output is good
-A real `pw research` run (quick, 2 analysts, **2.7 min, 16 sources**) produced a report that is
+A real `pworkers research` run (quick, 2 analysts, **2.7 min, 16 sources**) produced a report that is
 **current** (June-2026-dated sources lead), **cited** (`[S#]` with real URLs + dates), and — notably —
 **preserves disagreement**: the two analysts differed on the next FOMC date and the report *says so*
 rather than faking a consensus. Full sample: [`preview/sample-report.md`](preview/sample-report.md).
@@ -79,17 +79,17 @@ verbosity advantage. That's the honest shape: the diversity dividend is real **p
   explanations where a frontier chatbot is better.
 - **Small samples** in the currency eval — directional, not a benchmark league table.
 - **The network is the maturing track.** The screenshots below are a **real but small** deployment:
-  a brand-new operator joined with `pw join` and answered one real job (it even shows up on the
+  a brand-new operator joined with `pworkers join` and answered one real job (it even shows up on the
   leaderboard as `mac AE`, rep 5/10). It's genuine, not seeded — but it's *one* node; the map and
   leaderboard fill out only as real operators join (still invite-only). The single-player engine is
   the verified flagship; the federation is real, working code that's early.
 
 ## Validated by dogfooding on a real VPS (2026-06-14)
 We ran the **actual operator onboarding on a Hetzner VPS** (Ubuntu, a machine we don't develop on):
-`pip install passiveworkers` (7s) → `pw join` registered the node and wrote `~/.passiveworkers/join.json`
-**owner-only (0600)**. This surfaced — and we fixed — **two real bugs that made `pw join` unusable**:
+`pip install passiveworkers` (7s) → `pworkers join` registered the node and wrote `~/.passiveworkers/join.json`
+**owner-only (0600)**. This surfaced — and we fixed — **two real bugs that made `pworkers join` unusable**:
 (1) enrolled nodes were rejected on every authenticated call because those endpoints also demanded the
-shared admin token a `pw join` operator never has (now the per-node secret authenticates on its own);
+shared admin token a `pworkers join` operator never has (now the per-node secret authenticates on its own);
 (2) a lone operator defaulted to *not* judging, so jobs failed "no judge node online" (judging is now
 on by default). After the fixes, the full loop completes end-to-end (answer → judge → cited result) —
 verified locally with a real `done` job; on the VPS it reached the judge stage but hit the 600s deadline
@@ -107,7 +107,7 @@ report; a real answered job; a real single-node operator dashboard).
 
 ## Reproduce it yourself (keyless unless noted)
 ```bash
-pw research "What is the current US federal funds rate target range?" --quick --analysts 2
+pworkers research "What is the current US federal funds rate target range?" --quick --analysts 2
 python scripts/eval_citation_fidelity.py --report reports/<that-report>.md
 python scripts/bench_rag.py
 python scripts/merge_eval.py
@@ -125,7 +125,7 @@ measured on local Ollama with just `gemma3:4b` and `gemma3:12b` (a modest 2-mode
 readings, not a ceiling — a real deployment with a 14–32B analyst would show more).
 
 **1. Citation self-repair now runs at inference time.** The grounding check that used to run only as an
-offline eval now runs *inside* `pw research`: an analyst's cited claims are scored against the exact
+offline eval now runs *inside* `pworkers research`: an analyst's cited claims are scored against the exact
 sources the model saw, and unsupported/fabricated-number claims trigger one bounded re-prompt to correct
 or drop them — **accepted only if that measurably reduces the unsupported set without losing grounded
 content, so it can never lower a report's grounding by its own measure.** We measure it with a *paired*
@@ -182,7 +182,7 @@ on `gemma3:12b` (a step up from the 2-model `gemma3:4b` rig above); the citation
 *between-runs* A/B, so run-to-run variance is real at this sample size — read them as directional.
 
 **Rerank A/B** — three *non-temporal* briefs (RSA, photosynthesis, the seasons; rerank only engages when a
-brief isn't time-sensitive), `pw research --depth standard`, citation self-repair held OFF to isolate the
+brief isn't time-sensitive), `pworkers research --depth standard`, citation self-repair held OFF to isolate the
 rerank, grounded-rate scored against the exact evidence each analyst read:
 
 ```

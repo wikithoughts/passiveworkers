@@ -1,11 +1,11 @@
-"""council/net/submit.py — `pw ask` (persist=True): persists+prints the minted asker secret so
+"""passiveworkers/net/submit.py — `pworkers ask` (persist=True): persists+prints the minted asker secret so
 it survives past process exit (R23 review, F6 finding), and reuses it on later runs. The legacy
-`python -m council.net.submit` entry point (persist=False, default) must stay byte-for-byte
+`python -m passiveworkers.net.submit` entry point (persist=False, default) must stay byte-for-byte
 unchanged — pinned by test_submit.py."""
 import json
 import stat
 
-import council.net.submit as S
+import passiveworkers.net.submit as S
 
 
 class _Resp:
@@ -63,7 +63,7 @@ def test_ask_persists_and_prints_secret_on_first_run(tmp_path, monkeypatch, caps
             return _Resp(200, {"job_id": "j1", "status": "pending", "assigned": ["w1"]})
         raise AssertionError(url)
 
-    rc = _drive(monkeypatch, tmp_path, post, ["pw ask", "Q?", "--asker", "alice"])
+    rc = _drive(monkeypatch, tmp_path, post, ["pworkers ask", "Q?", "--asker", "alice"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "secret:" in out and "SEC-1" in out
@@ -91,10 +91,10 @@ def test_ask_reuses_persisted_secret_second_run(tmp_path, monkeypatch, capsys):
             return _Resp(200, {"job_id": "j1", "status": "pending", "assigned": ["w1"]})
         raise AssertionError(url)
 
-    _drive(monkeypatch, tmp_path, post, ["pw ask", "Q1?", "--asker", "alice"])
+    _drive(monkeypatch, tmp_path, post, ["pworkers ask", "Q1?", "--asker", "alice"])
     assert calls["users"] == 1
 
-    _drive(monkeypatch, tmp_path, post, ["pw ask", "Q2?", "--asker", "alice"])
+    _drive(monkeypatch, tmp_path, post, ["pworkers ask", "Q2?", "--asker", "alice"])
     assert calls["users"] == 1     # NOT signed up again — reused the persisted secret
     assert calls["jobs"] == 2
 
@@ -111,7 +111,7 @@ def test_ask_forwards_type_field(tmp_path, monkeypatch):
         raise AssertionError(url)
 
     _drive(monkeypatch, tmp_path, post,
-          ["pw ask", "Q?", "--asker", "alice", "--type", "research_report"])
+          ["pworkers ask", "Q?", "--asker", "alice", "--type", "research_report"])
     assert seen["body"]["type"] == "research_report"
 
 
@@ -127,14 +127,14 @@ def test_ask_forwards_enroll_token_header(tmp_path, monkeypatch):
         raise AssertionError(url)
 
     _drive(monkeypatch, tmp_path, post,
-          ["pw ask", "Q?", "--asker", "alice", "--enroll-token", "tok-9"])
+          ["pworkers ask", "Q?", "--asker", "alice", "--enroll-token", "tok-9"])
     assert seen["headers"].get("X-Enroll-Token") == "tok-9"
 
 
 def test_ask_reusing_cached_identity_updates_stale_default(tmp_path, monkeypatch):
     # Workflow-review finding: mint fresh against A (default=A), mint fresh against B
     # (default=B), then reuse the CACHED identity for A again — "default" must move back to A,
-    # or a later pw fetch/pw rate with no PW_COORDINATOR set would target the wrong coordinator.
+    # or a later pworkers fetch/pworkers rate with no PW_COORDINATOR set would target the wrong coordinator.
     import json as _json
 
     def make_post(secret_suffix):
@@ -153,7 +153,7 @@ def test_ask_reusing_cached_identity_updates_stale_default(tmp_path, monkeypatch
 
     monkeypatch.setenv("PW_COORDINATOR", "http://a")
     monkeypatch.setattr(S, "requests", _fake_requests(make_post("A"), get))
-    monkeypatch.setattr("sys.argv", ["pw ask", "Q?", "--asker", "alice"])
+    monkeypatch.setattr("sys.argv", ["pworkers ask", "Q?", "--asker", "alice"])
     S.ask_main()
 
     monkeypatch.setenv("PW_COORDINATOR", "http://b")
@@ -177,7 +177,7 @@ def test_ask_reusing_cached_identity_updates_stale_default(tmp_path, monkeypatch
 
 
 def test_legacy_module_main_unchanged(monkeypatch, capsys):
-    # python -m council.net.submit (persist=False, the default) must behave exactly as before —
+    # python -m passiveworkers.net.submit (persist=False, the default) must behave exactly as before —
     # no persistence, no secret printed, no --type/--enroll-token side effects when unset.
     monkeypatch.delenv("PW_USER_SECRET", raising=False)
     monkeypatch.setenv("PW_COORDINATOR", "http://c")

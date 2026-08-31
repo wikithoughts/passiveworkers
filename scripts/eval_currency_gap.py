@@ -141,7 +141,7 @@ def validate_questions(qs: list[dict]) -> tuple[list[dict], list[str]]:
 
 def parse_grade(raw: str) -> float | None:
     """Pull a 0-10 score out of a grader response; clamp; None if unparseable."""
-    from council.judge import _extract_json
+    from passiveworkers.judge import _extract_json
     parsed = _extract_json(raw or "")
     if isinstance(parsed, list) and parsed:
         parsed = parsed[0]
@@ -275,7 +275,7 @@ def _local_memory_answer(question: str, model: str, ollama_base: str) -> str:
     differs in scale), this isolates the value of LIVE GROUNDING on a single model — and it needs no
     API key and spends nothing. It is the apples-to-apples counterpart to the product's actual claim:
     local models WITH live web beat the SAME local models answering from their own memory."""
-    from council import ollama as _ollama
+    from passiveworkers import ollama as _ollama
     prompt = ("Answer from your own training knowledge only. You have NO web access. Be concise and "
               "specific (names, numbers, dates). If the answer may have changed after your training, "
               "answer what you know and explicitly flag the uncertainty.\n\n"
@@ -303,8 +303,8 @@ def _grade(grader, question: str, answer: str, reference: str) -> float | None:
 
 def run_eval(questions: list[dict], *, baseline_kind: str, baseline_model: str, frontier_model: str,
              grader_kind: str, grader_model: str, depth: str, analysts: int) -> list[dict]:
-    from council.judge import Judge
-    from council.local import _ApiEditor, run as council_run
+    from passiveworkers.judge import Judge
+    from passiveworkers.local import _ApiEditor, run as council_run
 
     key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("PW_BASELINE_API_KEY")
     url = os.environ.get("PW_BASELINE_API_URL", "https://openrouter.ai/api/v1/chat/completions")
@@ -328,7 +328,7 @@ def run_eval(questions: list[dict], *, baseline_kind: str, baseline_model: str, 
         # baseline (parametric, NO web): a paid frontier model, or the FREE local model from memory
         try:
             if baseline_kind == "local":
-                from council import ollama as _ollama
+                from passiveworkers import ollama as _ollama
                 baseline_ans = _local_memory_answer(q["question"], baseline_model, _ollama.base())
             else:
                 baseline_ans = _frontier_answer(q["question"], frontier_model, key, url)
@@ -442,7 +442,7 @@ def main() -> int:
     # Resolve the local baseline model (the largest installed = the fair same-family baseline).
     baseline_model = a.baseline_model
     if a.baseline == "local" and not baseline_model:
-        from council.local import detect_models, pick_cast
+        from passiveworkers.local import detect_models, pick_cast
         _cast, baseline_model = pick_cast(detect_models())
     baseline_label = f"{a.baseline} (memory)" if a.baseline == "frontier" else f"local (memory): {baseline_model}"
     tag = f"baseline={a.baseline}" + (f":{baseline_model}" if a.baseline == "local" else f":{a.frontier_model}")

@@ -1,6 +1,6 @@
 # Contribute your compute
 
-The single-player `pw research` tool is one half of Passive Workers. This is the other half — and
+The single-player `pworkers research` tool is one half of Passive Workers. This is the other half — and
 the reason for the name: an opt-in **network** where your computer's idle time does real, owned
 work for other people's computers (and theirs for yours) and earns non-transferable credit.
 Research is the first job type the network runs; more are on the roadmap. This page is for people
@@ -12,7 +12,7 @@ who want to plug a machine in.
 
 ## What your machine actually does
 
-Your machine runs a small **agent** (`council/net/agent.py`) that:
+Your machine runs a small **agent** (`passiveworkers/net/agent.py`) that:
 
 1. **Dials out** to a coordinator (HTTP). It never accepts inbound connections — nothing listens
    on your machine, no ports are opened.
@@ -61,12 +61,12 @@ pip install passiveworkers          # or: pip install -e '.[all]' from a clone
 ollama pull qwen2.5:14b             # any chat model works; bigger = better answers
 
 # 2. Join — registers, persists your identity, and starts taking jobs
-pw join https://<coordinator-url> <enrollment-token> \
+pworkers join https://<coordinator-url> <enrollment-token> \
    --owner <account-that-earns-your-credit> --model qwen2.5:14b --country DE
 ```
 
-`pw join` saves your config + node identity to `~/.passiveworkers/join.json` (owner-only `0o600`),
-so next time you just run **`pw work`** (or `pw join` with no args) to resume — no token needed.
+`pworkers join` saves your config + node identity to `~/.passiveworkers/join.json` (owner-only `0o600`),
+so next time you just run **`pworkers work`** (or `pworkers join` with no args) to resume — no token needed.
 Judging is **on by default** (a lone contributor's node must be able to both answer and judge, or
 a small deployment fails every job) — pass `--no-judge` if you only want to answer, not judge
 others'. Other optional flags: `--lens`, `--judge-model`, `--web off` (web research is on by
@@ -76,13 +76,13 @@ default so your node can take research jobs). Leave it running; stop it any time
 - **Mac trial:** `scripts/mac_join.sh` opens a tunnel and runs a couple of perspectives + a judge.
 
 If this same machine also does assisted (human-in-the-loop) work for the same coordinator via
-`pw tasks` / `pw accept` / `pw deliver`, it reuses the identity already saved in `join.json`
+`pworkers tasks` / `pworkers accept` / `pworkers deliver`, it reuses the identity already saved in `join.json`
 instead of minting a second one — so you show up once on the coordinator's live node map, not
 twice. This only changes which identity gets picked for the assisted flow; if you've never run
-`pw join` against a coordinator, `pw tasks`/`pw accept`/`pw deliver` still register and cache their
+`pworkers join` against a coordinator, `pworkers tasks`/`pworkers accept`/`pworkers deliver` still register and cache their
 own identity in `~/.passiveworkers/operator.json` exactly as before.
 
-<details><summary>Advanced: the explicit env-var flow (what <code>pw join</code> automates)</summary>
+<details><summary>Advanced: the explicit env-var flow (what <code>pworkers join</code> automates)</summary>
 
 ```bash
 export PW_COORDINATOR="https://<coordinator-url>"
@@ -92,7 +92,7 @@ export PW_ANSWER_MODEL="qwen2.5:14b"
 export PW_COUNTRY="DE"                          # geo-diversity is the moat
 export PW_CAN_JUDGE=0                           # set 1 (+ PW_JUDGE_MODEL) to also judge
 export PW_WEB_BACKEND=ddgs                      # live web research from your egress
-python -m council.net.agent
+python -m passiveworkers.net.agent
 ```
 </details>
 

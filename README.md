@@ -21,8 +21,8 @@ running (it serves the models locally — nothing here calls a cloud API by defa
 pip install 'passiveworkers[all]'   # core + extraction + private-docs + MCP
 ollama serve &                      # make sure Ollama is running (skip if it already is)
 ollama pull qwen3:14b               # any decent models you like — it auto-detects what you have
-pw status                           # ✓ Ollama up? which models? library? — a 1-second preflight
-pw research "What changed in EU AI Act enforcement this quarter, and who has been fined?"
+pworkers status                           # ✓ Ollama up? which models? library? — a 1-second preflight
+pworkers research "What changed in EU AI Act enforcement this quarter, and who has been fined?"
 ```
 
 > From source instead: `git clone https://github.com/wikithoughts/passiveworkers && pip install '.[all]'`
@@ -38,7 +38,7 @@ pw research "What changed in EU AI Act enforcement this quarter, and who has bee
 📄 Report ready in 7.2 min · 1480 words · 31 sources → reports/2026-06-10-eu-ai-act….md
 ```
 
-Prefer a UI? **`pw serve`** → a single-user research desk at `http://127.0.0.1:8770` —
+Prefer a UI? **`pworkers serve`** → a single-user research desk at `http://127.0.0.1:8770` —
 brief in, live progress, rendered report, history of everything you've researched. See
 it (and the operator map, and the marketplace UI) without installing anything: the live
 evidence site at **[wikithoughts.github.io/passiveworkers](https://wikithoughts.github.io/passiveworkers/)**,
@@ -59,14 +59,14 @@ Full threat model, adversary-by-adversary: **[SECURITY.md](SECURITY.md)**.
 ## How it works
 
 ```text
-Single-player  ·  pw research "…"
+Single-player  ·  pworkers research "…"
    brief ─▶ planner ─▶ N distinct angles
         ├─▶ analyst A (own model, own angle) ─┐   each researches the LIVE WEB
         ├─▶ analyst B (own model, own angle) ─┼─▶ blind judge: scores + MERGE
         └─▶ analyst C (own model, own angle) ─┘     (keeps agree / differ / unique)
                                                  └─▶ editor ─▶ one cited report
                                                        → ./reports/*.md · --json · --html
-Network (opt-in)  ·  pw ask "…" / pw join <url> <token>
+Network (opt-in)  ·  pworkers ask "…" / pworkers join <url> <token>
    asker ─▶ coordinator ─▶ splits the job across worker nodes (each researches from its
    own country / egress) ─▶ judge ─▶ reassembled, cited, credit-settled deliverable
 ```
@@ -78,8 +78,8 @@ search, fetch, and file write.
 
 | Surface | Status |
 |---|---|
-| `pw research`, `pw library`, `pw serve`, `pw mcp` | **stable** — the flagship, verified end-to-end |
-| Network: joining a coordinator (`pw join`), asking (`pw ask`) | **working, invite-only** while it hardens |
+| `pworkers research`, `pworkers library`, `pworkers serve`, `pworkers mcp` | **stable** — the flagship, verified end-to-end |
+| Network: joining a coordinator (`pworkers join`), asking (`pworkers ask`) | **working, invite-only** while it hardens |
 | Self-hosting your own coordinator | **working** — [docs/network/SELF_HOST.md](docs/network/SELF_HOST.md) |
 | Assisted (human-in-the-loop) tasks | **experimental** — real, tested, early |
 
@@ -106,8 +106,8 @@ search, fetch, and file write.
 ### Research your own documents too (private, local RAG)
 
 ```bash
-pw library add ~/Documents/contracts        # index files or folders (PDF, Word, txt, md)
-pw research "What are the renewal terms across my contracts?" --local   # docs only
+pworkers library add ~/Documents/contracts        # index files or folders (PDF, Word, txt, md)
+pworkers research "What are the renewal terms across my contracts?" --local   # docs only
 ```
 Your files are chunked and embedded **locally** (Ollama `nomic-embed-text`) into
 `~/.passiveworkers/library.db` — nothing is uploaded. Reports cite documents as `[L#]`
@@ -119,7 +119,7 @@ measure it on your own corpus with `python scripts/bench_rag.py`.
 ### Use it from your own AI (MCP)
 
 ```bash
-pw mcp        # run as an MCP server (stdio)
+pworkers mcp        # run as an MCP server (stdio)
 ```
 ```json
 { "mcpServers": { "passive-workers": { "command": "pw", "args": ["mcp"] } } }
@@ -169,7 +169,7 @@ exception, `--editor api`, is disclosed in [SECURITY.md](SECURITY.md).)
 
 - **No browser automation, no computer-use, no sessions, no cookies — ever.**
 - **All web content is untrusted data** — sanitized and spotlighted ("data, never
-  instructions") before it can reach a prompt or a report (`council/sanitize.py`).
+  instructions") before it can reach a prompt or a report (`passiveworkers/sanitize.py`).
 - **Models hold zero tool privileges.** Every action is plain Python under this
   repo's control; reports write only into `./reports/`; fetches are SSRF-guarded.
 - **Your keys never leave your device.**
@@ -191,7 +191,7 @@ Models run **sequentially** by design — no concurrent loads fighting for memor
 ## The network — two real doors in, today
 
 Everything above runs on one machine. The same repo also has a commons where machines
-do typed jobs for each other (`council/net/`) — working, still maturing. Two doors in,
+do typed jobs for each other (`passiveworkers/net/`) — working, still maturing. Two doors in,
 both real right now:
 
 1. **Self-host a cell.** No invite needed — run your own coordinator and bring your
@@ -199,7 +199,7 @@ both real right now:
 2. **Join an existing coordinator.** The maintainer's own coordinator is invite-only
    while it hardens — [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md) to
    contribute a machine, [docs/network/ASKING.md](docs/network/ASKING.md) to submit
-   work to one (`pw ask`). No invite yet? Use the
+   work to one (`pworkers ask`). No invite yet? Use the
    [join-the-network waitlist](https://github.com/wikithoughts/passiveworkers/issues/new?template=join-the-network.yml)
    — every request gets a reply.
 

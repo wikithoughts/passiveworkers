@@ -1,10 +1,10 @@
 // Headless runtime test of the Living Council Map front-end.
 // Loads the REAL page JS with a mocked DOM + Leaflet + mock backend, then exercises
 // the sign-in and Ask handlers and asserts the UI actually updates.
-// Run: node scripts/fe_test.js   (extracts the inline JS from council.net.app itself)
+// Run: node scripts/fe_test.js   (extracts the inline JS from passiveworkers.net.app itself)
 const { execSync } = require('child_process');
 const js = execSync(
-  `python3 -c "import re,importlib;m=importlib.import_module('council.net.app');` +
+  `python3 -c "import re,importlib;m=importlib.import_module('passiveworkers.net.app');` +
   `print(re.findall(r'<script>(.*?)</script>', m.APP_HTML, re.DOTALL)[-1])"`,
   { cwd: __dirname + '/..', encoding: 'utf8' });
 
@@ -149,7 +149,7 @@ const assert = (c,m)=>{ if(!c){ console.error('✗ FAIL:', m); process.exit(1);}
   //    the version placeholder is present (injected server-side), the spinner ships, and the
   //    accessibility live-regions are wired.
   const raw = execSync(
-    `python3 -c "import council.net.app as m;import sys;sys.stdout.write(m.APP_HTML)"`,
+    `python3 -c "import passiveworkers.net.app as m;import sys;sys.stdout.write(m.APP_HTML)"`,
     { cwd: __dirname + '/..', encoding: 'utf8' });
   assert((raw.match(/<script>/g) || []).length === 1, 'exactly one bare <script> block in APP_HTML');
   assert(raw.includes('__PW_VERSION__'), 'version placeholder present (injected server-side)');

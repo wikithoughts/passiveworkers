@@ -5,11 +5,11 @@ import pathlib
 
 import pytest
 
-crypto = pytest.importorskip("council.crypto")
+crypto = pytest.importorskip("passiveworkers.crypto")
 if not crypto.available():
     pytest.skip("PyNaCl not installed", allow_module_level=True)
 
-from council import artifacts as A
+from passiveworkers import artifacts as A
 
 
 def test_sign_verify_and_tamper():

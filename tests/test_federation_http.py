@@ -10,10 +10,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "http.db"))
     monkeypatch.setenv("PW_TOKEN", "tok")
     monkeypatch.setenv("PW_STARTER_CREDITS", "100000")
-    for m in ("council.ledger", "council.net.config", "council.net.store",
-              "council.net.coordinator_app"):
+    for m in ("passiveworkers.ledger", "passiveworkers.net.config", "passiveworkers.net.store",
+              "passiveworkers.net.coordinator_app"):
         importlib.reload(importlib.import_module(m))
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     from fastapi.testclient import TestClient
     return TestClient(capp.app)
 

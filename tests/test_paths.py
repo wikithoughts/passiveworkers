@@ -1,5 +1,5 @@
-"""council/paths.py — the single source of truth for ~/.passiveworkers layout. Previously exercised
-only incidentally through other tests (test_doctor.py pins coordinator_entries() via council.doctor,
+"""passiveworkers/paths.py — the single source of truth for ~/.passiveworkers layout. Previously exercised
+only incidentally through other tests (test_doctor.py pins coordinator_entries() via passiveworkers.doctor,
 test_config.py isolates PW_HOME but never asserts on paths.home() directly). AGENTS.md names
 write_private_json() as load-bearing/security-sensitive — it must never grow a world-readable window
 before the chmod, since join.json/asker.json/operator.json all hold signing keys and secrets."""
@@ -12,7 +12,7 @@ import os
 import pathlib
 import stat
 
-import council.paths as P
+import passiveworkers.paths as P
 
 
 # ---------------------------------------------------------------- home()

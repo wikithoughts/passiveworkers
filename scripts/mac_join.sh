@@ -31,13 +31,13 @@ for i in $(seq 1 30); do curl -sf "$URL/healthz" >/dev/null 2>&1 && break; sleep
 curl -sf "$URL/healthz" >/dev/null 2>&1 || { echo "✗ coordinator unreachable via tunnel"; exit 1; }
 
 start(){ PW_NAME="$1" PW_OWNER="$2" PW_COUNTRY="$3" PW_ANSWER_MODEL="$4" PW_LENS="$5" \
-         PW_CAN_JUDGE="$6" PW_JUDGE_MODEL="$7" python -m council.net.agent >"/tmp/pw/mac_$1.log" 2>&1 & pids+=($!); }
+         PW_CAN_JUDGE="$6" PW_JUDGE_MODEL="$7" python -m passiveworkers.net.agent >"/tmp/pw/mac_$1.log" 2>&1 & pids+=($!); }
 start macA mac_dubai AE gemma3:4b  opportunity 0 ""
 start macB mac_dubai AE gemma2:9b  skeptic     0 ""
 start judge judge_mac AE ""        neutral     1 qwen2.5:14b
 sleep 5
 
-echo "✓ Mac joined the council. Online nodes:"
+echo "✓ Mac joined the passiveworkers. Online nodes:"
 curl -s "$URL/status" | python -c "import sys,json; d=json.load(sys.stdin); [print('   ',n['name'],n['country'],n['answer_model'] or '(judge)') for n in d['online_nodes']]"
 echo ""
 echo "🗺  App:   $URL/   ·   operator map:  $URL/dashboard"

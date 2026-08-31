@@ -1,7 +1,7 @@
-"""Report export: the dependency-free markdown→HTML renderer (council/render.py) and the structured
---json payload builder (council/local._report_payload)."""
-from council.local import _report_payload
-from council.render import md_to_html, report_html
+"""Report export: the dependency-free markdown→HTML renderer (passiveworkers/render.py) and the structured
+--json payload builder (passiveworkers/local._report_payload)."""
+from passiveworkers.local import _report_payload
+from passiveworkers.render import md_to_html, report_html
 
 
 def test_md_to_html_headings_bold_links_lists():

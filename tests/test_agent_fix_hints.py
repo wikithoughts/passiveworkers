@@ -1,10 +1,10 @@
-"""council/net/agent._fix_hint — maps task-execution exceptions to actionable hints instead of
+"""passiveworkers/net/agent._fix_hint — maps task-execution exceptions to actionable hints instead of
 raw exception text (R10 review): the worker daemon's own console is often the only place an
 operator ever sees a failure. Pure function, no network."""
 
 import requests
 
-import council.net.agent as A
+import passiveworkers.net.agent as A
 
 
 def test_fix_hint_connection_refused():

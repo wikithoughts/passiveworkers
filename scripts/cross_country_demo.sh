@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mac side of the cross-country council. Opens an SSH tunnel to the VPS coordinator
+# Mac side of the cross-country passiveworkers. Opens an SSH tunnel to the VPS coordinator
 # (no public port, no inbound to the Mac), starts 2 Mac perspectives + 1 Mac judge,
 # and asks the council ONE question — answered jointly by the Mac (AE) and the VPS (FI).
 # Leaves the VPS hub running; tears down only the Mac-side agents + tunnel on exit.
@@ -24,7 +24,7 @@ curl -sf "$URL/healthz" >/dev/null 2>&1 || { echo "✗ coordinator unreachable v
 echo "✓ coordinator reachable from the Mac through the tunnel"
 
 start(){ PW_NAME="$1" PW_OWNER="$2" PW_COUNTRY="$3" PW_ANSWER_MODEL="$4" PW_LENS="$5" \
-         PW_CAN_JUDGE="$6" PW_JUDGE_MODEL="$7" python -m council.net.agent >"/tmp/pw/mac_$1.log" 2>&1 & pids+=($!); }
+         PW_CAN_JUDGE="$6" PW_JUDGE_MODEL="$7" python -m passiveworkers.net.agent >"/tmp/pw/mac_$1.log" 2>&1 & pids+=($!); }
 echo "→ starting Mac perspectives + judge"
 start macA mac_dubai AE gemma3:12b opportunity 0 ""
 start macB mac_dubai AE gemma2:9b  skeptic     0 ""
@@ -35,7 +35,7 @@ echo ""; echo "=== ONLINE NODES (cross-country council) ==="
 curl -s "$URL/status" | python -c "import sys,json; d=json.load(sys.stdin); [print(f\"   {n['name']:<6} owner={n['owner']:<10} {n['country']:<3} {n['answer_model'] or '(judge)'}\") for n in d['online_nodes']]"
 
 echo ""
-python -m council.net.submit --asker alice "Our two-person startup must pick ONE region to launch in first — Western Europe, the Gulf (GCC), or Southeast Asia. Recommend one, with the single strongest reason and the biggest risk."
+python -m passiveworkers.net.submit --asker alice "Our two-person startup must pick ONE region to launch in first — Western Europe, the Gulf (GCC), or Southeast Asia. Recommend one, with the single strongest reason and the biggest risk."
 
 echo ""; echo "=== LEDGER / TELEMETRY ==="
 curl -s "$URL/status" | python -c "import sys,json; d=json.load(sys.stdin); print('conserved:', d['ledger_conserved'], '| total:', d['ledger_total'])"

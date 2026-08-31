@@ -37,7 +37,7 @@ the optional federation below is newer.
 
 ```
 pip install 'passiveworkers[all]'
-pw research "your question"
+pworkers research "your question"
 ```
 
 Repo: [github.com/wikithoughts/passiveworkers](https://github.com/wikithoughts/passiveworkers)
@@ -54,7 +54,7 @@ across machines and reassemble it. Early access; see docs/CONTRIBUTE_COMPUTE.md.
 
 Passive Workers: a local deep-research engine. Your own Ollama models research the live web as
 independent analysts; a blind editor writes one cited report that keeps their disagreements. Private,
-keyless, free. `pip install 'passiveworkers[all]' && pw research "…"` → [link]
+keyless, free. `pip install 'passiveworkers[all]' && pworkers research "…"` → [link]
 
 ---
 

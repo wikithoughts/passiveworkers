@@ -1,5 +1,5 @@
 """Citation hygiene: dangling [S#] AND [L#] markers are stripped (R7 review findings 4–5)."""
-from council.local import fix_dangling_citations
+from passiveworkers.local import fix_dangling_citations
 
 
 def test_keeps_resolved_web_and_local():

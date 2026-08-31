@@ -1,9 +1,9 @@
-"""council/net/submit.py — the asker CLI client. Its value is the client-side state machine (the 409
+"""passiveworkers/net/submit.py — the asker CLI client. Its value is the client-side state machine (the 409
 signup retry, the poll/timeout loop, receipt printing); the server endpoints it calls are covered in
 test_federation_http.py. Scripted `requests` responses drive each branch deterministically."""
 import itertools
 
-import council.net.submit as S
+import passiveworkers.net.submit as S
 
 
 class _Resp:

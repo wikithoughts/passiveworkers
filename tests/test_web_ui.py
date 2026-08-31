@@ -1,6 +1,6 @@
 """R36/D52 — smoke tests for the two coordinator-served web UIs (marketplace map + operator
 dashboard), which had no coverage. They pin the render AND the `/*__…__*/` substitution contract that
-the shared-CSS consolidation (council/net/ui_common.py) leans on — a broken placeholder replace would
+the shared-CSS consolidation (passiveworkers/net/ui_common.py) leans on — a broken placeholder replace would
 now fail a test instead of silently shipping. No Ollama."""
 import pytest
 
@@ -20,7 +20,7 @@ def test_web_ui_renders_and_substitutes(coord_client, route):
 
 def test_serve_desk_substitutes():
     # the research desk (a separate app) shares the same THEME/FOOTER/ESC substitution — pin it too
-    import council.serve as serve
+    import passiveworkers.serve as serve
     body = serve.SERVE_HTML.replace("__PW_VERSION__", "x")
     assert "/*__" not in body and "<!--__" not in body
     assert ":root{" in body and '<footer class="pwfoot"' in body

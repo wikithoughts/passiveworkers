@@ -23,7 +23,7 @@ jobs:
         run: ruff check .
 
   types:
-    # ADVISORY type-checking (R36): pyright `basic` on council/net only. Non-blocking
+    # ADVISORY type-checking (R36): pyright `basic` on passiveworkers/net only. Non-blocking
     # (continue-on-error) — it surfaces type signal without gating merges; promote to a required
     # check once the scoped surface is clean and the include list has widened. See [tool.pyright].
     runs-on: ubuntu-latest
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e . pyright   # -e . gives pyright the real fastapi/pydantic types
-      - name: Pyright (basic, council/net — advisory)
+      - name: Pyright (basic, passiveworkers/net — advisory)
         run: pyright
 
   test:
@@ -54,15 +54,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[all,dev]'
       - name: Compile
-        run: python -m compileall council scripts
+        run: python -m compileall passiveworkers scripts
       - name: Unit tests + coverage (whole project — regression floor)
-        run: pytest tests/ -q --cov=council --cov-report=term-missing --cov-fail-under=75
+        run: pytest tests/ -q --cov=passiveworkers --cov-report=term-missing --cov-fail-under=75
       - name: Coverage floor — user-facing modules (doctor/agent/operator/mcp_server)
-        # These four carry `pw status`/the network daemon/the operator CLI/the MCP tool — the
+        # These four carry `pworkers status`/the network daemon/the operator CLI/the MCP tool — the
         # thinnest, most user-visible coverage in the repo. Measured 79% after the R31 agent-loop
         # and operator-fetch-composition integration tests landed (was ~68% before). Treat a drop
         # below this floor as a regression, not a target — raise it as coverage improves further.
-        run: pytest tests/ -q --cov=council.doctor --cov=council.net.agent --cov=council.operator --cov=council.mcp_server --cov-report=term-missing --cov-fail-under=75
+        run: pytest tests/ -q --cov=passiveworkers.doctor --cov=passiveworkers.net.agent --cov=passiveworkers.operator --cov=passiveworkers.mcp_server --cov-report=term-missing --cov-fail-under=75
 
   frontend:
     # the served inline JS is Python-version-independent, so run the guards once
@@ -97,9 +97,9 @@ jobs:
           pip install -e . pytest
       - name: CLI runs without extras
         run: |
-          python -c "import council, council.local, council.serve, council.render; print('version', council.get_version())"
-          pw --help
-          pw version
-          pw reports
+          python -c "import passiveworkers, passiveworkers.local, passiveworkers.serve, passiveworkers.render; print('version', passiveworkers.get_version())"
+          pworkers --help
+          pworkers version
+          pworkers reports
       - name: Core-safe tests
         run: pytest tests/test_cli.py tests/test_export.py tests/test_sanitize.py tests/test_citations.py -q

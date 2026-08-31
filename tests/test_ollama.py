@@ -1,16 +1,16 @@
-"""tests/test_ollama.py — council/ollama.py, the single shared HTTP client every generation call
+"""tests/test_ollama.py — passiveworkers/ollama.py, the single shared HTTP client every generation call
 (worker/researcher/judge/batch/rerank) goes through.
 
 Covers: `base()` resolution for both the default Ollama backend and the OpenAI-compatible
 backend (PW_INFERENCE_BACKEND=openai), `generate()`'s request shape on each backend (mocking
 `requests.post` and asserting on call args, following tests/test_doctor.py's fake-response
 convention), `resolve_timeout()` precedence, and that the new config knobs are registered in
-`council.config.KNOWN`.
+`passiveworkers.config.KNOWN`.
 """
 from __future__ import annotations
 
-import council.config as C
-import council.ollama as O
+import passiveworkers.config as C
+import passiveworkers.ollama as O
 
 
 class _FakeResp:

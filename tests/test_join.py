@@ -1,4 +1,4 @@
-"""D42 — one-command `pw join`: config+identity persistence to join.json (0o600), env seeding so the
+"""D42 — one-command `pworkers join`: config+identity persistence to join.json (0o600), env seeding so the
 agent's hot-path PW_WEB_BACKEND isn't silently off, the X-Enroll-Token header, and resume-without-token
 reusing the cached identity (no re-register). The agent loop itself is monkeypatched away."""
 import json
@@ -7,7 +7,7 @@ import stat
 
 import pytest
 
-import council.net.agent as A
+import passiveworkers.net.agent as A
 
 
 class _Resp:
@@ -22,7 +22,7 @@ class _Resp:
 
 
 class _FakeRequests:
-    """Stand-in for council.net.agent.requests: register() POST returns an identity; the profile
+    """Stand-in for passiveworkers.net.agent.requests: register() POST returns an identity; the profile
     /api/tags GET fails (→ models=[]). Records POST headers so we can assert the enroll token."""
     exceptions = A.requests.exceptions
 

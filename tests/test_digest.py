@@ -1,5 +1,5 @@
 """Tamper-evident result digest (FEDERATION_V2 trust step 1)."""
-from council.net.store import Store
+from passiveworkers.net.store import Store
 
 
 def test_digest_is_order_independent():

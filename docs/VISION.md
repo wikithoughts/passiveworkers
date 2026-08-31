@@ -33,16 +33,16 @@ by itself, structurally cannot offer:
 
 | Pillar | Claim | Evidence that already exists |
 |---|---|---|
-| **Plurality** | Different model families make different mistakes; dissent is preserved, not flattened into a false consensus. | The agree / differ / unique sections in every report (`council/local.py`, `council/judge.py`); the blind judge that scores before it merges. |
+| **Plurality** | Different model families make different mistakes; dissent is preserved, not flattened into a false consensus. | The agree / differ / unique sections in every report (`passiveworkers/local.py`, `passiveworkers/judge.py`); the blind judge that scores before it merges. |
 | **Currency** | Live web beats frozen training data whenever "as of when?" matters. | `scripts/eval_currency_gap.py`; `docs/TRIAL_RESULTS.md` — the only trial wins were currency wins. |
-| **Sovereignty** | Your models, your disk; nothing leaves but the search terms. | `council/sanitize.py`; the SSRF-guarded fetch path; the "what leaves your machine" table in [SECURITY.md](../SECURITY.md). |
-| **Commons** | Idle machines doing mutual aid — no token, no proxying, consent always. | `docs/DECISIONS.md` D1 (no token), D4 (no proxied traffic), D18 (informed tiered consent); `council/ledger.py`'s conservation guarantees. |
+| **Sovereignty** | Your models, your disk; nothing leaves but the search terms. | `passiveworkers/sanitize.py`; the SSRF-guarded fetch path; the "what leaves your machine" table in [SECURITY.md](../SECURITY.md). |
+| **Commons** | Idle machines doing mutual aid — no token, no proxying, consent always. | `docs/DECISIONS.md` D1 (no token), D4 (no proxied traffic), D18 (informed tiered consent); `passiveworkers/ledger.py`'s conservation guarantees. |
 
 ## The layered model
 
 | Layer | What it is | Status |
 |---|---|---|
-| **The engine** (single-player) | `pw research`: multiple local models research the live web as independent analysts; a blind editor writes one cited report. Judge the project on this. | Shipped, stable, the adoption path. |
+| **The engine** (single-player) | `pworkers research`: multiple local models research the live web as independent analysts; a blind editor writes one cited report. Judge the project on this. | Shipped, stable, the adoption path. |
 | **The network** (opt-in) | The same repo's second half: machines doing typed jobs for each other through a coordinator, settled in non-transferable credit. Deep research is the first job type; batch, extraction, and human-in-the-loop `assisted` work exist too. | Shipped and live (a real multi-country deployment exists); invite-only while it hardens; self-hostable today via `docs/network/SELF_HOST.md`. |
 | **Later markets** (speculative) | A research-compute commons for under-funded labs; companies running private multi-node intelligence; a broad consumer layer. | Not built. Named honestly as a direction, not a roadmap item. |
 
@@ -81,7 +81,7 @@ promise on a page:
 
 ## How to help, by audience
 
-- **Users:** run `pw research`, tell us where it breaks. A precise bug report against
+- **Users:** run `pworkers research`, tell us where it breaks. A precise bug report against
   young, honestly-labeled software is a real contribution, not a complaint.
 - **Operators:** join an existing cell ([docs/CONTRIBUTE_COMPUTE.md](CONTRIBUTE_COMPUTE.md))
   or start your own ([docs/network/SELF_HOST.md](network/SELF_HOST.md)) — you don't

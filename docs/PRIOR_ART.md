@@ -9,7 +9,7 @@ we own end to end. (See `docs/DECISIONS.md` D18 for the reuse policy.)
 ## Embedded libraries (used directly)
 
 - **[trafilatura](https://github.com/adbar/trafilatura)** (Apache-2.0) — main-content + metadata/date
-  extraction from HTML, behind `council/research.fetch_extract` (graceful regex fallback when absent).
+  extraction from HTML, behind `passiveworkers/research.fetch_extract` (graceful regex fallback when absent).
 - **[ddgs](https://github.com/deedy5/ddgs)** — DuckDuckGo metasearch client.
 - **[SearXNG](https://github.com/searxng/searxng)** (AGPL-3.0) — self-hosted metasearch, run as a
   separate service via `docker-compose.yml` and called over HTTP (not linked into our code).
@@ -18,7 +18,7 @@ we own end to end. (See `docs/DECISIONS.md` D18 for the reuse policy.)
 ## Techniques we learned from (reimplemented, not copied)
 
 - **[Stanford STORM](https://github.com/stanford-oval/storm)** (MIT) — perspective-guided question
-  asking. Our "STORM-lite" planner (`council/local.py`) assigns each analyst a distinct angle.
+  asking. Our "STORM-lite" planner (`passiveworkers/local.py`) assigns each analyst a distinct angle.
 - **[gpt-researcher](https://github.com/assafelovic/gpt-researcher)** (Apache-2.0) — planner +
   parallel execution and drafting from full pages, not snippets (our `fetch_extract` page evidence).
   Their MCP server is the model for our planned MCP interop.
@@ -31,7 +31,7 @@ we own end to end. (See `docs/DECISIONS.md` D18 for the reuse policy.)
 - **The "floor, not verified-true" framing is externally validated.** ["Cited but Not
   Verified"](https://arxiv.org/abs/2605.06635) (arXiv:2605.06635, May 2026) benchmarked frontier
   deep-research agents and found only 39–77% factual/citation accuracy — and accuracy *drops* as
-  tool-call count scales up. `council/fidelity.py` (D27) already refuses to overclaim: it's an
+  tool-call count scales up. `passiveworkers/fidelity.py` (D27) already refuses to overclaim: it's an
   explicit lexical **grounding floor** (content-token overlap plus fabricated-number detection), and
   a GROUNDED verdict is documented as "not obviously fabricated," never "verified true." This paper
   is independent confirmation that the framing is the honest stance, not an undersell — if

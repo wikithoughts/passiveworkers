@@ -1,6 +1,6 @@
-"""R15/D27 citation-fidelity scorer (council/fidelity.py) — the pure grounding logic, plus
+"""R15/D27 citation-fidelity scorer (passiveworkers/fidelity.py) — the pure grounding logic, plus
 the env-gated evidence capture in researcher.py. No network, no Ollama (all boundaries mocked)."""
-from council.fidelity import (classify, content_tokens, grounding_score, markers_in,
+from passiveworkers.fidelity import (classify, content_tokens, grounding_score, markers_in,
                               numeric_tokens, parse_cited_claims, parse_source_map,
                               score_claim, split_draft, split_sections)
 
@@ -53,7 +53,7 @@ def test_empty_source_is_unverifiable_not_a_failure():
 
 
 def test_number_check_ignores_format_drift_and_codes():
-    from council.fidelity import significant_numbers
+    from passiveworkers.fidelity import significant_numbers
     # single digits / decimals / alnum codes are NOT treated as checkable numbers (review HONESTY-001/BUG-001)
     assert significant_numbers("grew 4.2 million via v1 plan") == set()
     assert significant_numbers("18% in 2026, invoice INV-7731") == {"18", "2026", "7731"}
@@ -130,7 +130,7 @@ def test_score_claim_unverifiable_only_when_all_sources_empty():
 
 
 # ----------------------------------------------------------------------------- inference-time critic helpers (R35/D51)
-from council.fidelity import grounded_counts, grounded_word_count, unsupported_claims  # noqa: E402
+from passiveworkers.fidelity import grounded_counts, grounded_word_count, unsupported_claims  # noqa: E402
 
 
 def test_grounded_word_count_counts_only_grounded_sentences():
@@ -183,7 +183,7 @@ def test_grounded_counts_pair():
 
 # ----------------------------------------------------------------------------- evidence capture (researcher.py)
 def _capture_run(monkeypatch, env_on: bool, trace: bool = False):
-    import council.researcher as RW
+    import passiveworkers.researcher as RW
 
     monkeypatch.setattr(RW.ResearchWorker, "_generate",
                         lambda self, prompt, num_predict: ('["q1","q2","q3"]', 3))
@@ -278,7 +278,7 @@ def test_read_local_bounds_size(tmp_path):
 
 
 def test_score_report_caps_url_refetches(monkeypatch):
-    import council.research as R
+    import passiveworkers.research as R
     calls = {"n": 0}
 
     def fake_fetch(url, max_chars=4000, with_date=True):

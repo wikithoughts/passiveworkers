@@ -7,8 +7,8 @@ import pytest
 
 
 def _reload():
-    for m in ("council.ledger", "council.net.config", "council.net.store",
-              "council.net.coordinator_app"):
+    for m in ("passiveworkers.ledger", "passiveworkers.net.config", "passiveworkers.net.store",
+              "passiveworkers.net.coordinator_app"):
         importlib.reload(importlib.import_module(m))
 
 
@@ -17,7 +17,7 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "lb.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "100")
     _reload()
-    import council.net.store as st
+    import passiveworkers.net.store as st
     return st.Store()
 
 
@@ -57,7 +57,7 @@ def test_credits_uses_lifetime_earned_not_balance(store):
 
 
 def test_excludes_escrow(store):
-    from council.ledger import ESCROW_ID
+    from passiveworkers.ledger import ESCROW_ID
     store.ledger._escrow()                                       # materialize the escrow account
     _acct(store, "alice", earned=5, helped=1)
     owners = [o["owner"] for o in store.leaderboard(sort="credits")["operators"]]
@@ -82,13 +82,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "lbhttp.db"))
     monkeypatch.setenv("PW_TOKEN", "tok")
     _reload()
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     from fastapi.testclient import TestClient
     return TestClient(capp.app)
 
 
 def test_endpoint_clamps_limit_and_defaults_bad_sort(client):
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     for i in range(150):                                         # enough that the cap actually bites
         capp.store.ledger.open_account(f"op{i:03d}")
         a = capp.store.ledger.accounts[f"op{i:03d}"]

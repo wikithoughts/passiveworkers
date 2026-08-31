@@ -16,7 +16,7 @@ fail=0
 tmpdir="$(mktemp -d)"
 tmp="$tmpdir/check.js"   # must end in .js so node treats it as a script
 trap 'rm -rf "$tmpdir"' EXIT
-for spec in "council.net.app:APP_HTML" "council.net.dashboard:DASHBOARD_HTML" "council.serve:SERVE_HTML"; do
+for spec in "passiveworkers.net.app:APP_HTML" "passiveworkers.net.dashboard:DASHBOARD_HTML" "passiveworkers.serve:SERVE_HTML"; do
   mod="${spec%%:*}"; var="${spec##*:}"
   # write to a real temp file — `node --check /dev/stdin` can't read a pipe on Linux CI
   python3 -c "import re,importlib;m=importlib.import_module('$mod');open('$tmp','w').write(re.findall(r'<script>(.*?)</script>', getattr(m,'$var'), re.DOTALL)[-1])"

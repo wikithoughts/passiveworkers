@@ -1,16 +1,16 @@
-"""council/net/agent.py — Agent.run()'s full poll -> claim -> execute -> deliver loop, driven
+"""passiveworkers/net/agent.py — Agent.run()'s full poll -> claim -> execute -> deliver loop, driven
 against a REAL coordinator (via the requests->TestClient shim in conftest.py), not the
 monkeypatched-away version tests/test_join.py uses. R31 review: this loop is the code a
-stranger's machine runs 24/7 under `pw join`/`pw work`, and it previously had zero coverage."""
+stranger's machine runs 24/7 under `pworkers join`/`pworkers work`, and it previously had zero coverage."""
 from __future__ import annotations
 
 import requests as _real_requests
 
-import council.net.agent as A
+import passiveworkers.net.agent as A
 
 
 def _wired_shim(coord_client, shim_factory):
-    """The shim swaps out the `requests` NAME entirely, but council.net.agent._fix_hint checks
+    """The shim swaps out the `requests` NAME entirely, but passiveworkers.net.agent._fix_hint checks
     `requests.exceptions.ConnectionError` for its isinstance branch — expose the real exceptions
     module on the shim (the same convention tests/test_join.py's _FakeRequests already uses)."""
     shim = shim_factory(coord_client, "http://coord")
@@ -23,7 +23,7 @@ def test_agent_run_drains_answer_and_judge_tasks_via_real_coordinator(
 ):
     monkeypatch.setattr(A, "requests", _wired_shim(coord_client, shim_factory))
     monkeypatch.setattr(A.Agent, "_heartbeat_loop", lambda self: None)   # isolate the poll loop
-    monkeypatch.setattr("council.ollama.generate", lambda *a, **k: ("a canned answer", 42))
+    monkeypatch.setattr("passiveworkers.ollama.generate", lambda *a, **k: ("a canned answer", 42))
 
     monkeypatch.setenv("PW_COORDINATOR", "http://coord")
     monkeypatch.setenv("PW_TOKEN", "tok")
@@ -72,7 +72,7 @@ def test_agent_run_reports_task_failure_via_fix_hint_and_counters(
 
     def boom_generate(*a, **k):
         raise ConnectionError("Connection refused")
-    monkeypatch.setattr("council.ollama.generate", boom_generate)
+    monkeypatch.setattr("passiveworkers.ollama.generate", boom_generate)
 
     monkeypatch.setenv("PW_COORDINATOR", "http://coord")
     monkeypatch.setenv("PW_TOKEN", "tok")

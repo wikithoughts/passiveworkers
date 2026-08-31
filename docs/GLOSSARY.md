@@ -4,9 +4,9 @@ Current vocabulary (Round 32 onward) first; deprecated pre-Round-32 terms are ke
 the bottom as pointers, not deleted — the round log in [ROADMAP.md](ROADMAP.md) still
 uses the old names in its older entries.
 
-## Single-player (`pw research`)
+## Single-player (`pworkers research`)
 
-- **Research desk** — the single-player engine: `pw research` on the CLI, or `pw serve`
+- **Research desk** — the single-player engine: `pworkers research` on the CLI, or `pworkers serve`
   as a local web UI at `http://127.0.0.1:8770`.
 - **Planner** — discovers distinct angles on a brief before research starts (STORM-style
   query planning), so analysts investigate genuinely different questions, not the same
@@ -18,22 +18,22 @@ uses the old names in its older entries.
   and surfacing outright disagreement instead of forcing a false consensus.
 - **Editor** — compiles the judge's merged findings into one cited report
   (`./reports/*.md`, plus `--json`/`--html`).
-- **Library** — your own indexed documents (`pw library add`), retrieved locally via
+- **Library** — your own indexed documents (`pworkers library add`), retrieved locally via
   hybrid dense+lexical search; cited as `[L#]`, kept separate from web sources `[S#]`.
 
-## Network (opt-in, `pw join` / `pw ask`)
+## Network (opt-in, `pworkers join` / `pworkers ask`)
 
 - **Coordinator** — the open-source, self-hostable hub holding the ledger, job queue,
-  node registry, and telemetry (`council/net/coordinator_app.py`). Routes jobs and
+  node registry, and telemetry (`passiveworkers/net/coordinator_app.py`). Routes jobs and
   settles credit; never a token, never a proxy for traffic.
-- **Operator** — a person who runs `pw join` and contributes their machine's compute.
-- **Asker** — a person who submits a job and spends credit (`pw ask`).
+- **Operator** — a person who runs `pworkers join` and contributes their machine's compute.
+- **Asker** — a person who submits a job and spends credit (`pworkers ask`).
 - **Node** / **agent** — an operator's running worker process; dials out to a
   coordinator only, never accepts inbound connections.
 - **Judge** (network sense) — a node that also scores other nodes' answers, blind, when
   it opts in via `--judge` (`PW_CAN_JUDGE=1`).
-- **Assisted task** — a bounded, human-in-the-loop job (`pw tasks` / `pw accept` /
-  `pw deliver`) for work that needs a real computer driven — an operator consents to
+- **Assisted task** — a bounded, human-in-the-loop job (`pworkers tasks` / `pworkers accept` /
+  `pworkers deliver`) for work that needs a real computer driven — an operator consents to
   one specific brief and does it themselves or with their own AI; the project's code
   never automates anyone's machine (see D18 in [DECISIONS.md](DECISIONS.md)).
 - **Merge** — the network's judge-produced synthesis across nodes' answers, analogous
@@ -49,8 +49,8 @@ uses the old names in its older entries.
   work over time while leaving ungated work open to newcomers.
 - **Lens** — an angle of attack given to an analyst/node via its prompt (e.g.
   `opportunity`, `skeptic`, `first_principles`, `practical`) to pull different ideas
-  from the same or different models (applies uniformly to both chat jobs, `pw ask`,
-  and research jobs, `pw research`/network research jobs — R38).
+  from the same or different models (applies uniformly to both chat jobs, `pworkers ask`,
+  and research jobs, `pworkers research`/network research jobs — R38).
 - **Model-downgrade** — the real cheat under a non-cash credit: a node silently running
   a smaller or more-quantized model than it claims, to earn credit for less work.
 - **Cross-hardware verification** — confirming that honest answers from different

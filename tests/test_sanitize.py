@@ -1,5 +1,5 @@
 """Sanitizer: the untrusted-content gate must strip invisible-text injection vectors."""
-from council.sanitize import clean, spotlight, OPEN, CLOSE
+from passiveworkers.sanitize import clean, spotlight, OPEN, CLOSE
 
 
 def test_strips_zero_width_and_bidi():

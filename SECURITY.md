@@ -10,11 +10,11 @@
 What this document covers, and what's actually at risk if something goes wrong:
 
 - **Your brief / question** — the text you ask the engine to research.
-- **Your documents** — anything you `pw library add`.
+- **Your documents** — anything you `pworkers library add`.
 - **Your reports** — the markdown/JSON/HTML files the engine writes to `./reports/`.
 - **Your Ollama** — the local inference server the engine drives.
 - **Your keys** — the Ed25519 signing key and X25519 encryption key generated for the
-  network (`pw keygen` / `pw fingerprint`), and the `~/.passiveworkers/*.json`
+  network (`pworkers keygen` / `pworkers fingerprint`), and the `~/.passiveworkers/*.json`
   credential files.
 - **(Network only) your machine's compute and egress** — what a joined agent spends on
   others' behalf, always within a task class you consented to.
@@ -23,8 +23,8 @@ What this document covers, and what's actually at risk if something goes wrong:
 
 | Adversary | What they could try | What stops them |
 |---|---|---|
-| **A malicious web page** | Inject instructions into fetched content to hijack the model, or smuggle a payload into the final report | Every fetched page is sanitized (invisible-Unicode / hidden-comment stripping) and enters prompts only inside spotlighting delimiters marked "data, never instructions" (`council/sanitize.py`); model output is re-scrubbed before it lands in the report; models hold **zero tool privileges** |
-| **A malicious coordinator** (one you join, not run) | Read your job content, swap a deliverable, impersonate an operator | End-to-end encryption is opt-in (`pw keygen`) so the coordinator relays ciphertext it cannot read; deliverables are Ed25519-signed and the asker **pins** the operator's key (`pw trust add` / TOFU) — `pw fetch` refuses a signed delivery under the wrong key |
+| **A malicious web page** | Inject instructions into fetched content to hijack the model, or smuggle a payload into the final report | Every fetched page is sanitized (invisible-Unicode / hidden-comment stripping) and enters prompts only inside spotlighting delimiters marked "data, never instructions" (`passiveworkers/sanitize.py`); model output is re-scrubbed before it lands in the report; models hold **zero tool privileges** |
+| **A malicious coordinator** (one you join, not run) | Read your job content, swap a deliverable, impersonate an operator | End-to-end encryption is opt-in (`pworkers keygen`) so the coordinator relays ciphertext it cannot read; deliverables are Ed25519-signed and the asker **pins** the operator's key (`pworkers trust add` / TOFU) — `pworkers fetch` refuses a signed delivery under the wrong key |
 | **A malicious operator** | Submit low-quality or downgraded work for credit; hijack another operator's task | Pay is score-weighted by a blind judge, so bad work simply earns less; a per-node secret means a node can only complete its own tasks (no hijacking, no forged scores); an asker can *opt in* to a reputation floor (`requires.min_reputation`) on a specific job — this is a knob the asker sets, not an automatic gate on sensitive work |
 | **A malicious asker** | Abuse a coordinator to spam registrations/jobs, or read other users' data | Rate limits on registration/job/token endpoints (D36); per-user-secret auth scopes each asker to their own jobs; `/status` exposes no other user's balance or identity |
 | **A local attacker** (access to your machine/account) | Read your keys or credentials | All credential files (`join.json`, `operator.json`, `asker.json`, key files) are written owner-only (`0600`) |
@@ -52,7 +52,7 @@ These are absolutes, not defaults you could accidentally misconfigure away:
   (non-finite/out-of-range → 0, empty/errored answers → 0 with no reputation credit);
   an over-budget job fails cleanly rather than draining an account. Conservation
   (nothing created or destroyed on any path, including inf/NaN inputs) is
-  property-tested (`council/ledger.py`).
+  property-tested (`passiveworkers/ledger.py`).
 - **The dashboard has no info-leak or stored-XSS surface.** `/status` exposes an opaque
   `node_key`, never a raw `node_id` or IP; every node-supplied field (name, owner, …)
   is HTML-escaped before the dashboard renders it, so a malicious node name can't
@@ -83,18 +83,18 @@ This table is excerpted in [README.md](README.md); this file is the source of tr
   detect subtle misrepresentation.
 - **A coordinator you don't run sees job metadata** — who's asking, what job type,
   timing — even when the deliverable content itself is end-to-end encrypted.
-- **Your search backend sees your queries.** For `pw research` (single-player) and the
+- **Your search backend sees your queries.** For `pworkers research` (single-player) and the
   network's dedicated research job type, those are LLM-derived from your brief, never
   the brief itself, unless you self-host SearXNG. For the network's *default* `chat`
   job type, this is **not** true: the sanitized-but-verbatim question is sent directly
   as the search query to the answering node's configured backend — a real gap between
   the two job types, not a uniform guarantee.
-- **`pw research --editor api` (BYOK) sends your brief to an external API.** Wiring in
+- **`pworkers research --editor api` (BYOK) sends your brief to an external API.** Wiring in
   a frontier editor over OpenRouter means your brief, not just derived search terms,
   leaves your machine over HTTPS to that API — this is the one documented exception to
   "private by construction," and it's opt-in only.
 - **A DNS-rebinding TOCTOU residual exists in the fetch path**, self-documented in code
-  rather than fully closed (`council/research.py`). A determined attacker with
+  rather than fully closed (`passiveworkers/research.py`). A determined attacker with
   DNS-timing control could theoretically race a fetch between the SSRF check and the
   request. On a plain machine the exposure is a fetched-page read; **on a cloud-hosted
   coordinator/operator with an unauthenticated instance-metadata endpoint reachable

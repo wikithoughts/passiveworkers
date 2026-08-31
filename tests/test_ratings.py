@@ -7,11 +7,11 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "r.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "1000")
     import importlib
-    import council.ledger as led          # STARTER_ALLOWANCE is read at import → reload it first
+    import passiveworkers.ledger as led          # STARTER_ALLOWANCE is read at import → reload it first
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 

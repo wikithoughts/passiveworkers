@@ -1,6 +1,6 @@
 """Research backend: row-shaping, host curation, SSRF guard, engine routing — all mocked
 (no network in CI)."""
-import council.research as R
+import passiveworkers.research as R
 
 
 def test_quality_host_filter():
@@ -280,7 +280,7 @@ def test_reset_ddg_breaker_clears_streak(monkeypatch):
 
 
 def test_ddg_breaker_auto_clears_after_cooldown(monkeypatch):
-    # Workflow-review finding: a long-lived process (the pw join/pw work agent daemon) never
+    # Workflow-review finding: a long-lived process (the pworkers join/pworkers work agent daemon) never
     # calls reset_ddg_breaker() between tasks by design — without a cooldown, 3 failures spread
     # across a node's ENTIRE uptime would disable DDG PERMANENTLY, worse than no breaker at all.
     R.reset_ddg_breaker()

@@ -1,5 +1,5 @@
 """D36 rate limiter: deterministic sliding-window unit tests (time injected, no sleeps)."""
-from council.net.ratelimit import RateLimiter
+from passiveworkers.net.ratelimit import RateLimiter
 
 
 def test_allows_up_to_limit_then_denies():
