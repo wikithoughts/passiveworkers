@@ -30,6 +30,7 @@ import socket
 import sys
 import threading
 import time
+from typing import Callable
 
 import requests
 
@@ -84,7 +85,7 @@ class Agent:
         self.node_secret: str | None = None
         # D42: a callback (node_id, secret) -> None, set by `pw join` so a freshly minted identity is
         # persisted to ~/.passiveworkers/join.json the moment register() succeeds.
-        self._on_identity = None
+        self._on_identity: Callable[[str, str | None], None] | None = None
         self._running = True
         self._tasks_ok = 0
         self._tasks_failed = 0
@@ -125,6 +126,7 @@ class Agent:
         r.raise_for_status()
         data = r.json()
         self.node_id = data["node_id"]
+        assert self.node_id is not None
         self.node_secret = data.get("node_secret")
         if self._on_identity:   # D42: persist the minted identity (best-effort; never break register)
             try:
@@ -160,6 +162,11 @@ class Agent:
 
     # ------------------------------------------------------------------ task handlers
     def _do_answer(self, task: dict) -> dict:
+        # In the normal run() loop, node_id is always set here (register() has already succeeded
+        # at startup) — but pyright can't carry that narrowing across methods, and some tests call
+        # _do_answer directly on a fresh, unregistered Agent (node_id is None). An assert would
+        # crash those; `or ""` narrows for pyright without changing runtime behavior either way.
+        worker_id = self.node_id or ""
         payload = task.get("payload") or {}
         # defense-in-depth (D26): the coordinator is not fully trusted (cf. D25) — re-scrub the
         # brief/instruction here so a hostile coordinator can't slip a hidden payload into a prompt.
@@ -169,7 +176,7 @@ class Agent:
             # D13/D33: batch shard — apply the instruction to THIS node's slice. A trusted per-type
             # framing (download_extract / code_generation) is prepended AFTER sanitization.
             from council.batch import BatchWorker
-            bw = BatchWorker(self.node_id, self.answer_model,
+            bw = BatchWorker(worker_id, self.answer_model,
                              country=task.get("country", self.country))
             instruction = f"{beh.framing}\n\n{question}".strip() if beh.framing else question
             # D32: report progress as items complete (throttled) so the coordinator can show a job
@@ -189,7 +196,7 @@ class Agent:
             # D13: async deep-research job — this node's own multi-round, egress-localized
             # research with citations (council/researcher.py).
             from council.researcher import ResearchWorker
-            rw = ResearchWorker(self.node_id, self.answer_model,
+            rw = ResearchWorker(worker_id, self.answer_model,
                                 lens=task.get("lens", self.lens),
                                 country=task.get("country", self.country),
                                 scope="web")  # federation = web only; no operator's private library
@@ -201,7 +208,7 @@ class Agent:
             except Exception as exc:
                 print(f"[agent] web research unavailable: {exc}")
                 web = None
-        w = PerspectiveWorker(self.node_id, self.answer_model, lens=task.get("lens", self.lens),
+        w = PerspectiveWorker(worker_id, self.answer_model, lens=task.get("lens", self.lens),
                               country=task.get("country", self.country), web_search=web,
                               num_predict=int(os.environ.get("PW_NUM_PREDICT", "400")))
         a = w.answer(question)
@@ -436,7 +443,7 @@ def join(argv: list) -> int:
         # resume: reuse the cached identity (register under enroll mode needs a fresh single-use token)
         agent.node_id, agent.node_secret = cfg["node_id"], cfg["node_secret"]
 
-    def _persist(node_id: str, secret: str) -> None:
+    def _persist(node_id: str, secret: str | None) -> None:
         s = _load_join()
         entry = {**s.get(url, {}), **cfg, "node_id": node_id, "node_secret": secret}
         entry.pop("enroll_token", None)           # never persist the (single-use) token

@@ -42,6 +42,26 @@ def test_redeem_kind_and_validity(store):
     assert not store.redeem_enrollment("bogus", kind="node")["ok"]    # invalid
 
 
+_HEX_CHARS = set("0123456789abcdef")
+
+
+def test_minted_tokens_and_secrets_are_lowercase_hex(store):
+    # regression: secrets.token_urlsafe()'s alphabet can produce a token starting with '-', which
+    # council/net/submit.py's argparse then misparses as a flag (SystemExit(2)) — flaky
+    # test_invite_then_ask_with_enroll_token_gets_starter_grant. token_hex() can never do this.
+    tokens = []
+    for i in range(20):
+        tokens.append(store.mint_enrollment(owner=f"op{i}", kind="any")["enroll_token"])
+        tokens.append(store.register_node({"owner": f"node-owner{i}", "answer_model": "m"})
+                      ["node_secret"])
+        tokens.append(store.register_user(f"user{i}")["user_secret"])
+    assert len(tokens) == 60
+    for tok in tokens:
+        assert tok, "token must be non-empty"
+        assert not tok.startswith("-"), f"token starts with '-': {tok!r}"
+        assert set(tok) <= _HEX_CHARS, f"token has non-hex characters: {tok!r}"
+
+
 def test_open_account_grant_amounts_conserve(store):
     store.ledger.open_account("a")                       # default → STARTER (100)
     store.ledger.open_account("b", grant_amount=0)       # no grant
