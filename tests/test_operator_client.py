@@ -1,4 +1,4 @@
-"""council/operator.py — the operator + asker CLI client verbs (previously untested beyond the pure
+"""passiveworkers/operator.py — the operator + asker CLI client verbs (previously untested beyond the pure
 _verify_delivery_signature helper). Network verbs run against a REAL coordinator through the
 requests→TestClient shim (see conftest); local crypto/trust verbs run directly against a tmp home."""
 import importlib
@@ -10,10 +10,10 @@ BASE = "http://coord"
 
 @pytest.fixture
 def op_module(tmp_path, monkeypatch):
-    """Fresh council.operator bound to a tmp PW_LIBRARY_DIR — its module-level STATE path (operator.json)
+    """Fresh passiveworkers.operator bound to a tmp PW_LIBRARY_DIR — its module-level STATE path (operator.json)
     is computed at import, so it must be reloaded AFTER the env is redirected, never touching the real home."""
     monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))
-    import council.operator as OP
+    import passiveworkers.operator as OP
     return importlib.reload(OP)
 
 
@@ -81,15 +81,15 @@ def test_identity_is_cached_across_operators(coord_client, op_module, shim_facto
 
 
 def test_identity_prefers_join_json_over_fresh_register(op_module, monkeypatch):
-    """A machine that already `pw join`ed this coordinator shares that node identity for
-    `pw tasks`/`pw accept`/`pw deliver` too, instead of minting (and appearing on the live
+    """A machine that already `pworkers join`ed this coordinator shares that node identity for
+    `pworkers tasks`/`pworkers accept`/`pworkers deliver` too, instead of minting (and appearing on the live
     map as) a second node (R34). Mirrors _cached_node_secret()'s join.json-first lookup."""
     OP = op_module
     monkeypatch.setenv("PW_COORDINATOR", BASE)
     monkeypatch.setenv("PW_TOKEN", "tok")
     monkeypatch.setenv("PW_OWNER", "bob")
 
-    from council.net.agent import _save_join
+    from passiveworkers.net.agent import _save_join
     _save_join({BASE: {"node_id": "joined-node-id", "node_secret": "joined-node-secret"},
                 "default": BASE})
 
@@ -134,7 +134,7 @@ def test_fetch_falls_back_to_asker_json_secret(op_module, monkeypatch, capsys):
     OP = op_module
     monkeypatch.delenv("PW_COORDINATOR", raising=False)
     monkeypatch.delenv("PW_USER_SECRET", raising=False)
-    from council.net.submit import _save_asker_secret
+    from passiveworkers.net.submit import _save_asker_secret
     _save_asker_secret("http://c", "alice", "SEC-CACHED")
 
     seen = {}
@@ -151,7 +151,7 @@ def test_rate_falls_back_to_asker_json_secret(op_module, monkeypatch, capsys):
     OP = op_module
     monkeypatch.delenv("PW_COORDINATOR", raising=False)
     monkeypatch.delenv("PW_USER_SECRET", raising=False)
-    from council.net.submit import _save_asker_secret
+    from passiveworkers.net.submit import _save_asker_secret
     _save_asker_secret("http://c", "alice", "SEC-CACHED")
 
     seen = {}
@@ -170,7 +170,7 @@ def test_fetch_error_message_names_pw_ask(op_module, monkeypatch, capsys):
     monkeypatch.delenv("PW_COORDINATOR", raising=False)
     monkeypatch.delenv("PW_USER_SECRET", raising=False)
     assert op_module.fetch("job1", "/tmp/out") == 2
-    assert "pw ask" in capsys.readouterr().out
+    assert "pworkers ask" in capsys.readouterr().out
 
 
 # --------------------------------------------------------- local crypto/trust verbs
@@ -193,7 +193,7 @@ def test_trust_usage_on_bad_args(op_module, capsys):
 
 
 def test_keygen_and_fingerprint(op_module, capsys):
-    from council import crypto as C
+    from passiveworkers import crypto as C
     if not C.available():
         pytest.skip("crypto extra not installed")
     OP = op_module

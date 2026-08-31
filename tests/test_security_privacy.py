@@ -17,10 +17,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "sec.db"))
     monkeypatch.setenv("PW_TOKEN", "tok")
     monkeypatch.setenv("PW_STARTER_CREDITS", "100000")
-    for m in ("council.ledger", "council.net.config", "council.net.store",
-              "council.net.coordinator_app"):
+    for m in ("passiveworkers.ledger", "passiveworkers.net.config", "passiveworkers.net.store",
+              "passiveworkers.net.coordinator_app"):
         importlib.reload(importlib.import_module(m))
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     from fastapi.testclient import TestClient
     return TestClient(capp.app)
 
@@ -83,11 +83,11 @@ def test_job_view_redacts_identity_and_receipt_for_non_asker(client):
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "sec_store.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "100000")
-    import council.ledger as led
+    import passiveworkers.ledger as led
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 
@@ -140,7 +140,7 @@ def test_failed_register_does_not_burn_enrollment_token(store, monkeypatch):
     monkeypatch.undo()
 
     # the single-use token was rolled back with the failed insert → still redeemable
-    from council.net.store import _hash
+    from passiveworkers.net.store import _hash
     row = store.conn.execute("SELECT uses FROM enroll_tokens WHERE token_hash=?",
                              (_hash(token),)).fetchone()
     assert (row["uses"] or 0) == 0
@@ -170,7 +170,7 @@ def test_signup_token_not_burned_on_handle_taken(store):
     tok = mint["enroll_token"]
     res = store.register_user("alice", enroll_token=tok, enroll_kind="user")
     assert res.get("error") == "handle taken"
-    from council.net.store import _hash
+    from passiveworkers.net.store import _hash
     row = store.conn.execute("SELECT uses FROM enroll_tokens WHERE token_hash=?",
                              (_hash(tok),)).fetchone()
     assert (row["uses"] or 0) == 0                        # token NOT burned
@@ -199,7 +199,7 @@ def test_all_errored_batch_is_failed_and_not_charged(store):
 
 
 def _capp(client):
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     return capp
 
 

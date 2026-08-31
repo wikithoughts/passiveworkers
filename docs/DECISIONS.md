@@ -2,6 +2,10 @@
 
 > Append-only record of settled decisions and the reasoning behind them, so we never
 > re-litigate. Newest at the bottom. Each: **Decision · Why · Status.**
+>
+> This is a dated history — entries below predate the `council`→`passiveworkers` import-package
+> rename and `pw`→`pworkers` CLI-command rename (R36); they intentionally describe the pre-rename
+> names as they were true at the time, not rewritten to say `passiveworkers`/`pworkers`.
 
 ## D1 — Non-transferable credit, no token, no secondary market
 **Decision:** The credit is internal and non-transferable; money enters/leaves only at the platform

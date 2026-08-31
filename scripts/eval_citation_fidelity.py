@@ -4,7 +4,7 @@ scripts/eval_citation_fidelity.py — does each cited claim actually appear in i
 =================================================================================================
 The product's whole promise is *grounded* research: every claim cites a real source. This
 instrument measures whether that holds, by lexically checking each [S#]/[L#] claim against
-the text of the source it points at (council/fidelity.py — a grounding *floor*, see its
+the text of the source it points at (passiveworkers/fidelity.py — a grounding *floor*, see its
 docstring for what it can and cannot prove). It is the honest counterpart to the benchmarks:
 not "did we get the trivia right" but "can a reader trust the citations".
 
@@ -28,7 +28,7 @@ import os
 import pathlib
 import sys
 
-from council.fidelity import classify, parse_cited_claims, parse_source_map, score_claim, split_sections
+from passiveworkers.fidelity import classify, parse_cited_claims, parse_source_map, score_claim, split_sections
 
 # brief set for Mode B: each has checkable numbers/dates/names so numeric grounding is exercised
 DEFAULT_QUESTIONS = [
@@ -65,7 +65,7 @@ MAX_RESULTS = 20_000       # defensive ceiling on accumulated per-claim results
 def score_report(report_text: str, *, grounded: float, weak: float) -> list[dict]:
     """Score every cited claim in a saved report by re-fetching its sources. Citations are
     per-contribution scoped, so each '### …' section is resolved against its OWN source list."""
-    from council.research import fetch_extract   # imported lazily: needs network, not for tests
+    from passiveworkers.research import fetch_extract   # imported lazily: needs network, not for tests
 
     sections = split_sections(report_text) or [report_text]
     web_cache: dict[str, str] = {}
@@ -111,8 +111,8 @@ def score_run(questions: list[str], *, model: str | None, depth: str, analysts: 
     correct about the world (review: HONESTY-003)."""
     os.environ["PW_CAPTURE_EVIDENCE"] = "1"
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")
-    from council.local import detect_models, pick_cast
-    from council.researcher import ResearchWorker
+    from passiveworkers.local import detect_models, pick_cast
+    from passiveworkers.researcher import ResearchWorker
 
     if model:
         cast = [model]
@@ -156,8 +156,8 @@ def score_paired(questions: list[str], *, model: str | None, depth: str, analyst
     os.environ["PW_FIDELITY_TRACE"] = "1"
     os.environ["PW_FIDELITY_REPAIR"] = "1"
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")
-    from council.local import detect_models, pick_cast
-    from council.researcher import ResearchWorker
+    from passiveworkers.local import detect_models, pick_cast
+    from passiveworkers.researcher import ResearchWorker
 
     cast = [model] if model else pick_cast(detect_models(), max(1, analysts))[0]
     pre_results: list[dict] = []

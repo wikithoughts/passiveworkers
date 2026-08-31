@@ -72,10 +72,10 @@ Evidence = "https://wikithoughts.github.io/passiveworkers/"
 Security = "https://github.com/wikithoughts/passiveworkers/security/advisories/new"
 
 [project.scripts]
-pw = "council.cli:main"
+pworkers = "passiveworkers.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["council*"]
+include = ["passiveworkers*"]
 
 [tool.ruff]
 line-length = 120
@@ -107,7 +107,7 @@ filterwarnings = [
 # is Any-tolerant, so the dynamic `sqlite3.Row["col"]` / `json.loads(...)` patterns don't explode. The CI
 # `types` job runs this but does NOT gate the build (continue-on-error) — signal now, enforcement later.
 # Widen `include` module-by-module as the surface is annotated; NOT strict, NOT repo-wide by design.
-include = ["council/net"]
+include = ["passiveworkers/net"]
 typeCheckingMode = "basic"
 pythonVersion = "3.10"
 reportMissingImports = "none"          # optional extras (geoip2, pynacl, …) are lazy-imported

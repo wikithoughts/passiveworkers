@@ -1,6 +1,6 @@
 """R17/D29 performance & quality: dynamic source routing, Ollama keep-alive on every model
 call, and merge-prompt citation preservation. Pure logic + mocked boundaries (no Ollama/network)."""
-import council.research as R
+import passiveworkers.research as R
 
 
 # ----------------------------------------------------------------------------- source routing
@@ -30,7 +30,7 @@ def test_route_respects_off_switch(monkeypatch):
 
 def test_router_is_wired_into_researcher(monkeypatch):
     """An academic-signalled query must actually reach search_structured with engine='academic'."""
-    import council.researcher as RW
+    import passiveworkers.researcher as RW
     engines_seen = []
 
     monkeypatch.setattr(RW.ResearchWorker, "_generate",
@@ -61,8 +61,8 @@ class _FakeResp:
 
 
 def test_worker_sends_keep_alive(monkeypatch):
-    import council.ollama as O   # the POST now lives in the one shared Ollama client (D48)
-    import council.worker as W
+    import passiveworkers.ollama as O   # the POST now lives in the one shared Ollama client (D48)
+    import passiveworkers.worker as W
     captured = {}
 
     def fake_post(url, json=None, timeout=None):
@@ -75,8 +75,8 @@ def test_worker_sends_keep_alive(monkeypatch):
 
 
 def test_keep_alive_is_env_overridable(monkeypatch):
-    import council.ollama as O
-    import council.researcher as RW
+    import passiveworkers.ollama as O
+    import passiveworkers.researcher as RW
     captured = {}
 
     def fake_post(url, json=None, timeout=None):
@@ -90,8 +90,8 @@ def test_keep_alive_is_env_overridable(monkeypatch):
 
 
 def test_judge_sends_keep_alive(monkeypatch):
-    import council.judge as J
-    import council.ollama as O
+    import passiveworkers.judge as J
+    import passiveworkers.ollama as O
     captured = {}
     monkeypatch.setattr(O.requests, "post",
                         lambda url, json=None, timeout=None: captured.update(body=json) or _FakeResp({"response": "{}"}))
@@ -100,8 +100,8 @@ def test_judge_sends_keep_alive(monkeypatch):
 
 
 def test_batch_worker_sends_keep_alive(monkeypatch):
-    import council.batch as B
-    import council.ollama as O
+    import passiveworkers.batch as B
+    import passiveworkers.ollama as O
     captured = {}
     monkeypatch.setattr(O.requests, "post",
                         lambda url, json=None, timeout=None: captured.update(body=json) or _FakeResp({"response": "x", "eval_count": 1}))
@@ -113,11 +113,11 @@ def test_pw_ollama_base_reaches_every_generation_call(monkeypatch):
     # D48 regression: PW_OLLAMA_BASE must reach the ANALYST/EDITOR/WORKER/BATCH generation calls,
     # not just model detection. Before the shared client these hardcoded localhost, so pointing at a
     # GPU box listed its models then failed every generation against localhost.
-    import council.batch as B
-    import council.judge as J
-    import council.ollama as O
-    import council.researcher as RW
-    import council.worker as W
+    import passiveworkers.batch as B
+    import passiveworkers.judge as J
+    import passiveworkers.ollama as O
+    import passiveworkers.researcher as RW
+    import passiveworkers.worker as W
     monkeypatch.setenv("PW_OLLAMA_BASE", "http://gpu-box:11434")
     urls = []
     monkeypatch.setattr(O.requests, "post",
@@ -131,7 +131,7 @@ def test_pw_ollama_base_reaches_every_generation_call(monkeypatch):
 
 
 def test_baseline_ollama_sends_keep_alive(monkeypatch):
-    import council.net.baseline as BL
+    import passiveworkers.net.baseline as BL
     captured = {}
     monkeypatch.setattr(BL.requests, "post",
                         lambda url, json=None, timeout=None: captured.update(body=json) or _FakeResp({"response": "ok"}))
@@ -141,8 +141,8 @@ def test_baseline_ollama_sends_keep_alive(monkeypatch):
 
 # ----------------------------------------------------------------------------- merge citation preservation
 def test_merge_prompt_preserves_citations(monkeypatch):
-    from council.judge import Judge
-    from council.worker import Answer
+    from passiveworkers.judge import Judge
+    from passiveworkers.worker import Answer
     captured = {}
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: captured.update(p=prompt) or "merged")
@@ -153,8 +153,8 @@ def test_merge_prompt_preserves_citations(monkeypatch):
 
 
 def test_deliberate_prompt_preserves_citations(monkeypatch):
-    from council.judge import Judge
-    from council.worker import Answer
+    from passiveworkers.judge import Judge
+    from passiveworkers.worker import Answer
     captured = {}
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: captured.update(p=prompt) or '{"merge":"m"}')
@@ -166,8 +166,8 @@ def test_deliberate_prompt_preserves_citations(monkeypatch):
 def test_merge_drops_invented_citation_markers(monkeypatch):
     # review CITATION_MERGE_001: even if the model ignores the prompt rule, an INVENTED marker
     # (not present in any source answer) must never survive into the merged output.
-    from council.judge import Judge
-    from council.worker import Answer
+    from passiveworkers.judge import Judge
+    from passiveworkers.worker import Answer
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: "Claim grounded [S1] but fabricated [S9].")
     j = Judge(model="m")
@@ -177,7 +177,7 @@ def test_merge_drops_invented_citation_markers(monkeypatch):
 
 
 def test_known_markers_preserved_in_group(monkeypatch):
-    from council.judge import _drop_invented_markers
+    from passiveworkers.judge import _drop_invented_markers
     # in a grouped cite, drop only the invented member; keep the real one
     assert _drop_invented_markers("x [S1, S9] y", {"S1"}) == "x [S1] y"
     assert _drop_invented_markers("all bogus [S8, S9]", {"S1"}) == "all bogus "

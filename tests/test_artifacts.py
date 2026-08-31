@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from council import artifacts as A
+from passiveworkers import artifacts as A
 
 
 def _make(tmp_path, nbytes):
@@ -61,9 +61,9 @@ def test_oversize_file_rejected(tmp_path, monkeypatch):
 def test_blob_store_hash_check(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "b.db"))
     import importlib
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     store = st.Store()
     import hashlib

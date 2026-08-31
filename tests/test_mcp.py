@@ -5,8 +5,8 @@ import asyncio
 
 import pytest
 
-import council.mcp_server as M
-from council.mcp_server import _normalize_research_args
+import passiveworkers.mcp_server as M
+from passiveworkers.mcp_server import _normalize_research_args
 
 
 def test_empty_brief_returns_clean_error():
@@ -37,14 +37,14 @@ def test_research_tool_systemexit_becomes_error_field(monkeypatch):
     # Exception` if not caught explicitly).
     def boom(*a, **k):
         raise SystemExit("Can't reach Ollama at http://x. Start it with `ollama serve`.")
-    monkeypatch.setattr("council.local.run", boom)
+    monkeypatch.setattr("passiveworkers.local.run", boom)
     out = M._run_research_structured("real question", "quick", 2, "both")
     assert out["error"] and "ollama serve" in out["error"].lower()
     assert out["report"] == ""
 
 
 def test_research_tool_generic_exception_becomes_error_field(monkeypatch):
-    monkeypatch.setattr("council.local.run",
+    monkeypatch.setattr("passiveworkers.local.run",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")))
     out = M._run_research_structured("real question", "quick", 2, "both")
     assert "RuntimeError" in out["error"] and "disk full" in out["error"]
@@ -52,7 +52,7 @@ def test_research_tool_generic_exception_becomes_error_field(monkeypatch):
 
 def test_research_tool_empty_brief_short_circuits(monkeypatch):
     # bad input never reaches run() — clean error, no exception
-    monkeypatch.setattr("council.local.run",
+    monkeypatch.setattr("passiveworkers.local.run",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
     out = M._run_research_structured("", "quick", 2, "both")
     assert out["error"]
@@ -67,7 +67,7 @@ def test_research_tool_success_returns_degradation_signals(monkeypatch, tmp_path
     json_path.write_text('{"report": "# Report\\n\\nbody", "sources_web": 4, '
                          '"sources_local": 1, "n_sources": 5, "analysts_used": 2, '
                          '"depth": "quick", "depth_achieved": "quick"}')
-    monkeypatch.setattr("council.local.run", lambda *a, **k: report_path)
+    monkeypatch.setattr("passiveworkers.local.run", lambda *a, **k: report_path)
     out = M._run_research_structured("real question", "quick", 2, "both")
     assert out["error"] is None
     assert out["sources_web"] == 4 and out["sources_local"] == 1
@@ -81,7 +81,7 @@ def test_library_add_tool_systemexit_becomes_error_string(monkeypatch):
     class _Lib:
         def add(self, path):
             raise SystemExit("Reading PDFs needs: pip install 'passiveworkers[docs]'")
-    monkeypatch.setattr("council.library.Library", _Lib)
+    monkeypatch.setattr("passiveworkers.library.Library", _Lib)
     out = M._library_add_text("/some/file.pdf")
     assert out.startswith("error:") and "passiveworkers[docs]" in out
 
@@ -90,7 +90,7 @@ def test_library_add_tool_happy_path(monkeypatch):
     class _Lib:
         def add(self, path):
             return 7
-    monkeypatch.setattr("council.library.Library", _Lib)
+    monkeypatch.setattr("passiveworkers.library.Library", _Lib)
     assert M._library_add_text("/docs") == "Indexed 7 chunks from /docs."
 
 

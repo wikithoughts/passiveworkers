@@ -6,8 +6,8 @@ import pytest
 
 
 def _reload():
-    for m in ("council.ledger", "council.net.config", "council.net.store",
-              "council.net.coordinator_app"):
+    for m in ("passiveworkers.ledger", "passiveworkers.net.config", "passiveworkers.net.store",
+              "passiveworkers.net.coordinator_app"):
         importlib.reload(importlib.import_module(m))
 
 
@@ -16,11 +16,11 @@ def _reload():
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "enr.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "100")
-    import council.ledger as led
+    import passiveworkers.ledger as led
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 
@@ -47,7 +47,7 @@ _HEX_CHARS = set("0123456789abcdef")
 
 def test_minted_tokens_and_secrets_are_lowercase_hex(store):
     # regression: secrets.token_urlsafe()'s alphabet can produce a token starting with '-', which
-    # council/net/submit.py's argparse then misparses as a flag (SystemExit(2)) — flaky
+    # passiveworkers/net/submit.py's argparse then misparses as a flag (SystemExit(2)) — flaky
     # test_invite_then_ask_with_enroll_token_gets_starter_grant. token_hex() can never do this.
     tokens = []
     for i in range(20):
@@ -116,7 +116,7 @@ def eclient(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_STARTER_CREDITS", "100")
     monkeypatch.setenv("PW_ENROLL", "1")
     _reload()
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     from fastapi.testclient import TestClient
     return TestClient(capp.app)
 
@@ -150,7 +150,7 @@ def test_node_registration_requires_enrollment_token(eclient):
 
 
 def test_enrolled_node_works_with_node_secret_alone(eclient):
-    # D42 fix (found by dogfooding `pw join` on the VPS): an operator who enrolled via a token does
+    # D42 fix (found by dogfooding `pworkers join` on the VPS): an operator who enrolled via a token does
     # NOT have the shared admin PW_TOKEN. Its per-node secret must be sufficient for the worker loop —
     # otherwise heartbeat/poll/result all 401 and every job the node touches fails.
     tok = eclient.post("/admin/enroll", json={"kind": "node", "owner": "op"},
@@ -190,7 +190,7 @@ def test_enroll_off_keeps_open_grants(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_STARTER_CREDITS", "100")
     monkeypatch.delenv("PW_ENROLL", raising=False)        # default off
     _reload()
-    import council.net.coordinator_app as capp
+    import passiveworkers.net.coordinator_app as capp
     from fastapi.testclient import TestClient
     c = TestClient(capp.app)
     assert c.post("/users", json={"handle": "alice"}).json()["balance"] == 100   # open grant

@@ -12,7 +12,7 @@ Two phases, so the human/LLM co-judge stays blind:
 
 Judge A discipline (mirrors scripts/merge_eval.py): each pair judged TWICE with positions
 swapped; only a consistent winner counts, otherwise tie. The judge never sees which side
-is the council. judge_b.json format: {"<n>": "A"|"B"|"tie", ...}
+is the passiveworkers. judge_b.json format: {"<n>": "A"|"B"|"tie", ...}
 """
 
 from __future__ import annotations

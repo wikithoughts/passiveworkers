@@ -5,7 +5,7 @@ GATE, not model quality. The gate's contract: a revision is accepted only if it 
 unsupported-claim set AND keeps as many grounded claims AND doesn't gut the content — so by fidelity's
 own measure the pass can never lower a report's grounding. On any doubt the original draft is returned.
 No network, no Ollama."""
-from council.researcher import ResearchWorker
+from passiveworkers.researcher import ResearchWorker
 
 # Two sources: S1 supports a rate claim; S2 is about apples (off-topic to anything we cite it for).
 EVIDENCE = [

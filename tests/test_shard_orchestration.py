@@ -9,11 +9,11 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "shard.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "100000")
     import importlib
-    import council.ledger as led
+    import passiveworkers.ledger as led
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 
@@ -94,7 +94,7 @@ def test_assembled_deliverable_is_in_input_order(store):
 
 # ---------------------------------------------------------------- multi-producer file reassembly (D38)
 def test_as_file_delivers_one_reassemblable_signed_file(store, tmp_path):
-    from council.artifacts import read_artifact, reassemble, verify_manifest
+    from passiveworkers.artifacts import read_artifact, reassemble, verify_manifest
     _reg(store, "opA")
     _reg(store, "opB")
     _reg(store, "judge", answer_model="", judge=True)
@@ -129,7 +129,7 @@ def test_without_as_file_deliverable_stays_json(store):
                                                        for e in shard]}, node_id=t["node_id"])
     jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
     store.complete_task(jt["task_id"], {"scores": {}}, node_id=jt["node_id"])
-    from council.artifacts import read_artifact
+    from passiveworkers.artifacts import read_artifact
     assert read_artifact(store.job_view(jid)["merged"]) is None   # plain JSON, not a file artifact
 
 

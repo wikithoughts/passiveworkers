@@ -11,7 +11,7 @@ hybrid (BM25⊕dense⊕RRF) retriever, so you can see what actually helps here.
     PW_CONTEXTUAL_CHUNKS=1 python scripts/bench_rag.py   # with contextual blurbs
 
 For a real measurement, point it at your own library: index your files with
-`pw library add`, then write a {query: expected-doc} set in this script's EVAL.
+`pworkers library add`, then write a {query: expected-doc} set in this script's EVAL.
 """
 from __future__ import annotations
 
@@ -48,8 +48,8 @@ def main() -> int:
         ("Mariam Al-Futtaim", "polaris.md"),
         ("is the climate good for outdoor work", "weather.md"),
     ]
-    from council.library import Library
-    import council.library as L
+    from passiveworkers.library import Library
+    import passiveworkers.library as L
     lib = Library(); lib.add(str(corpus))
     rows = list(lib.conn.execute("SELECT source,title,ord,text,context,vec FROM chunks"))
     mat = np.asarray([json.loads(r["vec"]) for r in rows], dtype="float32")

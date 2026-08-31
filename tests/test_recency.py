@@ -1,7 +1,7 @@
 """R19/D31 currency injection: pin the current year into time-sensitive WEB queries (the fix
 R18's recency RANKING can't make — you cannot reorder a fresh source search never returned), and
 auto-deepen genuinely BREAKING briefs. Pure logic + mocked boundaries (no network)."""
-from council.research import inject_recency, is_breaking, is_time_sensitive
+from passiveworkers.research import inject_recency, is_breaking, is_time_sensitive
 
 
 # ----------------------------------------------------------------------------- inject_recency
@@ -126,7 +126,7 @@ def test_breaking_false_for_stable_facts_arabic():
 
 # ----------------------------------------------------------------------------- _bumped_depth
 def test_breaking_brief_bumps_depth_one_notch():
-    from council.researcher import ResearchWorker
+    from passiveworkers.researcher import ResearchWorker
     assert ResearchWorker(worker_id="m", model="m", depth="quick")._bumped_depth(
         "live updates on the vote right now") == "standard"
     assert ResearchWorker(worker_id="m", model="m", depth="standard")._bumped_depth(
@@ -136,7 +136,7 @@ def test_breaking_brief_bumps_depth_one_notch():
 
 
 def test_non_breaking_brief_keeps_configured_depth():
-    from council.researcher import ResearchWorker
+    from passiveworkers.researcher import ResearchWorker
     w = ResearchWorker(worker_id="m", model="m", depth="standard")
     assert w._bumped_depth("what is the latest stable python version") == "standard"
     assert w._bumped_depth("history of the roman empire") == "standard"
@@ -146,8 +146,8 @@ def test_depth_not_bumped_when_breaking_but_not_time_sensitive():
     # review R19 finding 4: is_breaking has false positives ('developing story', 'live updates',
     # 'this morning') that are NOT time-sensitive — a 'quick' caller must not be silently pushed
     # into an extra refine round by an incidental word. Bump requires time-sensitive AND breaking.
-    from council.research import is_breaking, is_time_sensitive
-    from council.researcher import ResearchWorker
+    from passiveworkers.research import is_breaking, is_time_sensitive
+    from passiveworkers.researcher import ResearchWorker
     for brief in ("developing story structure in screenwriting",
                   "live updates plugin for wordpress",
                   "this morning yoga flow routine"):
@@ -158,7 +158,7 @@ def test_depth_not_bumped_when_breaking_but_not_time_sensitive():
 
 
 def test_bump_uses_angle_too():
-    from council.researcher import ResearchWorker
+    from passiveworkers.researcher import ResearchWorker
     w = ResearchWorker(worker_id="m", model="m", depth="standard", angle="breaking developments")
     assert w._bumped_depth("a neutral brief") == "deep"
 
@@ -166,7 +166,7 @@ def test_bump_uses_angle_too():
 # ----------------------------------------------------------------------------- wiring into research()
 def test_research_injects_year_into_web_query(monkeypatch):
     """A time-sensitive brief → the web query that hits search_structured carries the year."""
-    from council import researcher as R
+    from passiveworkers import researcher as R
     seen = []
     monkeypatch.setattr(R, "search_structured",
                         lambda q, max_results=5, engine="web": (seen.append((engine, q)) or []))
@@ -179,7 +179,7 @@ def test_research_injects_year_into_web_query(monkeypatch):
 
 
 def test_research_no_year_for_stable_brief(monkeypatch):
-    from council import researcher as R
+    from passiveworkers import researcher as R
     seen = []
     monkeypatch.setattr(R, "search_structured",
                         lambda q, max_results=5, engine="web": (seen.append((engine, q)) or []))
@@ -193,7 +193,7 @@ def test_research_no_year_for_stable_brief(monkeypatch):
 
 def test_year_injected_for_web_only_not_central_apis(monkeypatch):
     """arXiv/Wikipedia are relevance/full-text — a bare year pollutes them, so injection is web-only."""
-    from council import researcher as R
+    from passiveworkers import researcher as R
     seen = []
     monkeypatch.setattr(R, "search_structured",
                         lambda q, max_results=5, engine="web": (seen.append((engine, q)) or []))

@@ -1,10 +1,10 @@
-"""R36/D52 — shared listwise reranker (council/rerank.py) + the web-evidence hook in researcher.py.
+"""R36/D52 — shared listwise reranker (passiveworkers/rerank.py) + the web-evidence hook in researcher.py.
 
-Pure/deterministic: the single model call (council.ollama.generate) and the model-pick are stubbed,
+Pure/deterministic: the single model call (passiveworkers.ollama.generate) and the model-pick are stubbed,
 so these tests pin the permutation guarantees and the researcher wiring, not model quality. No network,
 no Ollama."""
-import council.ollama as _ollama
-import council.rerank as R
+import passiveworkers.ollama as _ollama
+import passiveworkers.rerank as R
 
 
 def _stub_model(monkeypatch, response):
@@ -64,7 +64,7 @@ def test_trivial_sizes_short_circuit(monkeypatch):
 
 # ----------------------------------------------------------------------------- researcher hook
 def _wire_worker(monkeypatch, rows):
-    import council.researcher as RW
+    import passiveworkers.researcher as RW
     monkeypatch.setattr(RW.ResearchWorker, "_generate",
                         lambda self, prompt, num_predict: ('["q1"]', 3))
     monkeypatch.setattr(RW, "search_structured",
@@ -83,7 +83,7 @@ ROWS = [
 
 def test_nontemporal_brief_is_reranked(monkeypatch):
     RW = _wire_worker(monkeypatch, ROWS)
-    import council.rerank as RK
+    import passiveworkers.rerank as RK
     # reverse the evidence order so the effect is unmistakable
     monkeypatch.setattr(RK, "rerank_listwise", lambda q, passages, **kw: list(range(len(passages)))[::-1])
     monkeypatch.setenv("PW_RESEARCH_RERANK", "1")
@@ -95,7 +95,7 @@ def test_nontemporal_brief_is_reranked(monkeypatch):
 
 def test_temporal_brief_skips_rerank(monkeypatch):
     RW = _wire_worker(monkeypatch, ROWS)
-    import council.rerank as RK
+    import passiveworkers.rerank as RK
     called = {"n": 0}
 
     def flag(*a, **k):
@@ -110,7 +110,7 @@ def test_temporal_brief_skips_rerank(monkeypatch):
 
 def test_rerank_env_off_skips(monkeypatch):
     RW = _wire_worker(monkeypatch, ROWS)
-    import council.rerank as RK
+    import passiveworkers.rerank as RK
     called = {"n": 0}
     monkeypatch.setattr(RK, "rerank_listwise", lambda *a, **k: (called.__setitem__("n", called["n"] + 1) or [0]))
     monkeypatch.setenv("PW_RESEARCH_RERANK", "0")

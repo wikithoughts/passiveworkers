@@ -22,10 +22,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from council.coordinator import Council  # noqa: E402
-from council.judge import Judge
-from council.ledger import Ledger
-from council.worker import PerspectiveWorker
+from passiveworkers.coordinator import Council  # noqa: E402
+from passiveworkers.judge import Judge
+from passiveworkers.ledger import Ledger
+from passiveworkers.worker import PerspectiveWorker
 
 QUESTIONS = [
     "What are the two biggest mistakes first-time managers make, and how to avoid each?",

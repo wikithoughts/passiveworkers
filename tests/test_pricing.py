@@ -1,6 +1,6 @@
-"""Pricing is derived in ONE place — council.net.config.pool_for — after the formula was copy-pasted
+"""Pricing is derived in ONE place — passiveworkers.net.config.pool_for — after the formula was copy-pasted
 across 6 sites (2 diverged, plus a lying hardcoded JS fallback). These pin the single source of truth."""
-import council.net.config as cfg
+import passiveworkers.net.config as cfg
 
 
 def test_pool_for_matches_canonical_formula():

@@ -23,4 +23,4 @@ scripts:
     seed .vps.env
 
     echo "Worktree setup complete."
-    echo "Not run automatically: docker compose up (binds 8080/8770/8088), ollama pull, pw serve"
+    echo "Not run automatically: docker compose up (binds 8080/8770/8088), ollama pull, pworkers serve"

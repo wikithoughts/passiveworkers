@@ -1,4 +1,4 @@
-"""tests/test_doctor.py — `pw status`/`pw doctor` (council/doctor.py).
+"""tests/test_doctor.py — `pworkers status`/`pworkers doctor` (passiveworkers/doctor.py).
 
 Focus: the network-membership check (F1 review finding) had zero coverage — agent.py's
 join.json always carries a "default" -> url sentinel alongside url -> {config}, and a naive
@@ -14,18 +14,18 @@ from contextlib import redirect_stdout
 
 import pytest
 
-import council.doctor as D
-from council.net.agent import _save_join
+import passiveworkers.doctor as D
+from passiveworkers.net.agent import _save_join
 
 
 def _run_doctor(argv=None) -> str:
-    # council.library's LIB_DIR/LIB_DB are computed ONCE at module-import time from
+    # passiveworkers.library's LIB_DIR/LIB_DB are computed ONCE at module-import time from
     # PW_LIBRARY_DIR — whichever test file imports it FIRST in the whole session bakes in
     # that value, so a later monkeypatch.setenv here has no effect on doctor's "Library:"
     # check unless the module is reloaded (review finding: every doctor test was silently
     # touching the real ~/.passiveworkers/library.db instead of the tmp one).
-    import council.library
-    importlib.reload(council.library)
+    import passiveworkers.library
+    importlib.reload(passiveworkers.library)
     buf = io.StringIO()
     with redirect_stdout(buf):
         D.main(argv)
@@ -87,7 +87,7 @@ def test_status_membership_check_failure_names_the_exception_type(tmp_path, monk
     assert "· Not joined" in out
 
 
-# ---------------------------------------------------------------- R26: pw status --eta
+# ---------------------------------------------------------------- R26: pworkers status --eta
 class _FakeGenResp:
     def __init__(self, payload):
         self._p = payload
@@ -151,7 +151,7 @@ def test_estimate_minutes_missing_probe_falls_back_to_default_rate():
 
 
 def test_estimate_minutes_high_includes_the_reranker_cost():
-    # review finding: the default-on web-evidence reranker (council/rerank.py, ~120 tokens/
+    # review finding: the default-on web-evidence reranker (passiveworkers/rerank.py, ~120 tokens/
     # analyst) was entirely absent from the formula, not just unmeasured. HIGH must reflect it;
     # removing it should make HIGH visibly smaller.
     rates = {"a": 10.0, "e": 10.0}
@@ -170,7 +170,7 @@ def test_editor_low_reflects_the_real_500_token_floor_not_750():
 def test_status_eta_flag_prints_ranges_and_caveat(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))
     monkeypatch.setattr(D, "_probe_tokens_per_sec", lambda model, base, **k: 10.0)
-    from council import local as L
+    from passiveworkers import local as L
     monkeypatch.setattr(L, "detect_models", lambda: [{"name": "m1", "size": 3e9}])
     monkeypatch.setattr(L, "pick_cast", lambda models, n: (["m1"], "m1"))
 

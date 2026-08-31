@@ -8,4 +8,4 @@ source .venv/bin/activate
 # shellcheck disable=SC1091
 source .vps.env
 export PW_TOKEN PW_COORDINATOR="http://127.0.0.1:${PW_PORT}"
-python -m council.net.submit --asker "${PW_ASKER:-you}" "$*"
+python -m passiveworkers.net.submit --asker "${PW_ASKER:-you}" "$*"

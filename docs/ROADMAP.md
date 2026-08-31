@@ -2,6 +2,11 @@
 
 > The living tracker: where we are, what's next, and the bar each step must clear.
 > Status legend: ✅ done · ⏭ in progress / next · ◻︎ planned.
+>
+> Round-log entries below are dated history — they predate the `council`→`passiveworkers`
+> import-package rename and `pw`→`pworkers` CLI-command rename (R36) and intentionally describe
+> the pre-rename names as they were true at the time, not rewritten to say
+> `passiveworkers`/`pworkers`.
 
 ## M0 — Phase-0 spikes ✅
 De-risk the two pieces most likely to break.

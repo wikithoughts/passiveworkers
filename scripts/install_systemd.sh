@@ -32,7 +32,7 @@ Wants=network-online.target
 WorkingDirectory=$DIR
 EnvironmentFile=$DIR/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$PY -m council.net.coordinator_app
+ExecStart=$PY -m passiveworkers.net.coordinator_app
 Restart=always
 RestartSec=3
 [Install]
@@ -49,7 +49,7 @@ WorkingDirectory=$DIR
 EnvironmentFile=$DIR/.env
 Environment=PW_COORDINATOR=$URL
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$PY -m council.net.agent
+ExecStart=$PY -m passiveworkers.net.agent
 Restart=always
 RestartSec=3
 [Install]

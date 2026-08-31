@@ -54,11 +54,11 @@ that fight 0/10 against a frontier model's memory, and says so plainly.
 ## The network (opt-in, invite-only while it matures)
 
 - [docs/network/ASKING.md](docs/network/ASKING.md): read this when someone wants to
-  *submit* work to a coordinator they don't run themselves (`pw ask`).
+  *submit* work to a coordinator they don't run themselves (`pworkers ask`).
 - [docs/network/SELF_HOST.md](docs/network/SELF_HOST.md): read this when someone wants
   to run their own coordinator instead of joining someone else's.
 - [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md): read this when someone
-  wants to *contribute* their machine's idle time (`pw join`).
+  wants to *contribute* their machine's idle time (`pworkers join`).
 
 ## For contributors
 

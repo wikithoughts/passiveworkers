@@ -1,5 +1,9 @@
 # Changelog
 
+> This is a dated history — entries below predate the `council`→`passiveworkers` import-package
+> rename and `pw`→`pworkers` CLI-command rename (R36); they intentionally describe the pre-rename
+> names as they were true at the time, not rewritten to say `passiveworkers`/`pworkers`.
+
 All notable changes to Passive Workers are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full

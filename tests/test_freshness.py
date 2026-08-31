@@ -1,6 +1,6 @@
 """R18/D30 freshness-biased research: date-hint sniffing, recency ordering, and date-aware
 research prompts. Pure logic + mocked Ollama (no network)."""
-from council.research import extract_date_hint, is_time_sensitive, order_by_recency
+from passiveworkers.research import extract_date_hint, is_time_sensitive, order_by_recency
 
 
 # ----------------------------------------------------------------------------- extract_date_hint
@@ -98,7 +98,7 @@ def test_time_sensitive_false_for_stable_facts_arabic():
 
 # ----------------------------------------------------------------------------- date-aware prompts
 def test_plan_prompt_includes_today(monkeypatch):
-    from council.researcher import ResearchWorker
+    from passiveworkers.researcher import ResearchWorker
     captured = {}
     monkeypatch.setattr(ResearchWorker, "_generate",
                         lambda self, prompt, num_predict: (captured.update(p=prompt) or ('["a","b","c"]', 3)))
@@ -107,7 +107,7 @@ def test_plan_prompt_includes_today(monkeypatch):
 
 
 def test_draft_prompt_includes_today_and_recency_rule(monkeypatch):
-    from council.researcher import ResearchWorker
+    from passiveworkers.researcher import ResearchWorker
     captured = {}
     monkeypatch.setattr(ResearchWorker, "_generate",
                         lambda self, prompt, num_predict: (captured.update(p=prompt) or ("draft", 5)))

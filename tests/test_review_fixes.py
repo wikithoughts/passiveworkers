@@ -8,7 +8,7 @@ import pytest
 
 # ----------------------------------------------------------------- judge blind-order rotation
 def test_blind_order_is_a_valid_permutation():
-    from council.judge import _blind_order
+    from passiveworkers.judge import _blind_order
     for n in (0, 1, 2, 3, 5, 8, 13):
         assert sorted(_blind_order(n, "a question")) == list(range(n))
 
@@ -16,7 +16,7 @@ def test_blind_order_is_a_valid_permutation():
 def test_blind_order_actually_rotates_not_a_noop():
     # regression: the old `len(answers) % max(1,len(answers))` was ALWAYS 0 → identity for every n.
     # A content-derived rotation must produce a non-identity order for at least some inputs.
-    from council.judge import _blind_order
+    from passiveworkers.judge import _blind_order
     seen = {tuple(_blind_order(6, f"seed-{i}")) for i in range(40)}
     assert len(seen) > 1, "rotation produced a single constant order — still a no-op"
     assert any(tuple(o) != tuple(range(6)) for o in seen), "rotation never leaves identity"
@@ -24,7 +24,7 @@ def test_blind_order_actually_rotates_not_a_noop():
 
 def test_blind_order_is_deterministic_and_stable():
     # same seed → same order every call (reproducible/testable, sha256 not the salted builtin hash)
-    from council.judge import _blind_order
+    from passiveworkers.judge import _blind_order
     assert _blind_order(7, "abc") == _blind_order(7, "abc")
     assert _blind_order(1, "abc") == [0] and _blind_order(0, "abc") == []
 
@@ -50,7 +50,7 @@ def _cfg(monkeypatch, bl):
 
 
 def test_via_api_raises_on_malformed_body(monkeypatch):
-    import council.net.baseline as bl
+    import passiveworkers.net.baseline as bl
     _cfg(monkeypatch, bl)
     monkeypatch.setattr(bl.requests, "post", lambda *a, **k: _Resp({"error": "rate limited"}))
     with pytest.raises(RuntimeError):
@@ -60,7 +60,7 @@ def test_via_api_raises_on_malformed_body(monkeypatch):
 
 
 def test_via_api_ok_on_well_formed_body(monkeypatch):
-    import council.net.baseline as bl
+    import passiveworkers.net.baseline as bl
     _cfg(monkeypatch, bl)
     monkeypatch.setattr(bl.requests, "post",
                         lambda *a, **k: _Resp({"choices": [{"message": {"content": " hi "}}]}))
@@ -74,11 +74,11 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "fb.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "1000")
     import importlib
-    import council.ledger as led
+    import passiveworkers.ledger as led
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 

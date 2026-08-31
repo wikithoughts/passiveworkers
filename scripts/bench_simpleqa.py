@@ -39,8 +39,8 @@ def _gen(model: str, prompt: str, num_predict: int = 120) -> str:
 
 
 def answer_question(q: str, model: str) -> str:
-    from council.research import search_structured
-    from council.sanitize import spotlight
+    from passiveworkers.research import search_structured
+    from passiveworkers.sanitize import spotlight
     rows = search_structured(q, max_results=5)
     ev = spotlight("\n".join(f"- {r['title']} ({r['host']}): {r['snippet'][:300]}"
                              for r in rows)) if rows else "(no sources found)"
@@ -67,7 +67,7 @@ def main() -> int:
     a = p.parse_args()
     os.environ.setdefault("PW_WEB_BACKEND", "ddgs")
 
-    from council.local import detect_models
+    from passiveworkers.local import detect_models
     models = detect_models()
     model = a.model or models[-1]["name"]
     grader = a.grader or models[-1]["name"]

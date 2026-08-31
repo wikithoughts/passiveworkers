@@ -1,4 +1,4 @@
-"""council/operator.py — the composed `pw fetch` path (R31 review): signature verification, the
+"""passiveworkers/operator.py — the composed `pworkers fetch` path (R31 review): signature verification, the
 encryption downgrade guard, and content-addressed chunk reassembly, all driven through the REAL
 coordinator via the requests->TestClient shim. tests/test_artifacts.py and tests/test_trust.py
 already cover these primitives in isolation; this covers the COMPOSITION, which contains its own
@@ -16,7 +16,7 @@ BASE = "http://coord"
 @pytest.fixture
 def op_module(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))
-    import council.operator as OP
+    import passiveworkers.operator as OP
     return importlib.reload(OP)
 
 
@@ -31,7 +31,7 @@ def _wire(OP, coord_client, shim_factory, monkeypatch, owner="bob"):
 def test_fetch_composition_rejects_downgrade_and_verifies_real_delivery(
     coord_client, op_module, shim_factory, monkeypatch, capsys, tmp_path
 ):
-    from council import crypto as C
+    from passiveworkers import crypto as C
     if not C.available():
         pytest.skip("crypto extra not installed")
     OP = op_module
@@ -61,7 +61,7 @@ def test_fetch_composition_rejects_downgrade_and_verifies_real_delivery(
     # relaying one) trying to ship an unencrypted deliverable for a job that required encryption.
     src = tmp_path / "secret.txt"
     src.write_bytes(b"plaintext contents that should never reach the asker unencrypted")
-    from council import artifacts as A
+    from passiveworkers import artifacts as A
     manifest, blobs = A.chunk_file(str(src))
     for h, buf in blobs.items():
         rb = coord_client.post(f"/jobs/{job1_id}/blobs/{h}", headers=op1._headers(), content=buf)

@@ -1,6 +1,6 @@
 """_extract_json must never crash callers on bad-shape model output (the bug class that
 bit deliberate()/compare() — a model returning a bare list)."""
-from council.judge import _extract_json
+from passiveworkers.judge import _extract_json
 
 
 def test_object():

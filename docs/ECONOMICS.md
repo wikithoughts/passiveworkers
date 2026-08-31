@@ -1,7 +1,7 @@
 # Passive Workers — Economics
 
 > How the credit works. See [DECISIONS.md](DECISIONS.md) D1/D6 for the non-negotiables and
-> `council/ledger.py` for the implementation.
+> `passiveworkers/ledger.py` for the implementation.
 
 ## The credit
 
@@ -32,13 +32,13 @@ Every job is **conserved**: the asker's debit equals exactly the sum credited to
 split allocates the **remainder to the last payee** so rounding can never mint or burn fractional
 credit. Property-tested across 3,000 randomized scenarios with zero drift.
 
-Current parameters: `STARTER_ALLOWANCE = 100` (`PW_STARTER_CREDITS` in `council/ledger.py`) applies to
+Current parameters: `STARTER_ALLOWANCE = 100` (`PW_STARTER_CREDITS` in `passiveworkers/ledger.py`) applies to
 both paths below. Pricing itself has two separate sources of truth, and only one is live:
 
-- **Legacy in-process demo** (`council/coordinator.py`, driven by `council/run_demo.py`): fixed
+- **Legacy in-process demo** (`passiveworkers/coordinator.py`, driven by `passiveworkers/run_demo.py`): fixed
   `WORKER_POOL = 30`/job, `JUDGE_FEE = 5`/job — no per-job-type scaling.
-- **Live network** (`council/net/`, D50): priced by `pool_for(job_type, n_minds)` in
-  `council/net/config.py`, driven by the `PW_WORKER_POOL`/`PW_JUDGE_FEE` env vars (same 30/5 defaults) —
+- **Live network** (`passiveworkers/net/`, D50): priced by `pool_for(job_type, n_minds)` in
+  `passiveworkers/net/config.py`, driven by the `PW_WORKER_POOL`/`PW_JUDGE_FEE` env vars (same 30/5 defaults) —
   but the per-mind price scales by the number of responding nodes and by each job type's `pool_mult`
   weight (e.g. `chat` is 1×, `research_report` is 3×, `assisted` is 5×), so the real price is not a flat
   constant. `GET /job-types` on any live coordinator serves the exact current numbers (including

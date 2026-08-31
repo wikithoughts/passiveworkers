@@ -20,8 +20,8 @@ computer-use** of anyone's machine.
 discoverable and carry no attorney–client privilege — so privileged material can't go to a cloud
 model. Here it never does.
 ```bash
-pw library add ~/Matters/AcmeCorp        # privileged contracts/memos — indexed locally, never uploaded
-pw research "How do this quarter's EU AI Act enforcement actions affect our SaaS clauses?"
+pworkers library add ~/Matters/AcmeCorp        # privileged contracts/memos — indexed locally, never uploaded
+pworkers research "How do this quarter's EU AI Act enforcement actions affect our SaaS clauses?"
 ```
 The report blends your documents (`[L#]`) with the live web (`[S#]`) in separate, labeled sections;
 only neutral web-search terms leave the machine.
@@ -29,23 +29,23 @@ only neutral web-search terms leave the machine.
 **2. A clinician or therapist synthesizes new guidance against private case notes.** PHI stays on the
 device (HIPAA-style data residency); cloud therapy chats have "no legal confidentiality."
 ```bash
-pw library add ~/clinic/case-notes
-pw research "How does the newest treatment guidance compare with the approaches in my notes?"
+pworkers library add ~/clinic/case-notes
+pworkers research "How does the newest treatment guidance compare with the approaches in my notes?"
 ```
 
 **3. An investigative journalist works with confidential source material.** Source documents stay
 local; there are no cookies or sessions to seize, and a whole corpus can be analyzed fully offline.
 ```bash
-pw library add ~/investigation/leaked-docs
-pw research "Cross-reference these documents against public filings and recent reporting." --local
+pworkers library add ~/investigation/leaked-docs
+pworkers research "Cross-reference these documents against public filings and recent reporting." --local
 ```
 
 **4. A founder / R&D engineer researches against proprietary specs.** Trade secrets are never
 transmitted; with self-hosted search even the *queries* stay private.
 ```bash
-docker compose up -d searxng     # self-hosted meta-search (pw auto-detects it)
-pw library add ~/product/specs
-pw research "How does our roadmap compare to competitors' shipped features this year?"
+docker compose up -d searxng     # self-hosted meta-search (pworkers auto-detects it)
+pworkers library add ~/product/specs
+pworkers research "How does our roadmap compare to competitors' shipped features this year?"
 ```
 
 ## Access & cost — serious research with no API budget
@@ -53,20 +53,20 @@ pw research "How does our roadmap compare to competitors' shipped features this 
 **5. A grad student with no API budget.** Hosted "deep research" runs cost dollars per run and gate
 behind subscriptions; this is free on your own hardware, with re-checkable citations.
 ```bash
-pw research "Most-cited 2025 papers on retrieval-augmented generation, and what each claims." --deep
+pworkers research "Most-cited 2025 papers on retrieval-augmented generation, and what each claims." --deep
 ```
 
 **6. A researcher on modest hardware or metered/low bandwidth (e.g. the Global South).** Cap the model
 size to fit the machine, and answer entirely from an already-downloaded corpus when bandwidth is scarce.
 ```bash
-PW_MODEL_CAP_GB=3 pw research "Summarize current best practices for X" --quick   # fits a small box
-pw research "Compare these PDFs I downloaded earlier" --local                    # zero live-web bandwidth
+PW_MODEL_CAP_GB=3 pworkers research "Summarize current best practices for X" --quick   # fits a small box
+pworkers research "Compare these PDFs I downloaded earlier" --local                    # zero live-web bandwidth
 ```
 
 **7. A citizen on a time-sensitive question a frozen chatbot gets wrong.** Currency is the tool's real
 edge — it leads with this year's sources instead of an SEO-dominant old page.
 ```bash
-pw research "What changed in my country's energy-subsidy rules this month, and the deadlines?"
+pworkers research "What changed in my country's energy-subsidy rules this month, and the deadlines?"
 ```
 
 ## Sovereignty, resilience & honest citations
@@ -75,14 +75,14 @@ pw research "What changed in my country's energy-subsidy rules this month, and t
 infrastructure — sovereignty by construction, not by contract. Expose the engine to your *own*
 approved agent with no egress:
 ```bash
-pw library add /srv/compliance/docs
-pw mcp     # serve research/library tools over MCP to your in-house assistant — nothing leaves the box
+pworkers library add /srv/compliance/docs
+pworkers mcp     # serve research/library tools over MCP to your in-house assistant — nothing leaves the box
 ```
 
 **9. Anyone burned by hallucinated citations.** The tool ships an honesty instrument that checks, for
 every cited claim, whether the source actually says it (a grounding *floor*, never "verified true").
 ```bash
-pw research "Draft a literature review on topic Y" --deep
+pworkers research "Draft a literature review on topic Y" --deep
 python scripts/eval_citation_fidelity.py --report reports/<your-report>.md
 ```
 
@@ -96,7 +96,7 @@ assistant can call — composable, no lock-in, heavy lifting stays on your machi
 ## The commons — computers doing real work for each other (opt-in network)
 
 > The network is the maturing next track. Today an operator joins an invite-only coordinator with an
-> enrollment token; research-style jobs are submitted with `council/net/submit.py`, and the richer
+> enrollment token; research-style jobs are submitted with `passiveworkers/net/submit.py`, and the richer
 > task types (batch, extract, code-gen, assisted) run through the coordinator API. It earns
 > **non-transferable** mutual-aid credit — no token, no speculation.
 
@@ -106,17 +106,17 @@ sections — a geo-diversity a centralized API structurally can't offer.
 ```bash
 # operator (Berlin) lends a node:
 export PW_COORDINATOR=https://<coord> PW_TOKEN=<tok> PW_OWNER=<acct> PW_COUNTRY=DE PW_WEB_BACKEND=ddgs
-python -m council.net.agent
+python -m passiveworkers.net.agent
 # asker submits a research job (same coordinator URL — set it in the asker's shell too):
 export PW_COORDINATOR=https://<coord>
-python -m council.net.submit --asker maria "How is <policy> reported and enforced across DE, BR, IN?"
+python -m passiveworkers.net.submit --asker maria "How is <policy> reported and enforced across DE, BR, IN?"
 ```
 
 **12. An idle home computer doing real, owned, mutual-aid work — BOINC / Folding@home for AI.** Dials
 out only (no open ports), pauses under a CPU ceiling, stops anytime, and you always see the work class.
 ```bash
 export PW_CAN_JUDGE=1 PW_JUDGE_MODEL=qwen3:14b
-python -m council.net.agent
+python -m passiveworkers.net.agent
 ```
 
 **13. An under-funded lab running a big batch across borrowed machines.** A large job is split across
@@ -133,10 +133,10 @@ produces one self-contained code unit per spec (**generation only — never exec
 "connect + build" step is routed through `assisted`, where a consenting human does it on their own
 machine and delivers a signed, integrity-checked artifact:
 ```bash
-pw tasks                       # an operator sees the offer + brief + price
-pw accept <task_id>            # informed consent; prints the full brief
-pw deliver <task_id> @build-artifact.zip <job_id>   # content-addressed, integrity-verified delivery
-pw rate <job_id> 9             # the asker rates → builds operator reputation
+pworkers tasks                       # an operator sees the offer + brief + price
+pworkers accept <task_id>            # informed consent; prints the full brief
+pworkers deliver <task_id> @build-artifact.zip <job_id>   # content-addressed, integrity-verified delivery
+pworkers rate <job_id> 9             # the asker rates → builds operator reputation
 ```
 
 ---

@@ -1,4 +1,4 @@
-"""`pw config` — the persistent settings store (council/config.py). Isolated to a tmp PW_HOME so it
+"""`pworkers config` — the persistent settings store (passiveworkers/config.py). Isolated to a tmp PW_HOME so it
 never touches the real ~/.passiveworkers. Covers roundtrip, 0600 perms, apply_to_env precedence,
 secret masking, malformed-key rejection, and corrupt-file tolerance."""
 import json
@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-import council.config as C
+import passiveworkers.config as C
 
 
 @pytest.fixture(autouse=True)
@@ -120,7 +120,7 @@ def test_path_command(capsys):
 
 
 def test_known_includes_new_review_round_knobs(capsys):
-    # R12/R15/R17 review: these must be discoverable via `pw config list`, not env-var-only.
+    # R12/R15/R17 review: these must be discoverable via `pworkers config list`, not env-var-only.
     for key in ("PW_CONTEXTUAL_CHUNKS", "PW_PAGE_EVIDENCE", "PW_DDG_BREAKER"):
         assert key in C.KNOWN
     assert C.main(["list"]) == 0

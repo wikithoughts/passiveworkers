@@ -1,5 +1,5 @@
 """Generate UI screenshots of the three Passive Workers surfaces (desktop + mobile) with Playwright.
-Not part of the package. Requires local servers: pw serve (:8770) + coordinator on the demo DB (:8801).
+Not part of the package. Requires local servers: pworkers serve (:8770) + coordinator on the demo DB (:8801).
 Run: python docs/preview/make_screens.py
 """
 import pathlib

@@ -23,7 +23,7 @@ tmux kill-session -t pw 2>/dev/null || true
 
 # Coordinator (binds 127.0.0.1:$PW_PORT per .env).
 tmux new-session -d -s pw -n coord \
-  "cd $DIR && set -a && source .env && set +a && exec $PY -m council.net.coordinator_app >>$DIR/coord.log 2>&1"
+  "cd $DIR && set -a && source .env && set +a && exec $PY -m passiveworkers.net.coordinator_app >>$DIR/coord.log 2>&1"
 
 for i in $(seq 1 30); do curl -sf "$URL/healthz" >/dev/null 2>&1 && break; sleep 0.5; done
 curl -sf "$URL/healthz" >/dev/null 2>&1 && echo "✓ coordinator healthy at $URL" || { echo "✗ coordinator failed"; tail -20 "$DIR/coord.log"; exit 1; }
@@ -36,7 +36,7 @@ curl -sf "$URL/healthz" >/dev/null 2>&1 && echo "✓ coordinator healthy at $URL
 tmux new-window -t pw -n worker \
   "cd $DIR && set -a && source .env && set +a && PW_COORDINATOR=$URL PW_LENS=$PW_LENS \
    PW_CAN_JUDGE=$PW_CAN_JUDGE PW_POLL=$PW_POLL \
-   exec $PY -m council.net.agent >>$DIR/worker.log 2>&1"
+   exec $PY -m passiveworkers.net.agent >>$DIR/worker.log 2>&1"
 
 sleep 4
 echo "=== /status ==="

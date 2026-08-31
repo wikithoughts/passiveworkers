@@ -121,7 +121,7 @@ The currency-gap run above surfaced two `breaking` failures. Both are now fixed,
   (freshness-biased ranking: lead with the freshest-dated sources, date-aware drafter). 3 of the 4
   re-run questions passed; only FOMC remained.
 - **Most-recent FOMC** ("Oct–Nov 2023" → ✅) — fixed by **R19** (current-year query injection). A
-  fresh `pw research`-style run on *"the most recent completed FOMC meeting and its interest-rate
+  fresh `pworkers research`-style run on *"the most recent completed FOMC meeting and its interest-rate
   decision"* (`qwen2.5:14b`, quick depth, today=2026-06-13) now returns: queries pinned to **June
   2026**, sources **2026-dated and freshest-first** (federalreserve.gov 2026-06-12, Forbes
   2026-06-08, …), and a draft reporting *"held on June 16–17, 2026 … maintained interest rates …

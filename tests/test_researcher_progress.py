@@ -2,7 +2,7 @@
 (_plan_queries/_refine_queries/_draft/_repair_draft) are stubbed at fixed arity, same
 pattern as tests/test_recursion.py — research()'s own on_progress wrapping must never
 touch those signatures (several other test files monkeypatch them the same fixed way)."""
-import council.researcher as RW
+import passiveworkers.researcher as RW
 
 BRIEF = "a stable non-temporal brief about basic chemistry facts"
 
@@ -56,7 +56,7 @@ def test_research_progress_callback_exception_does_not_crash(monkeypatch):
 
 
 def test_research_without_on_progress_still_works(monkeypatch):
-    # backward-compat: council/net/agent.py and scripts/eval_citation_fidelity.py call
+    # backward-compat: passiveworkers/net/agent.py and scripts/eval_citation_fidelity.py call
     # .research(question) with no on_progress kwarg at all.
     w = _worker(monkeypatch)
     out = w.research(BRIEF)

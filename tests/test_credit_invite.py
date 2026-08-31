@@ -1,4 +1,4 @@
-"""council/operator.py — `pw credit` and `pw invite` (R33 review): a worker's own balance
+"""passiveworkers/operator.py — `pworkers credit` and `pworkers invite` (R33 review): a worker's own balance
 without needing the public /leaderboard, and a real CLI wrapper over /admin/enroll instead of a
 raw curl. Network verbs run through the real coordinator via the requests->TestClient shim."""
 import importlib
@@ -12,7 +12,7 @@ BASE = "http://coord"
 @pytest.fixture
 def op_module(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))
-    import council.operator as OP
+    import passiveworkers.operator as OP
     return importlib.reload(OP)
 
 
@@ -22,13 +22,13 @@ def _wire(OP, coord_client, shim_factory, monkeypatch):
     monkeypatch.setenv("PW_TOKEN", "tok")
 
 
-# --------------------------------------------------------------------- pw credit
+# --------------------------------------------------------------------- pworkers credit
 def test_credit_reads_joined_identity(coord_client, op_module, shim_factory, monkeypatch, capsys):
     _wire(op_module, coord_client, shim_factory, monkeypatch)
     reg = coord_client.post("/nodes/register",
                             json={"owner": "alice", "answer_model": "m"},
                             headers={"X-PW-Token": "tok"}).json()
-    from council.net.agent import _save_join
+    from passiveworkers.net.agent import _save_join
     _save_join({"default": BASE, BASE: {"owner": "alice", "node_id": reg["node_id"],
                                         "node_secret": reg["node_secret"]}})
 
@@ -52,13 +52,13 @@ def test_credit_no_identity_anywhere_prints_hint_and_exits_2(coord_client, op_mo
                                                               shim_factory, monkeypatch, capsys):
     _wire(op_module, coord_client, shim_factory, monkeypatch)
     assert op_module.credit() == 2
-    assert "pw join" in capsys.readouterr().out
+    assert "pworkers join" in capsys.readouterr().out
 
 
 def test_credit_prints_error_not_traceback_on_network_failure(op_module, monkeypatch, capsys):
     import requests
     monkeypatch.setenv("PW_COORDINATOR", BASE)
-    from council.net.agent import _save_join
+    from passiveworkers.net.agent import _save_join
     _save_join({"default": BASE, BASE: {"owner": "alice", "node_secret": "sec"}})
     monkeypatch.setattr(op_module, "requests", type("R", (), {
         "RequestException": requests.RequestException,
@@ -74,7 +74,7 @@ def test_credit_requires_coordinator(op_module, monkeypatch, capsys):
     assert "PW_COORDINATOR" in capsys.readouterr().out
 
 
-# --------------------------------------------------------------------- pw invite
+# --------------------------------------------------------------------- pworkers invite
 def test_invite_mints_token_and_prints_join_and_ask_commands(coord_client, op_module,
                                                               shim_factory, monkeypatch, capsys):
     _wire(op_module, coord_client, shim_factory, monkeypatch)
@@ -82,7 +82,7 @@ def test_invite_mints_token_and_prints_join_and_ask_commands(coord_client, op_mo
     assert rc == 0
     out = capsys.readouterr().out
     assert "enrollment token minted" in out
-    assert "pw join" in out and "pw ask" in out
+    assert "pworkers join" in out and "pworkers ask" in out
 
 
 def test_invite_requires_admin_token(op_module, monkeypatch, capsys):
@@ -123,12 +123,12 @@ def test_invite_then_ask_with_enroll_token_gets_starter_grant(coord_client, shim
     assert r.status_code == 200
     token = r.json()["enroll_token"]
 
-    import council.net.submit as S
+    import passiveworkers.net.submit as S
     monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))
     monkeypatch.setenv("PW_COORDINATOR", BASE)
     monkeypatch.delenv("PW_USER_SECRET", raising=False)
     monkeypatch.setattr(S, "requests", shim_factory(coord_client, BASE))
-    monkeypatch.setattr("sys.argv", ["pw ask", "hello?", "--asker", "dave",
+    monkeypatch.setattr("sys.argv", ["pworkers ask", "hello?", "--asker", "dave",
                                     "--enroll-token", token])
     S.ask_main()
 

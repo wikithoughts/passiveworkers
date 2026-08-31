@@ -70,14 +70,14 @@ pip install 'passiveworkers[all]'
 the MCP server extra. A bare install works but degrades extraction quality; don't
 recommend it unless the user explicitly wants a minimal footprint.
 
-Expected: `pw --help` prints the command list. If `pw` isn't on PATH afterward, check
+Expected: `pworkers --help` prints the command list. If `pworkers` isn't on PATH afterward, check
 pip's output for a PATH warning (common with some venv/pipx setups) and fix PATH rather
 than reinstalling.
 
-## 5. Run `pw status` and remediate anything red
+## 5. Run `pworkers status` and remediate anything red
 
 ```bash
-pw status
+pworkers status
 ```
 Expected shape (model names/counts will differ):
 ```
@@ -87,9 +87,9 @@ Passive Workers v0.4.0 — status
       analysts (up to 3): qwen3:14b
       editor / judge:     qwen3:14b
   ✓ Web search: ddgs
-  · Library: empty — index your own files with `pw library add <path>`
-  · Embedder: nomic-embed-text not pulled — `ollama pull nomic-embed-text` (needed for `pw library add` / `--local` research)
-  · Not joined — `pw join <url> <token>` to contribute this machine
+  · Library: empty — index your own files with `pworkers library add <path>`
+  · Embedder: nomic-embed-text not pulled — `ollama pull nomic-embed-text` (needed for `pworkers library add` / `--local` research)
+  · Not joined — `pworkers join <url> <token>` to contribute this machine
   · Reports: 0 in /Users/you/.passiveworkers/reports
 
   Ready to research.
@@ -100,14 +100,14 @@ Do not proceed to step 6 until the top line (Ollama) shows `✓`. Remediation by
 |---|---|
 | `✗ Ollama: Can't reach Ollama at …` | Return to step 2 — Ollama isn't running |
 | `✗ Ollama: No usable Ollama models found` | Return to step 3 — nothing pulled yet |
-| `⚠ Web search: … selected but … not set` | Ignore it (DuckDuckGo is the free fallback), or set the named key: `pw config set PW_<BACKEND>_KEY <value>` |
-| `· Embedder: not pulled` | Only matters for `pw library`/`--local` research — `ollama pull nomic-embed-text` |
+| `⚠ Web search: … selected but … not set` | Ignore it (DuckDuckGo is the free fallback), or set the named key: `pworkers config set PW_<BACKEND>_KEY <value>` |
+| `· Embedder: not pulled` | Only matters for `pworkers library`/`--local` research — `ollama pull nomic-embed-text` |
 | `· Not joined` | Expected and fine — this is the single-player install; joining the network is a separate, opt-in doc |
 
 ## 6. Smoke test
 
 ```bash
-pw research "What is retrieval-augmented generation?" --quick --analysts 1
+pworkers research "What is retrieval-augmented generation?" --quick --analysts 1
 ```
 Expected: a progress line per analyst, then `📄 Report ready in … → reports/....md`.
 Verify at least one citation:
@@ -125,7 +125,7 @@ silently retry more than once.
 If you (the assistant) are an MCP host, or the user's MCP-capable client should call
 this engine directly:
 ```bash
-pw mcp --help >/dev/null 2>&1 || echo "install the mcp extra: pip install 'passiveworkers[mcp]'"
+pworkers mcp --help >/dev/null 2>&1 || echo "install the mcp extra: pip install 'passiveworkers[mcp]'"
 ```
 Add to the host's config (e.g. Claude Desktop's `claude_desktop_config.json`):
 ```json
@@ -143,7 +143,7 @@ depth_achieved, error}`) — always check `error` is `null` before trusting `rep
 [ ] Ollama running:                  yes/no
 [ ] Model pulled:                    <model name>
 [ ] pip install 'passiveworkers[all]' succeeded
-[ ] pw status reports "Ready to research."
+[ ] pworkers status reports "Ready to research."
 [ ] Smoke-test report generated with >=1 citation
 [ ] (optional) MCP registered:       yes/no/not attempted
 ```

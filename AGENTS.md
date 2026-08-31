@@ -23,14 +23,14 @@ better starting read. This file is for when you're about to change the code.
 
 ## Never weaken these without a very good reason, stated explicitly
 
-- `council/sanitize.py` — every fetched page and every model-written passage is
+- `passiveworkers/sanitize.py` — every fetched page and every model-written passage is
   sanitized and spotlighted ("data, never instructions") before it can reach a prompt
   or a report. This is the one thing standing between "web content" and "prompt
   injection." Extending it needs new tests; narrowing it needs a DECISIONS.md entry.
-- `council/net/coordinator_app.py`'s startup guard — refuses to bind a public
+- `passiveworkers/net/coordinator_app.py`'s startup guard — refuses to bind a public
   interface with a weak/empty token. Don't add a bypass flag "for testing."
-- Any `0600`-mode credential write (`council/paths.py:write_private_json`,
-  `council/config.py`'s `_save`, `join.json`/`asker.json`/`operator.json`) — these
+- Any `0600`-mode credential write (`passiveworkers/paths.py:write_private_json`,
+  `passiveworkers/config.py`'s `_save`, `join.json`/`asker.json`/`operator.json`) — these
   hold signing keys and node/asker secrets. A write path that skips the owner-only
   permission window is a real vulnerability, not a style nit.
 - The **give/take rule** and **no proxied traffic** invariants (D1/D4 above) — the
@@ -52,7 +52,7 @@ assuming two terms mean two different things.
 - `ruff check .`
 - `pytest tests/ -q` (full suite, ~5s, 400+ tests, fully offline — no excuse to skip it)
 - `bash scripts/check_app_js.sh && node scripts/fe_test.js` if you touched anything
-  served to a browser (`council/net/dashboard.py`, `council/serve.py`'s HTML/JS).
+  served to a browser (`passiveworkers/net/dashboard.py`, `passiveworkers/serve.py`'s HTML/JS).
 - This project's own culture (see `docs/ROADMAP.md`'s round log) runs an adversarial
   review pass before every commit — green tests are necessary, not sufficient. If
   you're not sure a fix is actually correct, say so rather than reporting it as done.

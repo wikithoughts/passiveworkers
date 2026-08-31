@@ -36,12 +36,12 @@ else
   SSH="ssh -o BatchMode=yes"
 fi
 
-# 2. Sync the packaging files needed to `pip install .` on the remote, then the council/
+# 2. Sync the packaging files needed to `pip install .` on the remote, then the passiveworkers/
 #    package itself (the same set the Dockerfile COPYs).
 echo "→ syncing → $HOST:$REMOTE_DIR"
 $SSH "$HOST" "mkdir -p $REMOTE_DIR"
 rsync -az -e "$SSH" pyproject.toml README.md LICENSE "$HOST:$REMOTE_DIR/"
-rsync -az --delete --exclude __pycache__ -e "$SSH" council/ "$HOST:$REMOTE_DIR/council/"
+rsync -az --delete --exclude __pycache__ -e "$SSH" passiveworkers/ "$HOST:$REMOTE_DIR/passiveworkers/"
 
 # 3. venv + deps (from the SYNCED pyproject.toml — no hand-typed list, R22 review) + remote
 #    .env (loopback-only coordinator config + sensible worker defaults an operator can

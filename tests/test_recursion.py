@@ -3,7 +3,7 @@
 Pins the bounded refine loop's stop conditions (max rounds, wall-clock deadline, source ceiling,
 model-says-done, search-saturated) deterministically — _refine_queries / search / draft are stubbed,
 so no network, no Ollama."""
-import council.researcher as RW
+import passiveworkers.researcher as RW
 
 
 def _worker(monkeypatch, depth, refine_fn, search_fn):

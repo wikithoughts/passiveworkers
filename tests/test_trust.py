@@ -4,7 +4,7 @@ import stat
 
 import pytest
 
-from council import trust
+from passiveworkers import trust
 
 
 @pytest.fixture(autouse=True)
@@ -101,12 +101,12 @@ def test_save_fallback_still_enforces_owner_only(monkeypatch):
 
 # --------------------------------------------------------------- fetch() verification helper (D25)
 def _vds(view, merged="x"):
-    from council.operator import _verify_delivery_signature
+    from passiveworkers.operator import _verify_delivery_signature
     return _verify_delivery_signature(view, merged)
 
 
 def _signed_view(operator, priv, signer_pub, payload="payload"):
-    crypto = pytest.importorskip("council.crypto")
+    crypto = pytest.importorskip("passiveworkers.crypto")
     return {"operator": operator, "signer_pub": signer_pub,
             "signature": crypto.sign(priv, payload.encode())}, payload
 
@@ -128,7 +128,7 @@ def test_fetch_unsigned_unpinned_is_allowed_but_unverified():
 
 
 def test_fetch_refuses_signed_when_crypto_absent(monkeypatch):
-    crypto = pytest.importorskip("council.crypto")
+    crypto = pytest.importorskip("passiveworkers.crypto")
     if not crypto.available():
         pytest.skip("crypto extra not installed")
     priv, pub = crypto.new_signing_keypair()
@@ -139,7 +139,7 @@ def test_fetch_refuses_signed_when_crypto_absent(monkeypatch):
 
 
 def test_fetch_tofu_pins_only_a_valid_signature():
-    crypto = pytest.importorskip("council.crypto")
+    crypto = pytest.importorskip("passiveworkers.crypto")
     if not crypto.available():
         pytest.skip("crypto extra not installed")
     priv, pub = crypto.new_signing_keypair()
@@ -150,7 +150,7 @@ def test_fetch_tofu_pins_only_a_valid_signature():
 
 
 def test_fetch_does_not_pin_an_invalid_signature():
-    crypto = pytest.importorskip("council.crypto")
+    crypto = pytest.importorskip("passiveworkers.crypto")
     if not crypto.available():
         pytest.skip("crypto extra not installed")
     priv, pub = crypto.new_signing_keypair()
@@ -161,7 +161,7 @@ def test_fetch_does_not_pin_an_invalid_signature():
 
 
 def test_fetch_refuses_pinned_operator_key_swap():
-    crypto = pytest.importorskip("council.crypto")
+    crypto = pytest.importorskip("passiveworkers.crypto")
     if not crypto.available():
         pytest.skip("crypto extra not installed")
     good_priv, good_pub = crypto.new_signing_keypair()
@@ -177,7 +177,7 @@ def test_pinned_key_defeats_coordinator_key_swap():
     """The D25 security property (closes the D23 gap): once an operator is pinned out of band, a
     hostile coordinator cannot forge a delivery for them. This mirrors how fetch() composes
     classify() with crypto.verify()."""
-    crypto = pytest.importorskip("council.crypto")
+    crypto = pytest.importorskip("passiveworkers.crypto")
     if not crypto.available():
         pytest.skip("crypto extra not installed")
     # honest operator's stable signing key, pinned out of band by the asker

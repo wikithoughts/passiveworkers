@@ -37,7 +37,7 @@ The marketplace capability that makes "computer-use" safe and legal.
 Build phases: (a) job type + brief routing + a basic accept/decline operator view — **done**; (b)
 bounded-context enforcement + per-class consent defaults — **done**; (c) licensed-software sub-type +
 explicit capability-declaration flags (`licensed-software`, `heavy-compute`) at node registration —
-**not built** (verified: no such flags exist in `council/`'s registration code). See D21.
+**not built** (verified: no such flags exist in `passiveworkers/`'s registration code). See D21.
 
 ### 1. Tamper-evident results — BUILT
 Every task result is stored with a canonical SHA-256 (`store.result_digest`), surfaced in
@@ -46,42 +46,42 @@ step 2 raises it to defend against a hostile coordinator.
 
 ### 2. Signed + optionally encrypted delivery — BUILT (D23) + out-of-band key trust (D25)
 - Each node holds a keypair; deliverables are **signed** with the node's private key and verified by
-  the asker against the operator's signing key (`council/crypto.py`, `[crypto]` extra).
+  the asker against the operator's signing key (`passiveworkers/crypto.py`, `[crypto]` extra).
 - Optional **end-to-end payload encryption**: the asker publishes a public key with the job; the
   producer encrypts the deliverable to it; the coordinator relays opaque ciphertext it cannot read.
   Real confidentiality even against a hostile coordinator.
 - **Out-of-band key trust (D25, BUILT):** the asker pins an operator's signing key locally
-  (`council/trust.py`; TOFU on first signed delivery, or explicit `pw trust add` after comparing a
-  `pw fingerprint`) and `pw fetch` verifies against the **pinned** key — so signing now defeats even
+  (`passiveworkers/trust.py`; TOFU on first signed delivery, or explicit `pworkers trust add` after comparing a
+  `pworkers fingerprint`) and `pworkers fetch` verifies against the **pinned** key — so signing now defeats even
   a fully hostile coordinator for any pinned operator (it can't present a different key or forge a
   signature under the pinned one). This was the open caveat the original step-2 design flagged.
 - This is the operator's "encryption between computers / no one can inject into the work," at the
   right layer.
 
 ### 3. Content-addressed artifact store + chunking — BUILT (D22, R10)
-Deliverables are **files**, not just text rows. `council/artifacts.py` (stdlib only) splits a file
+Deliverables are **files**, not just text rows. `passiveworkers/artifacts.py` (stdlib only) splits a file
 into 256 KiB chunks, sha256-hashes each (the chunk's own address), and records a manifest of
 `{name, size, chunk_size, root, chunks:[hashes]}`, where `root` is a flat **Merkle root** (sha256 of
 the ordered chunk hashes). The coordinator stores chunks as opaque, deduped, content-addressed blobs;
 the asker's receiver verifies every chunk against its hash and the manifest root before reassembling,
-and rejects on any mismatch, missing chunk, or path-traversal attempt. Operator side: `pw deliver
-<task> @file <job>`; asker side: `pw fetch <job> <dir>`. See D22 for auth, caps, and the adversarial
+and rejects on any mismatch, missing chunk, or path-traversal attempt. Operator side: `pworkers deliver
+<task> @file <job>`; asker side: `pworkers fetch <job> <dir>`. See D22 for auth, caps, and the adversarial
 fixes (dedup-per-job PK, blob-presence check before settlement, retention reaper).
 
 ### 4. Consent + capability disclosure — PARTIALLY BUILT
-- **Consent (D53, settled):** operators give class-level consent at `pw join` (which work classes —
+- **Consent (D53, settled):** operators give class-level consent at `pworkers join` (which work classes —
   research/judging/batch/assisted — their node accepts); `assisted` tasks additionally require
-  explicit per-task consent via `pw accept`, since that's the sensitive, human-mediated class (D18).
+  explicit per-task consent via `pworkers accept`, since that's the sensitive, human-mediated class (D18).
 - **Capability gating (D24, settled):** marketplace offers can require a capability/reputation
   threshold (`requires.min_reputation`, model/RAM match); enforced at both offer-listing and accept,
   fail-closed on a malformed threshold (`store._meets`, `store._meets_reputation` in
-  `council/net/store.py`).
+  `passiveworkers/net/store.py`).
 - **Still open:** explicit `licensed-software`/`heavy-compute` capability-*declaration* flags at node
   registration (same gap as §0 phase c) — nodes aren't yet able to advertise these specific
   capabilities for gating to key off.
 
 ### 5. MCP interop — BUILT (D19, R7)
-`pw mcp` (optional `[mcp]` extra) runs an MCP server (`council/mcp_server.py`, stdio) so Claude
+`pworkers mcp` (optional `[mcp]` extra) runs an MCP server (`passiveworkers/mcp_server.py`, stdio) so Claude
 Desktop, Codex, or any MCP client can call the research/marketplace engine as a tool. Exposes 3 tools:
 `research`, `library_search`, `library_add`. Makes us a node in the agent ecosystem, not a fork.
 (Prior art: gpt-researcher's MCP server.) See D19 for the adversarial-review fixes (path confinement,

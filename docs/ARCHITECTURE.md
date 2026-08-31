@@ -1,22 +1,22 @@
 # Passive Workers — Architecture
 
 > How the system is built. Pairs with [DECISIONS.md](DECISIONS.md) (why) and the code
-> in `council/`. Terms in **bold** are defined in [GLOSSARY.md](GLOSSARY.md).
+> in `passiveworkers/`. Terms in **bold** are defined in [GLOSSARY.md](GLOSSARY.md).
 
 ## Two engines, one repo
 
-`council/` holds two things that share code but run independently:
+`passiveworkers/` holds two things that share code but run independently:
 
-1. **The research desk** (`pw research` / `pw serve`) — one process on your machine,
+1. **The research desk** (`pworkers research` / `pworkers serve`) — one process on your machine,
    local **analysts** + a **blind judge** + an **editor**, producing a cited report.
    This is the flagship, single-player, and works standalone with no network at all.
-2. **The network** (`council/net/`) — an opt-in commons where machines run the same
+2. **The network** (`passiveworkers/net/`) — an opt-in commons where machines run the same
    underlying work as jobs for each other, coordinated by a **coordinator**, settled in
    non-transferable **credit**. Invite-only while it matures.
 
 ## Network roles
 
-- **Asker** — submits a job and spends credit (`pw ask`).
+- **Asker** — submits a job and spends credit (`pworkers ask`).
 - **Operator** / **node** — a contributor's machine, running one model with a **lens**
   and a **country** tag; returns an **owned deliverable** (never proxied traffic).
 - **Judge** (network sense) — scores candidate answers **blind** and **merges** them
@@ -34,19 +34,19 @@ run_demo → Council(coordinator) ──fan-out──▶ PerspectiveWorker × N 
                                   ──score+merge──▶ Judge
                                   ──settle──▶ Ledger (in-memory)
 ```
-Not dead — `council/run_demo.py` and `scripts/merge_eval.py` still import this path and
+Not dead — `passiveworkers/run_demo.py` and `scripts/merge_eval.py` still import this path and
 are the quickest way to eyeball merge quality on a laptop with no coordinator running.
-But it is not what `pw research`, `pw join`, or any documented user flow uses today —
-those run the current shape below. Files: `council/coordinator.py`, `worker.py`,
+But it is not what `pworkers research`, `pworkers join`, or any documented user flow uses today —
+those run the current shape below. Files: `passiveworkers/coordinator.py`, `worker.py`,
 `judge.py`, `ledger.py`, `run_demo.py`.
 
 ## The current live shape (M2 — networked, dial-out only)
 
-This is what `pw join`/`pw ask` actually run against today, not a future target:
+This is what `pworkers join`/`pworkers ask` actually run against today, not a future target:
 
 ```
         ┌─────────────── Coordinator (any host) ──────────────────┐
-        │  council/net/coordinator_app.py (FastAPI)               │
+        │  passiveworkers/net/coordinator_app.py (FastAPI)               │
         │   • ledger + job queue + node registry + telemetry      │
         │   • SQLite (→ Postgres later), config via env           │
         │   • token-auth node registration, TLS via reverse proxy │
@@ -96,7 +96,7 @@ file to move) and can swap to Postgres via the same config seam.
 
 ## Live operator map (`GET /dashboard`)
 
-The coordinator serves a self-contained dashboard (`council/net/dashboard.py`) that
+The coordinator serves a self-contained dashboard (`passiveworkers/net/dashboard.py`) that
 polls `/status` and renders the network on a Leaflet world map: each node positioned
 by **country**, coloured by load, with model, **reputation**, last-seen, and recent job
 flow. Country starts as self-reported; optional offline GeoIP verification (D43)

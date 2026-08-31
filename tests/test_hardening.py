@@ -1,7 +1,7 @@
 """R14 input/output hardening (D26): the brief, batch instruction/items, and synthesized output
 are all scrubbed of invisible/bidi injection vectors and bounded — no hidden payload reaches a
 model-facing prompt or survives into the compiled report."""
-from council.sanitize import sanitize_brief, strip_invisible
+from passiveworkers.sanitize import sanitize_brief, strip_invisible
 
 ZW = "​"          # zero-width space
 BIDI = "‮"        # right-to-left override
@@ -42,8 +42,8 @@ def test_strip_invisible_removes_hidden_but_preserves_layout():
 
 # ---------------------------------------------------------------- batch worker (marketplace ingress)
 def test_batch_spotlights_item_and_cleans_instruction(monkeypatch):
-    from council.batch import BatchWorker
-    from council.sanitize import OPEN, CLOSE
+    from passiveworkers.batch import BatchWorker
+    from passiveworkers.sanitize import OPEN, CLOSE
     captured = {}
 
     def fake_gen(self, prompt, num_predict=220):
@@ -61,8 +61,8 @@ def test_batch_spotlights_item_and_cleans_instruction(monkeypatch):
 
 
 def test_batch_item_cannot_forge_spotlight_delimiter(monkeypatch):
-    from council.batch import BatchWorker
-    from council.sanitize import CLOSE
+    from passiveworkers.batch import BatchWorker
+    from passiveworkers.sanitize import CLOSE
     captured = {}
 
     def fake_gen(self, prompt, num_predict=220):
@@ -77,8 +77,8 @@ def test_batch_item_cannot_forge_spotlight_delimiter(monkeypatch):
 
 # ---------------------------------------------------------------- judge synthesis → report
 def test_merge_strips_hidden_chars_from_output(monkeypatch):
-    from council.judge import Judge
-    from council.worker import Answer
+    from passiveworkers.judge import Judge
+    from passiveworkers.worker import Answer
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: f"Merged answer{ZW} with {BIDI}hidden")
     j = Judge(model="m")
@@ -89,7 +89,7 @@ def test_merge_strips_hidden_chars_from_output(monkeypatch):
 
 
 def test_compiled_report_strips_injected_contribution(monkeypatch):
-    from council.judge import Judge
+    from passiveworkers.judge import Judge
     # editor JSON has no hidden chars; the injection rides in the contribution TEXT (emitted verbatim)
     monkeypatch.setattr(Judge, "_generate", lambda self, prompt, num_predict=None:
                         '{"summary":"S","agreements":"A","differences":"D"}')
@@ -103,7 +103,7 @@ def test_compiled_report_strips_injected_contribution(monkeypatch):
 
 # ---------------------------------------------------------------- MCP trust boundary
 def test_mcp_normalizes_args_without_traceback():
-    from council.mcp_server import _normalize_research_args
+    from passiveworkers.mcp_server import _normalize_research_args
     # empty / whitespace / hidden-only brief → clean error, never a crash
     assert _normalize_research_args("", "deep", 2, "both")[4].startswith("error:")
     assert _normalize_research_args(f"{ZW}{WJ}", "deep", 2, "both")[4].startswith("error:")
@@ -122,11 +122,11 @@ def _fresh_store(tmp_path, monkeypatch):
     monkeypatch.setenv("PW_DB", str(tmp_path / "h.db"))
     monkeypatch.setenv("PW_STARTER_CREDITS", "1000")
     import importlib
-    import council.ledger as led
+    import passiveworkers.ledger as led
     importlib.reload(led)
-    import council.net.config as cfg
+    import passiveworkers.net.config as cfg
     importlib.reload(cfg)
-    import council.net.store as st
+    import passiveworkers.net.store as st
     importlib.reload(st)
     return st.Store()
 
@@ -149,7 +149,7 @@ def test_create_job_bounds_question_length(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- judge internal prompt/output hops
 def test_compile_report_editor_prompt_has_no_hidden_chars(monkeypatch):
-    from council.judge import Judge
+    from passiveworkers.judge import Judge
     captured = {}
 
     def fake_gen(self, prompt, num_predict=None):
@@ -164,8 +164,8 @@ def test_compile_report_editor_prompt_has_no_hidden_chars(monkeypatch):
 
 
 def test_score_strips_hidden_chars_from_reason(monkeypatch):
-    from council.judge import Judge
-    from council.worker import Answer
+    from passiveworkers.judge import Judge
+    from passiveworkers.worker import Answer
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: f'[{{"answer":1,"score":7,"reason":"good{ZW}{BIDI}"}}]')
     j = Judge(model="m")
@@ -175,7 +175,7 @@ def test_score_strips_hidden_chars_from_reason(monkeypatch):
 
 
 def test_compare_strips_hidden_chars_from_reason(monkeypatch):
-    from council.judge import Judge
+    from passiveworkers.judge import Judge
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: f'{{"winner":"A","reason":"because{ZW}hidden{BIDI}"}}')
     j = Judge(model="m")

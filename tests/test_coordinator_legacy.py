@@ -1,10 +1,10 @@
-"""R36/D52 — pin the legacy in-process Council orchestrator (council/coordinator.py), used by
+"""R36/D52 — pin the legacy in-process Council orchestrator (passiveworkers/coordinator.py), used by
 run_demo.py / merge_eval.py (not the live federation path, but not dead). Pure unit test: a fake Judge
 + stub workers, no network/Ollama. Locks ledger credit-conservation on that path before any refactor."""
-from council.coordinator import Council
-from council.judge import ScoredCandidate
-from council.ledger import Ledger
-from council.worker import Answer
+from passiveworkers.coordinator import Council
+from passiveworkers.judge import ScoredCandidate
+from passiveworkers.ledger import Ledger
+from passiveworkers.worker import Answer
 
 
 class _StubWorker:
