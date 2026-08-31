@@ -24,12 +24,12 @@ import uuid
 from typing import Optional
 
 from council.ledger import InsufficientCredit
-from council.net._store_base import _clip, _now
+from council.net._store_base import _StoreProtocol, _clip, _now
 from council.net.config import JOB_TYPES, pool_for
 from council.sanitize import sanitize_brief
 
 
-class _AssistedMixin:
+class _AssistedMixin(_StoreProtocol):
     def _create_assisted(self, asker: str, question: str, context: str,
                          requires: Optional[dict], encrypt_to: str = "",
                          then_spec: Optional[str] = None) -> dict:

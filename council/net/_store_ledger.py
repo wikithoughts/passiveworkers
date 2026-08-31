@@ -22,11 +22,11 @@ import uuid
 from typing import Optional
 
 from council.ledger import STARTER_ALLOWANCE, Account, Ledger
-from council.net._store_base import _clip, _hash, _now
+from council.net._store_base import _StoreProtocol, _clip, _hash, _now
 from council.net.config import CONFIG
 
 
-class _LedgerMixin:
+class _LedgerMixin(_StoreProtocol):
     # ------------------------------------------------------------------ ledger persistence
     def _load_ledger(self) -> Ledger:
         row = self.conn.execute("SELECT data FROM ledger WHERE id=1").fetchone()

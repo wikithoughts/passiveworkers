@@ -28,12 +28,19 @@ import uuid
 from typing import Any, Optional
 
 from council.ledger import InsufficientCredit
-from council.net._store_base import _CLAIM_TIMEOUT_FRAC, _MAX_TASK_RETRIES, _clip, _norm_then, _now
+from council.net._store_base import (
+    _CLAIM_TIMEOUT_FRAC,
+    _MAX_TASK_RETRIES,
+    _StoreProtocol,
+    _clip,
+    _norm_then,
+    _now,
+)
 from council.net.config import CONFIG, JOB_TYPES, pool_for, task_behavior
 from council.sanitize import sanitize_brief
 
 
-class _JobsMixin:
+class _JobsMixin(_StoreProtocol):
     def record_feedback(self, job_id: str, verdict: str, who: str = "") -> bool:
         if verdict not in ("council", "single", "tie"):
             return False

@@ -22,10 +22,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
+import threading
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from council.net.config import JOB_TYPES
+
+if TYPE_CHECKING:
+    from council.ledger import Ledger
 
 _now = time.time  # server runtime (not a workflow script)
 _FIELD_MAX = 80   # cap node/owner string lengths (defense-in-depth vs. abuse)
@@ -43,6 +48,50 @@ def _hash(secret: str) -> str:
 
 def _clip(s: Any) -> str:
     return str(s if s is not None else "")[:_FIELD_MAX]
+
+
+if TYPE_CHECKING:
+
+    class _StoreProtocol:
+        """Type-checking-only stub of the attributes/cross-mixin methods every Store mixin
+        relies on but doesn't itself define — satisfied at runtime by the composed `Store`
+        class (council/net/store.py's `__init__` sets `lock`/`conn`/`ledger`/`_stop`; the
+        other four mixins supply the methods below). NEVER a real base class: each mixin
+        below inherits it only under `TYPE_CHECKING` (`_StoreProtocol = object` at runtime,
+        the `else` branch just below this one), purely so pyright can resolve
+        `self.lock`/`self.conn`/`self.ledger` and cross-mixin calls (e.g. `_AssistedMixin`
+        calling `self.create_job`, defined on `_JobsMixin`) without changing anything about
+        how the mixins actually compose at runtime — every mixin already implicitly derives
+        from `object` today; this makes that explicit and adds nothing at runtime."""
+
+        lock: Any   # threading.RLock() — untyped here; RLock's typeshed return isn't a plain class
+        conn: sqlite3.Connection
+        ledger: Ledger
+        _stop: threading.Event
+
+        def create_job(self, asker: str, question: str, minds: int | None = None,
+                       job_type: str = "chat", items: list | None = None,
+                       requires: dict | None = None, fetch: bool = False,
+                       context: str = "", encrypt_to: str = "",
+                       split: list | None = None, then: dict | list | None = None,
+                       as_file: bool = False) -> dict: ...
+
+        def get_node(self, node_id: str) -> sqlite3.Row | None: ...
+        def online_nodes(self, judge_only: bool = False) -> list[sqlite3.Row]: ...
+        def operator_reputation(self, owner: str) -> tuple: ...
+        def result_digest(self, result: dict) -> str: ...
+        def _meets(self, n: Any, requires: dict | None) -> bool: ...
+        def _meets_reputation(self, owner: str, requires: dict | None) -> bool: ...
+        def _sane_score(self, raw: Any) -> float: ...
+        def _save_ledger(self) -> None: ...
+
+        def _create_assisted(self, asker: str, question: str, context: str,
+                             requires: dict | None, encrypt_to: str = "",
+                             then_spec: str | None = None) -> dict: ...
+
+        def _maybe_chain(self, job_id: str, asker: str, deliverable: str) -> None: ...
+else:
+    _StoreProtocol = object
 
 
 def _norm_then(then: Any) -> Optional[str]:

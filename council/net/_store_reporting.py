@@ -18,10 +18,10 @@ import hashlib
 import json
 from typing import Optional
 
-from council.net._store_base import _now
+from council.net._store_base import _StoreProtocol, _now
 
 
-class _ReportingMixin:
+class _ReportingMixin(_StoreProtocol):
     def metrics(self) -> dict:
         with self.lock:
             by = {r["verdict"]: r["c"] for r in
