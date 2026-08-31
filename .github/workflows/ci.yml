@@ -3,12 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['docs/**', '**.md']
   pull_request:
+    paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:   # allow manual re-runs
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a main run: it's the merge commit's actual verification, and a squash-merge
+  # landing seconds later would otherwise cancel it before it finishes, leaving main unverified.
+  # Still cancel superseded pushes on feature branches (only the latest commit needs checking).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:
