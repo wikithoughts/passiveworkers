@@ -21,6 +21,16 @@ Config (per node, via env — persist with `pw config set …`):
 
 Wire-in: council/net/agent.py passes search() as PerspectiveWorker(web_search=…) when
 PW_WEB_BACKEND != off. Best-effort: returns "" on any failure (never blocks the answer).
+
+Arabic coverage (R30, deliberately scoped — not a general i18n pass): _TEMPORAL_RE
+(is_time_sensitive, the recency-reordering/year-injection gate) and _BREAKING_RE
+(is_breaking, the depth-bump gate) each carry an additive Arabic keyword alternation
+alongside their English one, so an Arabic brief/query can also trigger them without
+changing any English match. Everything else time-related in this file is still
+English-only by design: _HISTORICAL_RE (historical/timeless-intent detection for year
+injection), _ACADEMIC_RE / _ENCYCLOPEDIC_RE (engine routing), and the month-name date
+parser (_MONTHS/_MON_*/extract_date_hint) do not recognize Arabic month names or date
+phrasing.
 """
 
 from __future__ import annotations
@@ -498,10 +508,21 @@ _MON_MY = re.compile(rf"(?i)\b{_MON}[a-z]*\.?\s+(20\d{{2}})\b")
 
 # does a brief/query actually care about recency? If not, recency reordering is noise (and could
 # bury an authoritative older source under a recent repost), so we leave relevance order alone.
+# R30: additive Arabic alternation (MSA, undiacritized — real-world Arabic text is almost never
+# diacritized) alongside the English one. \b was verified empirically to bound Arabic script
+# correctly under Python's re module (Arabic letters count as \w), including correctly REJECTING
+# a bare word inside a longer definite-article-prefixed one (e.g. \bحالي\b does not match inside
+# الحالي, since Arabic's "ال" attaches without a space) — which is why both the bare and
+# definite-article forms are listed separately where that distinction matters in practice
+# (حالي/الحالي, الأحدث/أحدث), matching the same pattern the original list already used for
+# "current" vs "up-to-date" phrasing.
 _TEMPORAL_RE = re.compile(
     r"(?i)\b(current|currently|latest|newest|recent|recently|now|today|as of|up.?to.?date|"
     r"most recent|breaking|so far|to date|right now|when|next|upcoming|deadline|date|"
-    r"this (year|month|week)|202\d)\b")
+    r"this (year|month|week)|202\d|"
+    r"حالي|الحالي|حاليا|الأحدث|أحدث|مؤخرا|الآن|اليوم|حتى الآن|حتى الوقت الحالي|"
+    r"عاجل|القادم|الموعد النهائي|التاريخ|متى|هذا العام|هذا الشهر|هذا الأسبوع|"
+    r"مباشر|هذا الصباح|هذا المساء)\b")
 
 
 def _valid_ymd(y, mo, d) -> bool:
@@ -632,10 +653,14 @@ def inject_recency(query: str, today: str, time_sensitive: bool = True) -> str:
 # SEO favors stale pages, so more queries + more page fetches earn their keep. Deliberately
 # excludes plain "latest"/"current"/"recent" (those are handled by year injection above, which
 # is cheap) so we don't over-deepen — and double the local compute on — every dated query.
+# R30: additive Arabic "happening right now" subset — every word here also appears in
+# _TEMPORAL_RE above (عاجل/الآن/مباشر/هذا الصباح/هذا المساء), the same "breaking is a
+# stricter subset of temporal" relationship the English alternation carries.
 _BREAKING_RE = re.compile(
     r"(?i)\b(breaking|just\s+(announced|released|happened|reported|now)|right\s+now|"
     r"as\s+of\s+(today|now)|today'?s|developing\s+(story|news|situation)|live\s+updates?|"
-    r"happening\s+now|this\s+(morning|afternoon|evening))\b")
+    r"happening\s+now|this\s+(morning|afternoon|evening)|"
+    r"عاجل|الآن|مباشر|هذا الصباح|هذا المساء)\b")
 
 
 def is_breaking(text: str) -> bool:
