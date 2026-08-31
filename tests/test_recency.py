@@ -112,6 +112,18 @@ def test_breaking_false_for_stable_facts():
     assert not is_breaking("history of the Roman Empire")
 
 
+def test_breaking_detects_happening_now_signals_arabic():
+    # R30: scoped Arabic keyword coverage — additive alongside the English alternation
+    assert is_breaking("عاجل: ما الذي يحدث الآن في السوق")          # "breaking ... right now"
+    assert is_breaking("بث مباشر لحفل الافتتاح هذا المساء")          # "live ... this evening"
+
+
+def test_breaking_false_for_stable_facts_arabic():
+    # an unrelated Arabic sentence with no breaking-news keywords must NOT trip the depth bump
+    assert not is_breaking("الباندا حيوان يعيش في الغابات ويأكل الخيزران")
+    assert not is_breaking("قواعد اللغة العربية تحتوي على أبواب كثيرة للنحو والصرف")
+
+
 # ----------------------------------------------------------------------------- _bumped_depth
 def test_breaking_brief_bumps_depth_one_notch():
     from council.researcher import ResearchWorker

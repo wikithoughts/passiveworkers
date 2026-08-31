@@ -83,6 +83,19 @@ def test_time_sensitive_false_for_stable_facts():
     assert not is_time_sensitive("what is the capital city of Australia")
 
 
+def test_time_sensitive_detects_recency_intent_arabic():
+    # R30: scoped Arabic keyword coverage — additive alongside the English alternation
+    assert is_time_sensitive("ما هو أحدث إصدار من نظام التشغيل")        # "latest/newest version"
+    assert is_time_sensitive("ما هو السعر الحالي للذهب اليوم")          # "current price ... today"
+    assert is_time_sensitive("متى الموعد النهائي لتقديم الطلبات")       # "when ... deadline"
+
+
+def test_time_sensitive_false_for_stable_facts_arabic():
+    # an unrelated Arabic sentence with no temporal keywords must NOT trigger recency reordering
+    assert not is_time_sensitive("الباندا حيوان يعيش في الغابات ويأكل الخيزران")
+    assert not is_time_sensitive("قواعد اللغة العربية تحتوي على أبواب كثيرة للنحو والصرف")
+
+
 # ----------------------------------------------------------------------------- date-aware prompts
 def test_plan_prompt_includes_today(monkeypatch):
     from council.researcher import ResearchWorker
