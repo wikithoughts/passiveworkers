@@ -93,7 +93,20 @@ class Operator:
             return "", ""
 
     def _identity(self) -> tuple[str, str]:
-        """Reuse a cached node identity for this coordinator, else register one."""
+        """Reuse a cached node identity for this coordinator, else register one.
+
+        Prefers this machine's `pw join` identity for the same coordinator (join.json) —
+        mirrors the fallback pattern `_cached_node_secret()` already uses below — so a machine
+        that has both `pw join`ed and runs `pw tasks`/`pw accept`/`pw deliver` shares ONE node
+        identity instead of showing up twice on the coordinator's live map (store.online_nodes()
+        keys nodes by node_id, not owner). Falls through to the operator.json cache-then-register
+        path unchanged for machines that have never `pw join`ed (backward compatible)."""
+        from council.net.agent import _load_join
+        from council import paths
+        joined = paths.coordinator_entries(_load_join())
+        entry = joined.get(self.base)
+        if entry and entry.get("node_id") and entry.get("node_secret"):
+            return entry["node_id"], entry["node_secret"]
         if STATE.exists():
             try:
                 cache = json.loads(STATE.read_text()).get(self.base)

@@ -53,6 +53,13 @@ pw trust remove <operator>
 Once pinned, a delivery signed by a *different* key for that same operator name is
 rejected — protects against a hostile coordinator swapping in an impostor.
 
+Note for anyone watching a coordinator's live map (`/dashboard`): an operator who has
+both `pw join`ed to contribute research jobs *and* accepts assisted tasks via `pw
+tasks`/`pw accept`/`pw deliver` now shows up as one node, not two — the assisted flow
+reuses the same `pw join` node identity on that machine instead of registering a
+second one. This is purely cosmetic; it never changes credit or reputation, which have
+always been tracked per-owner rather than per-node.
+
 ## 4. Rate the result
 
 ```bash

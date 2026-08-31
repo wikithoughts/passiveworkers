@@ -75,6 +75,13 @@ default so your node can take research jobs). Leave it running; stop it any time
 - **Always-on (Linux):** `scripts/install_systemd.sh` installs a systemd unit that survives reboot.
 - **Mac trial:** `scripts/mac_join.sh` opens a tunnel and runs a couple of perspectives + a judge.
 
+If this same machine also does assisted (human-in-the-loop) work for the same coordinator via
+`pw tasks` / `pw accept` / `pw deliver`, it reuses the identity already saved in `join.json`
+instead of minting a second one — so you show up once on the coordinator's live node map, not
+twice. This only changes which identity gets picked for the assisted flow; if you've never run
+`pw join` against a coordinator, `pw tasks`/`pw accept`/`pw deliver` still register and cache their
+own identity in `~/.passiveworkers/operator.json` exactly as before.
+
 <details><summary>Advanced: the explicit env-var flow (what <code>pw join</code> automates)</summary>
 
 ```bash
