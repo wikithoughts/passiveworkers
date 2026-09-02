@@ -56,8 +56,7 @@ better starting read. This file is for when you're about to change the code.
 
 ## Commands
 
-Only commands with a real, grounded source in this repo — nothing invented. Every
-command below is fenced verbatim from `facts/passiveworkers.json`; none were dropped.
+Only commands with a real, grounded source in this repo — nothing invented, none dropped.
 
 **Setup**
 
@@ -235,8 +234,8 @@ builds — none of which this repo has any use for.
 ## Where to find more
 
 No nested `AGENTS.md` files exist in this repo. The only nested context file at all is
-the root `CLAUDE.md` stub itself (`@AGENTS.md`, 1 line) — see `nested.json` in this
-draft; it stays a plain import stub (kind `stub-only` → `leave`), nothing to convert.
+the root `CLAUDE.md` stub itself (`@AGENTS.md`, 1 line) — a plain import stub, nothing
+to convert.
 
 | Your task touches… | Read first |
 |---|---|

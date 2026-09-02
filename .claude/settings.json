@@ -14,7 +14,7 @@
   },
   "permissions": {
     "allow": [
-      "Bash(pip install:*)",
+      "Bash(pip install -e .*)",
       "Bash(ruff check:*)",
       "Bash(python -m py_compile:*)",
       "Bash(pytest:*)",
