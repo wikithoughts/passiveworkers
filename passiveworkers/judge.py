@@ -94,6 +94,54 @@ def _drop_invented_markers(text: str, known: set[str]) -> str:
     return _CITE_SPAN.sub(_repl, text)
 
 
+# ---------------------------------------------------------------- merge length targeting (M3)
+# The merge prompt used to only cap output at the LONGEST perspective's length (biased short —
+# docs/ROADMAP.md's M3 honest eval found it erring ~110w vs a ~200w single). It now TARGETS the
+# length of the best-SCORING single perspective specifically, inside a tolerance band, with a
+# hard word-count ceiling enforced in code as a safety net regardless of what the model actually
+# returns (see docs/DECISIONS.md D54).
+_TARGET_LOW_RATIO = 0.85    # tolerance band floor around the target
+_TARGET_HIGH_RATIO = 1.15   # tolerance band ceiling around the target
+_HARD_CAP_RATIO = 1.3       # safety net: never let output through past this multiple of target
+_MIN_TARGET_WORDS = 60      # floor so a very short single perspective can't collapse the band
+
+
+def _best_single_word_count(answers, scored) -> Optional[int]:
+    """Word count of the highest-scoring answer, or None if no scores were given — callers that
+    don't pass `scored` fall back to the previous longest-perspective behavior."""
+    if not scored:
+        return None
+    try:
+        best_wid = max(scored, key=lambda s: s.score).worker_id
+    except ValueError:
+        return None
+    for a in answers:
+        if a.worker_id == best_wid:
+            return len(a.text.split())
+    return None
+
+
+def _length_band(target: int) -> tuple[int, int, int]:
+    """(lo, hi, hard_cap) word counts around a length target."""
+    lo = max(_MIN_TARGET_WORDS, int(target * _TARGET_LOW_RATIO))
+    hi = max(lo, int(target * _TARGET_HIGH_RATIO))
+    hard_cap = max(hi, int(target * _HARD_CAP_RATIO))
+    return lo, hi, hard_cap
+
+
+def _enforce_word_cap(text: str, cap: int) -> str:
+    """Safety net: truncate to at most `cap` words even if the model ignored the prompt's length
+    instructions. If the cut lands mid-citation (an unmatched '[' with no closing ']'), drop the
+    dangling opener rather than leave a broken marker in the output."""
+    matches = list(re.finditer(r"\S+", text))
+    if len(matches) <= cap:
+        return text
+    truncated = text[: matches[cap - 1].end()].rstrip()
+    if truncated.count("[") > truncated.count("]"):
+        truncated = truncated[: truncated.rfind("[")].rstrip()
+    return truncated
+
+
 @dataclass
 class ScoredCandidate:
     worker_id: str
@@ -157,14 +205,22 @@ class Judge:
         return results
 
     # ------------------------------------------------------------------ 2. MERGE
-    def merge(self, question: str, answers: list) -> str:
+    def merge(self, question: str, answers: list,
+              scored: "Optional[list[ScoredCandidate]]" = None) -> str:
+        """`scored` (optional): the same scores `Judge.score()` produced for these answers. When
+        given, the merge TARGETS the best-scoring single answer's own length (M3 refinement) rather
+        than just the longest perspective; omit it to fall back to the prior longest-based target
+        (used by callers, and tests, that merge without scoring first)."""
         blocks = [f"--- Perspective {i + 1} ---\n{a.text}" for i, a in enumerate(answers)]
         joined = "\n\n".join(blocks)
         longest = max((len(a.text.split()) for a in answers), default=200)
+        target = _best_single_word_count(answers, scored) or longest
+        lo, hi, hard_cap = _length_band(target)
         prompt = (
             "You are a synthesizer. Several independent perspectives answer the same question below. "
-            "Write ONE answer that is strictly BETTER and NO LONGER than the best single perspective — "
-            "win on DENSITY, not length.\n"
+            "Write ONE answer that is strictly BETTER than any single perspective, MATCHING the "
+            "length of the best single perspective — win on DENSITY, not extra length, and don't "
+            "cut it short either.\n"
             "Rules:\n"
             "  • Integrate the views — do NOT append them or describe each separately.\n"
             "  • Include the strongest points and any correct insight only one perspective found.\n"
@@ -174,17 +230,21 @@ class Judge:
             "they support; never renumber, merge, or invent a marker (R17).\n"
             "  • Write ONE direct answer to the asker — never mention 'Perspective N' or that "
             "multiple answers exist.\n"
-            f"  • Length target: {max(60, int(longest * 0.8))}–{longest} words — as substantive as the "
-            "best perspective, never padded, never a stub. End with one line 'Diverse angles: …' "
+            f"  • Length target: {lo}–{hi} words — aim for the best single perspective's own "
+            f"length (≈{target} words); as substantive as it, never padded, never a stub. Hard "
+            f"ceiling: {hard_cap} words, never exceed it. End with one line 'Diverse angles: …' "
             "(≤15 words) naming the distinct contributions.\n\n"
             f"QUESTION:\n{question}\n\n"
             f"PERSPECTIVES:\n{joined}\n\n"
             "Write the tight merged answer now."
         )
         # the synthesized text is the last untrusted-output hop before the report → strip hidden
-        # chars, then drop any citation marker the synthesis invented (keep merges honest, R17)
-        out = strip_invisible(self._generate(prompt, num_predict=min(900, max(300, longest * 2))))
-        return _drop_invented_markers(out, _known_markers(answers))
+        # chars, drop any citation marker the synthesis invented (keep merges honest, R17), then
+        # enforce the hard length ceiling in code — a safety net independent of whether the model
+        # actually honored the prompt (D54).
+        out = strip_invisible(self._generate(prompt, num_predict=min(900, max(300, hard_cap * 2))))
+        out = _drop_invented_markers(out, _known_markers(answers))
+        return _enforce_word_cap(out, hard_cap)
 
     # ------------------------------------------------------------------ DELIBERATE (one blind call)
     def deliberate(self, question: str, answers: list) -> dict:

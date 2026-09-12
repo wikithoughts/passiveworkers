@@ -22,7 +22,7 @@ class _FakeJudge:
         return [ScoredCandidate(worker_id=a.worker_id, score=float(10 - i), reason="ok")
                 for i, a in enumerate(answers)]
 
-    def merge(self, question, answers):
+    def merge(self, question, answers, scored=None):
         return "merged answer"
 
 

@@ -1567,3 +1567,32 @@ confirmation, so it can't silently drift back into a broken promise.
 **Status:** Settled. Implements R4 and R5 of `docs/REVIEW_2026-07.md`. Revisit consent-modes (option
 a) only if a future task class spends the operator's money or credentials, not just their compute —
 track as a Tier-3 deferral, not urgent.
+
+## D54 — Merge targets the best-single answer's length, not just a cap on it (M3, 2026-09-12)
+**Context:** `scripts/merge_eval.py`'s honest length-controlled eval (M3, see `docs/ROADMAP.md`)
+found the merge prompt's old length rule — "no longer than the best single perspective," with a
+target range of `0.8×longest`–`longest` words — biased the merge *short* (~110w vs a ~200w single).
+It also anchored on the **longest** perspective overall, not the **best-scoring** one, so a
+verbose-but-mediocre answer could inflate (or a terse-but-best one could shrink) the target for
+reasons unrelated to quality.
+
+**Decision:** `Judge.merge()` now accepts the same `scored` list `Judge.score()` already produces
+for the job and, when given, targets the word count of the highest-*scoring* single answer specifically
+— inside a tolerance band (85%–115% of that target) — rather than capping under the longest
+perspective. A hard ceiling (130% of target) is enforced in code after generation
+(`_enforce_word_cap`), independent of whether the model actually honored the prompt's length
+instructions; it also drops a citation marker left dangling by the cut (never emits a broken
+`[S#]`/`[L#]`) rather than leaving a half marker in output the way a naive `text[:n]` slice would.
+Callers that merge without scores in hand (this repo has no such live caller today, but tests and
+any future direct use of `Judge.merge()` may) keep the previous longest-based target as a fallback —
+no crash, no silent 0-length target.
+
+**Why not a fixed word count?** A fixed target would ignore that "the best answer" varies in
+natural length per question; anchoring on that job's own best-scoring answer keeps the target
+question-relative, which is what the M3 finding actually called for ("target ≈ best-single length").
+
+**Status:** Settled. `passiveworkers/judge.py` (`Judge.merge`, `_best_single_word_count`,
+`_length_band`, `_enforce_word_cap`); wired into the live path via
+`passiveworkers/coordinator.py`'s `Council.run()`, which already computes `scored` before merging.
+Covered by `tests/test_merge_length.py` (target-selection, shorter-than-target, longer-but-under-cap,
+and hard-cap-still-holds cases, plus direct unit coverage of the truncation helper).
