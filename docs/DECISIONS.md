@@ -1583,9 +1583,20 @@ perspective. A hard ceiling (130% of target) is enforced in code after generatio
 (`_enforce_word_cap`), independent of whether the model actually honored the prompt's length
 instructions; it also drops a citation marker left dangling by the cut (never emits a broken
 `[S#]`/`[L#]`) rather than leaving a half marker in output the way a naive `text[:n]` slice would.
-Callers that merge without scores in hand (this repo has no such live caller today, but tests and
-any future direct use of `Judge.merge()` may) keep the previous longest-based target as a fallback —
-no crash, no silent 0-length target.
+Callers that merge without scores in hand keep the previous longest-based target as a fallback — no
+crash, no silent 0-length target. `Judge.deliberate()` is the existing live caller: it calls
+`self.merge(question, answers)` with no `scored` argument at `passiveworkers/judge.py`'s
+`deliberate()` (its one blind, unscored pass) whenever the model's own JSON `"merge"` field comes
+back empty. Tests and any future direct use of `Judge.merge()` fall back the same way.
+
+The target itself has an explicit zero/empty-input policy (`_length_band`, review PR #22): a
+non-positive target collapses the whole band to `(0, 0, 0)` rather than reusing the short-answer
+floor, and `_MIN_TARGET_WORDS` only ever widens the *soft* band — it can never push either bound
+past the target-relative hard ceiling (130% of target), which stays in force down to the shortest
+non-empty target. An empty highest-scoring answer is treated the same as "no score signal" and
+falls back to the longest candidate, same as the no-`scored` case above; an empty answer list keeps
+targeting the pre-existing 200-word default. All three are covered by
+`tests/test_merge_length.py`.
 
 **Why not a fixed word count?** A fixed target would ignore that "the best answer" varies in
 natural length per question; anchoring on that job's own best-scoring answer keeps the target

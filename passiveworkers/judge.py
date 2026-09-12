@@ -100,15 +100,28 @@ def _drop_invented_markers(text: str, known: set[str]) -> str:
 # length of the best-SCORING single perspective specifically, inside a tolerance band, with a
 # hard word-count ceiling enforced in code as a safety net regardless of what the model actually
 # returns (see docs/DECISIONS.md D54).
-_TARGET_LOW_RATIO = 0.85    # tolerance band floor around the target
-_TARGET_HIGH_RATIO = 1.15   # tolerance band ceiling around the target
-_HARD_CAP_RATIO = 1.3       # safety net: never let output through past this multiple of target
-_MIN_TARGET_WORDS = 60      # floor so a very short single perspective can't collapse the band
+#
+# Ratios are integer PERCENTAGES, not floats: binary floating-point plus `int()` truncation used
+# to round 100 * 1.15 down to 114 instead of 115 (review PR #22). `_pct_of` below rounds HALF UP
+# using only integer arithmetic, so results are exact for every whole-number target.
+_TARGET_LOW_PCT = 85     # tolerance band floor around the target
+_TARGET_HIGH_PCT = 115   # tolerance band ceiling around the target
+_HARD_CAP_PCT = 130      # safety net: never let output through past this multiple of target
+_MIN_TARGET_WORDS = 60   # floor so a very short single perspective can't collapse the SOFT band —
+                          # but it must never win over the hard ceiling below (review PR #22 P2)
+
+
+def _pct_of(target: int, pct: int) -> int:
+    """`target * pct / 100`, rounded HALF UP, using only integer arithmetic (declared rounding
+    rule — no float multiplication, so no binary-representation drift)."""
+    return (target * pct + 50) // 100
 
 
 def _best_single_word_count(answers, scored) -> Optional[int]:
     """Word count of the highest-scoring answer, or None if no scores were given — callers that
-    don't pass `scored` fall back to the previous longest-perspective behavior."""
+    don't pass `scored` fall back to the previous longest-perspective behavior. May return 0 if
+    the highest-scoring answer is itself empty; `merge()` treats that the same as "no signal" and
+    falls back to the longest candidate (explicit, tested — review PR #22 "Other findings")."""
     if not scored:
         return None
     try:
@@ -122,23 +135,55 @@ def _best_single_word_count(answers, scored) -> Optional[int]:
 
 
 def _length_band(target: int) -> tuple[int, int, int]:
-    """(lo, hi, hard_cap) word counts around a length target."""
-    lo = max(_MIN_TARGET_WORDS, int(target * _TARGET_LOW_RATIO))
-    hi = max(lo, int(target * _TARGET_HIGH_RATIO))
-    hard_cap = max(hi, int(target * _HARD_CAP_RATIO))
+    """(lo, hi, hard_cap) word counts around a length target.
+
+    Explicit zero/empty-input policy: target <= 0 returns (0, 0, 0) — a zero target means there is
+    nothing to synthesize a length from, so the band collapses to zero rather than silently reusing
+    the short-answer floor below (review PR #22 P2: that used to prompt for "~0 words" while still
+    enforcing a self-contradictory 60-word floor and ceiling).
+
+    For a positive target, `_HARD_CAP_PCT` (130% of target) is the safety net the output can never
+    exceed. `_MIN_TARGET_WORDS` only ever widens the SOFT band so a short single perspective can't
+    collapse the merge to a stub — it must never win over the hard ceiling. Without that clamp, a
+    10-word target produced (60, 60, 60): a fixed 60-word floor overriding the documented
+    target-relative 130% ceiling for short/single answers (review PR #22 P2)."""
+    if target <= 0:
+        return 0, 0, 0
+    hard_cap = max(1, _pct_of(target, _HARD_CAP_PCT))
+    lo = min(max(_MIN_TARGET_WORDS, _pct_of(target, _TARGET_LOW_PCT)), hard_cap)
+    hi = min(max(lo, _pct_of(target, _TARGET_HIGH_PCT)), hard_cap)
     return lo, hi, hard_cap
 
 
 def _enforce_word_cap(text: str, cap: int) -> str:
     """Safety net: truncate to at most `cap` words even if the model ignored the prompt's length
-    instructions. If the cut lands mid-citation (an unmatched '[' with no closing ']'), drop the
-    dangling opener rather than leave a broken marker in the output."""
+    instructions. If the cut lands mid-citation, drop the dangling opener rather than leave a
+    broken marker in the output.
+
+    `cap` can be 0 (the zero-target policy in `_length_band`) — handled explicitly, because
+    `matches[cap - 1]` with `cap == 0` is `matches[-1]`, i.e. Python's negative-index wraparound
+    silently returns the WHOLE text instead of nothing (review PR #22 P2).
+
+    Bracket matching is an ORDER-AWARE unmatched-'[' scan (a stack of open-bracket positions), not
+    a global count of '[' vs ']' in the truncated text. A global count is fooled by an earlier
+    stray ']' that has no matching '[': it can cancel out a genuine unmatched '[' the cut just
+    introduced, so a truncation that lands between "[S1" and "]" can pass the count check and ship
+    a broken `[S1,` marker (review PR #22 P2, full-merge regression in
+    `tests/test_merge_length.py`)."""
+    if cap <= 0:
+        return ""
     matches = list(re.finditer(r"\S+", text))
     if len(matches) <= cap:
         return text
     truncated = text[: matches[cap - 1].end()].rstrip()
-    if truncated.count("[") > truncated.count("]"):
-        truncated = truncated[: truncated.rfind("[")].rstrip()
+    open_stack: list[int] = []
+    for i, ch in enumerate(truncated):
+        if ch == "[":
+            open_stack.append(i)
+        elif ch == "]" and open_stack:
+            open_stack.pop()
+    if open_stack:
+        truncated = truncated[: open_stack[-1]].rstrip()
     return truncated
 
 
