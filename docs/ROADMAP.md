@@ -32,7 +32,7 @@ isolated in `/opt/passiveworkers`, **reusing the host's existing Ollama**, bound
 **Done:** ✅ council runs across both machines, ✅ ledger conserves, ✅ telemetry shows both nodes,
 ✅ cross-hardware number recorded — with a real finding that reshapes verification (folded into M3).
 
-## M3 — Quality, reputation & the live map ⏭ (mostly done)
+## M3 — Quality, reputation & the live map ✅
 - ✅ **Reputation/quality tracking** — each owner accrues a rolling mean judge score; exposed in
   `/status`; **functional**: fleet selection prefers higher-reputation nodes (`store.py`). This is what
   D10's "verify on quality, not model-identity" leans on.
@@ -43,8 +43,12 @@ isolated in `/opt/passiveworkers`, **reusing the host's existing Ollama**, bound
   comparison. **Finding:** the original merge won 3/3 *raw* but only **1/3 length-controlled** — its edge
   was mostly verbosity. Tightening the merge prompt to synthesize *densely with a length cap* moved the
   honest (length-controlled) win-rate to **2/3**, confirming the diversity dividend is real **per word**.
-  The merge now errs *short* (~110w vs ~200w single); next refinement: **target** ≈ best-single length,
-  not just cap it.
+  The merge then erred *short* (~110w vs ~200w single) — historical context: the "next refinement"
+  this once called for (**target** ≈ best-single length, not just cap it) is exactly the completed
+  bullet below.
+- ✅ **Merge targets best-single length (D54)** — `Judge.merge()` now targets the best-*scoring*
+  answer's own word count (not just the longest perspective) inside a tolerance band, with a hard
+  word-count ceiling enforced in code as a safety net regardless of model compliance.
 
 ## Future features (interactivity — founder request) — ✅ all shipped
 - ✅ **Real IP-based geo** (D43): offline GeoIP verification at registration — checks the self-reported

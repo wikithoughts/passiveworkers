@@ -82,8 +82,11 @@ def test_merge_strips_hidden_chars_from_output(monkeypatch):
     monkeypatch.setattr(Judge, "_generate",
                         lambda self, prompt, num_predict=None: f"Merged answer{ZW} with {BIDI}hidden")
     j = Judge(model="m")
-    ans = [Answer(worker_id="a", model="m", lens="x", country="c", text="one", tokens=1, elapsed_s=0.1),
-           Answer(worker_id="b", model="m", lens="y", country="c", text="two", tokens=1, elapsed_s=0.1)]
+    # ten words each (not "one"/"two") so the length-band hard cap (target-relative, PR #22 review)
+    # doesn't truncate the 4-word merged output out from under this unrelated sanitization check.
+    ten_words = "one two three four five six seven eight nine ten"
+    ans = [Answer(worker_id="a", model="m", lens="x", country="c", text=ten_words, tokens=10, elapsed_s=0.1),
+           Answer(worker_id="b", model="m", lens="y", country="c", text=ten_words, tokens=10, elapsed_s=0.1)]
     out = j.merge("q", ans)
     assert ZW not in out and BIDI not in out and "Merged answer with hidden" in out
 

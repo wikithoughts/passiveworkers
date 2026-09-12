@@ -60,7 +60,12 @@ all = ["trafilatura>=2.0", "pypdf>=4.0", "python-docx>=1.1", "mcp>=1.0", "pynacl
 # CONTRIBUTING.md's quick start — this is the ONE place both are declared, so a contributor's
 # local `ruff check .` can't silently drift from CI's). Also needs Node 18+ on PATH for the
 # front-end guard/harness (scripts/check_app_js.sh, scripts/fe_test.js) — not pip-installable.
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+# `httpx` is FastAPI's TestClient transport (starlette/testclient.py imports `httpx2`, then falls
+# back to `httpx`; neither is a runtime dependency of this package). Without either, every test
+# using TestClient errors at import time rather than failing on its own assertion. Pinned to the
+# exact version locally verified against this project's FastAPI/Starlette range — do not downgrade
+# FastAPI/Starlette to work around an absent test-only package.
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6", "httpx==0.28.1"]
 
 [project.urls]
 Homepage = "https://github.com/wikithoughts/passiveworkers"

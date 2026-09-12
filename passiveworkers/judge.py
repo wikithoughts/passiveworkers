@@ -94,6 +94,99 @@ def _drop_invented_markers(text: str, known: set[str]) -> str:
     return _CITE_SPAN.sub(_repl, text)
 
 
+# ---------------------------------------------------------------- merge length targeting (M3)
+# The merge prompt used to only cap output at the LONGEST perspective's length (biased short —
+# docs/ROADMAP.md's M3 honest eval found it erring ~110w vs a ~200w single). It now TARGETS the
+# length of the best-SCORING single perspective specifically, inside a tolerance band, with a
+# hard word-count ceiling enforced in code as a safety net regardless of what the model actually
+# returns (see docs/DECISIONS.md D54).
+#
+# Ratios are integer PERCENTAGES, not floats: binary floating-point plus `int()` truncation used
+# to round 100 * 1.15 down to 114 instead of 115 (review PR #22). `_pct_of` below rounds HALF UP
+# using only integer arithmetic, so results are exact for every whole-number target.
+_TARGET_LOW_PCT = 85     # tolerance band floor around the target
+_TARGET_HIGH_PCT = 115   # tolerance band ceiling around the target
+_HARD_CAP_PCT = 130      # safety net: never let output through past this multiple of target
+_MIN_TARGET_WORDS = 60   # floor so a very short single perspective can't collapse the SOFT band —
+                          # but it must never win over the hard ceiling below (review PR #22 P2)
+
+
+def _pct_of(target: int, pct: int) -> int:
+    """`target * pct / 100`, rounded HALF UP, using only integer arithmetic (declared rounding
+    rule — no float multiplication, so no binary-representation drift)."""
+    return (target * pct + 50) // 100
+
+
+def _best_single_word_count(answers, scored) -> Optional[int]:
+    """Word count of the highest-scoring answer, or None if no scores were given — callers that
+    don't pass `scored` fall back to the previous longest-perspective behavior. May return 0 if
+    the highest-scoring answer is itself empty; `merge()` treats that the same as "no signal" and
+    falls back to the longest candidate (explicit, tested — review PR #22 "Other findings")."""
+    if not scored:
+        return None
+    try:
+        best_wid = max(scored, key=lambda s: s.score).worker_id
+    except ValueError:
+        return None
+    for a in answers:
+        if a.worker_id == best_wid:
+            return len(a.text.split())
+    return None
+
+
+def _length_band(target: int) -> tuple[int, int, int]:
+    """(lo, hi, hard_cap) word counts around a length target.
+
+    Explicit zero/empty-input policy: target <= 0 returns (0, 0, 0) — a zero target means there is
+    nothing to synthesize a length from, so the band collapses to zero rather than silently reusing
+    the short-answer floor below (review PR #22 P2: that used to prompt for "~0 words" while still
+    enforcing a self-contradictory 60-word floor and ceiling).
+
+    For a positive target, `_HARD_CAP_PCT` (130% of target) is the safety net the output can never
+    exceed. `_MIN_TARGET_WORDS` only ever widens the SOFT band so a short single perspective can't
+    collapse the merge to a stub — it must never win over the hard ceiling. Without that clamp, a
+    10-word target produced (60, 60, 60): a fixed 60-word floor overriding the documented
+    target-relative 130% ceiling for short/single answers (review PR #22 P2)."""
+    if target <= 0:
+        return 0, 0, 0
+    hard_cap = max(1, _pct_of(target, _HARD_CAP_PCT))
+    lo = min(max(_MIN_TARGET_WORDS, _pct_of(target, _TARGET_LOW_PCT)), hard_cap)
+    hi = min(max(lo, _pct_of(target, _TARGET_HIGH_PCT)), hard_cap)
+    return lo, hi, hard_cap
+
+
+def _enforce_word_cap(text: str, cap: int) -> str:
+    """Safety net: truncate to at most `cap` words even if the model ignored the prompt's length
+    instructions. If the cut lands mid-citation, drop the dangling opener rather than leave a
+    broken marker in the output.
+
+    `cap` can be 0 (the zero-target policy in `_length_band`) — handled explicitly, because
+    `matches[cap - 1]` with `cap == 0` is `matches[-1]`, i.e. Python's negative-index wraparound
+    silently returns the WHOLE text instead of nothing (review PR #22 P2).
+
+    Bracket matching is an ORDER-AWARE unmatched-'[' scan (a stack of open-bracket positions), not
+    a global count of '[' vs ']' in the truncated text. A global count is fooled by an earlier
+    stray ']' that has no matching '[': it can cancel out a genuine unmatched '[' the cut just
+    introduced, so a truncation that lands between "[S1" and "]" can pass the count check and ship
+    a broken `[S1,` marker (review PR #22 P2, full-merge regression in
+    `tests/test_merge_length.py`)."""
+    if cap <= 0:
+        return ""
+    matches = list(re.finditer(r"\S+", text))
+    if len(matches) <= cap:
+        return text
+    truncated = text[: matches[cap - 1].end()].rstrip()
+    open_stack: list[int] = []
+    for i, ch in enumerate(truncated):
+        if ch == "[":
+            open_stack.append(i)
+        elif ch == "]" and open_stack:
+            open_stack.pop()
+    if open_stack:
+        truncated = truncated[: open_stack[-1]].rstrip()
+    return truncated
+
+
 @dataclass
 class ScoredCandidate:
     worker_id: str
@@ -157,14 +250,22 @@ class Judge:
         return results
 
     # ------------------------------------------------------------------ 2. MERGE
-    def merge(self, question: str, answers: list) -> str:
+    def merge(self, question: str, answers: list,
+              scored: "Optional[list[ScoredCandidate]]" = None) -> str:
+        """`scored` (optional): the same scores `Judge.score()` produced for these answers. When
+        given, the merge TARGETS the best-scoring single answer's own length (M3 refinement) rather
+        than just the longest perspective; omit it to fall back to the prior longest-based target
+        (used by callers, and tests, that merge without scoring first)."""
         blocks = [f"--- Perspective {i + 1} ---\n{a.text}" for i, a in enumerate(answers)]
         joined = "\n\n".join(blocks)
         longest = max((len(a.text.split()) for a in answers), default=200)
+        target = _best_single_word_count(answers, scored) or longest
+        lo, hi, hard_cap = _length_band(target)
         prompt = (
             "You are a synthesizer. Several independent perspectives answer the same question below. "
-            "Write ONE answer that is strictly BETTER and NO LONGER than the best single perspective — "
-            "win on DENSITY, not length.\n"
+            "Write ONE answer that is strictly BETTER than any single perspective, MATCHING the "
+            "length of the best single perspective — win on DENSITY, not extra length, and don't "
+            "cut it short either.\n"
             "Rules:\n"
             "  • Integrate the views — do NOT append them or describe each separately.\n"
             "  • Include the strongest points and any correct insight only one perspective found.\n"
@@ -174,17 +275,21 @@ class Judge:
             "they support; never renumber, merge, or invent a marker (R17).\n"
             "  • Write ONE direct answer to the asker — never mention 'Perspective N' or that "
             "multiple answers exist.\n"
-            f"  • Length target: {max(60, int(longest * 0.8))}–{longest} words — as substantive as the "
-            "best perspective, never padded, never a stub. End with one line 'Diverse angles: …' "
+            f"  • Length target: {lo}–{hi} words — aim for the best single perspective's own "
+            f"length (≈{target} words); as substantive as it, never padded, never a stub. Hard "
+            f"ceiling: {hard_cap} words, never exceed it. End with one line 'Diverse angles: …' "
             "(≤15 words) naming the distinct contributions.\n\n"
             f"QUESTION:\n{question}\n\n"
             f"PERSPECTIVES:\n{joined}\n\n"
             "Write the tight merged answer now."
         )
         # the synthesized text is the last untrusted-output hop before the report → strip hidden
-        # chars, then drop any citation marker the synthesis invented (keep merges honest, R17)
-        out = strip_invisible(self._generate(prompt, num_predict=min(900, max(300, longest * 2))))
-        return _drop_invented_markers(out, _known_markers(answers))
+        # chars, drop any citation marker the synthesis invented (keep merges honest, R17), then
+        # enforce the hard length ceiling in code — a safety net independent of whether the model
+        # actually honored the prompt (D54).
+        out = strip_invisible(self._generate(prompt, num_predict=min(900, max(300, hard_cap * 2))))
+        out = _drop_invented_markers(out, _known_markers(answers))
+        return _enforce_word_cap(out, hard_cap)
 
     # ------------------------------------------------------------------ DELIBERATE (one blind call)
     def deliberate(self, question: str, answers: list) -> dict:

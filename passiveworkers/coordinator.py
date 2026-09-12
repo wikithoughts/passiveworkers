@@ -101,9 +101,10 @@ class Council:
         # Stable order by worker_id for reproducible display.
         answers.sort(key=lambda a: a.worker_id)
 
-        # Judge: score (blind) then merge.
+        # Judge: score (blind) then merge — merge targets the best-scoring single answer's own
+        # length (M3 refinement, D54), so it needs the scores in hand first.
         scored = self.judge.score(question, answers)
-        merged = self.judge.merge(question, answers)
+        merged = self.judge.merge(question, answers, scored=scored)
 
         # Aggregate scores by OWNER (a user running >1 model sums their scores).
         score_by_owner: dict[str, float] = {}
