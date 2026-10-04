@@ -15,7 +15,12 @@ setup:
   copy_env: []
   ports: {}
 
-required_checks: [ci]
+# Real check-run names from ci.yml (a matrix job reports one run per version, e.g. `test (3.12)`).
+# `types` is continue-on-error (advisory), so it is not listed. The GitHub ruleset on the default
+# branch blocks only deletion and non-fast-forward (read via `gh api` 2026-10-05): these checks are
+# what the fleet waits for, not something GitHub enforces. ci.yml uses paths-ignore for `docs/**`
+# and `**.md`, so a docs-only PR gets no check runs at all.
+required_checks: [lint, "test (3.10)", "test (3.11)", "test (3.12)", "test (3.13)", "test (3.14)", frontend, core-install]
 merge: squash
 force_push: allowed
 serialized_ci: []

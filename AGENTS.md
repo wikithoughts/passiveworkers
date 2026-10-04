@@ -176,9 +176,10 @@ none is needed: the global hook already covers passiveworkers via its `pr-prefer
 entry in `billed_repos.json`.
 
 `force_push: allowed` in `.orchestration/lanes.yml` — unlike some fleet repos,
-force-pushing your own branch here is fine. Its `required_checks: [ci]` names no real
-check (CI jobs are `lint`, `types` (advisory), `test`, `frontend`, `core-install`) and
-the GitHub ruleset blocks only deletion and non-fast-forward, so read the CI results.
+force-pushing your own branch here is fine. Its `required_checks` lists the real CI
+check runs (`lint`, `test` per Python 3.10-3.14, `frontend`, `core-install`; `types` is
+advisory), but the ruleset blocks only deletion and non-fast-forward, so nothing
+enforces them: read the CI results (docs-only PRs skip CI).
 
 No repo-specific shipper skill exists for passiveworkers — use the fleet-wide `/ship`
 skill (branch → commit → PR → squash-merge, guarded-repo aware).
