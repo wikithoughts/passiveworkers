@@ -1,4 +1,4 @@
-<!-- fleet-template: v1 | reconciled-against: fleet-kit/templates/AGENT-CONTEXT-TEMPLATE.md @ 35354d0 2026-09-07 -->
+<!-- fleet-template: v1 | reconciled-against: fleet-kit/templates/AGENT-CONTEXT-TEMPLATE.md @ 08dbc79 2026-09-19 -->
 # Passive Workers — instructions for AI coding agents
 
 ## What this repo is
@@ -69,16 +69,17 @@ gate merges yet.
 ```bash
 pytest tests/ -q
 ```
-Full suite — ~5s, 400+ tests, fully offline. (AGENTS.md has said it plainly for a
-while: no excuse to skip it.)
+Full suite, fully offline; no excuse to skip it.
+
+**Verify (the lane)**
 
 ```bash
-pytest tests/ -q --cov=passiveworkers --cov-fail-under=75
+ruff check . && pytest tests/ -q --cov=passiveworkers --cov-fail-under=75
 ```
-Coverage-gated form. This is the exact string `.orchestration/lanes.yml`'s `verify:`
-runs, and what CI's `test` job enforces (75% floor project-wide, then again scoped to
-the four thinnest user-facing modules: `doctor`, `net.agent`, `operator`,
-`mcp_server`).
+This is the exact `verify:` string in `.orchestration/lanes.yml` (lint, then the
+coverage-gated suite). CI's `test` job enforces the same 75% floor on every Python
+version in the matrix, then again scoped to the four thinnest user-facing modules
+(`doctor`, `net.agent`, `operator`, `mcp_server`).
 
 **Verify (frontend guard — only if you touched anything served to a browser)**
 
@@ -94,7 +95,8 @@ Verification before done for the full check on this VPS.
 
 - `python -m py_compile $(git ls-files '*.py')`
 - `ruff check .`
-- `pytest tests/ -q` (full suite, ~5s, 400+ tests, fully offline — no excuse to skip it)
+- `pytest tests/ -q` (full suite, fully offline; add `--cov=passiveworkers
+  --cov-fail-under=75` for the CI/lane form above)
 - `bash scripts/check_app_js.sh && node scripts/fe_test.js` if you touched anything
   served to a browser (`passiveworkers/net/dashboard.py`, `passiveworkers/serve.py`'s HTML/JS).
 - This project's own culture (see `docs/ROADMAP.md`'s round log) runs an adversarial
@@ -167,14 +169,16 @@ Before treating old and current terms as different systems, read the
 ## Git & PR flow
 
 **Tier: `pr-preferred`.** Never push directly to `main` — branch, PR, squash-merge
-(`merge: squash`, `required_checks: [ci]` in `.orchestration/lanes.yml`). Enforced by
+(`merge: squash` in `.orchestration/lanes.yml`). Enforced by
 the **global** `git-safety-guard.py` hook — this repo's own `.claude/settings.json`
 carries only a `SessionStart` fetch hook, no repo-local block-main-commit hook, and
 none is needed: the global hook already covers passiveworkers via its `pr-preferred`
 entry in `billed_repos.json`.
 
 `force_push: allowed` in `.orchestration/lanes.yml` — unlike some fleet repos,
-force-pushing your own branch here is fine.
+force-pushing your own branch here is fine. Its `required_checks: [ci]` names no real
+check (CI jobs are `lint`, `types` (advisory), `test`, `frontend`, `core-install`) and
+the GitHub ruleset blocks only deletion and non-fast-forward, so read the CI results.
 
 No repo-specific shipper skill exists for passiveworkers — use the fleet-wide `/ship`
 skill (branch → commit → PR → squash-merge, guarded-repo aware).
