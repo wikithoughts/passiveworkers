@@ -240,3 +240,5 @@ This file follows the fleet-wide template
 this file and the template is caught automatically by `fleet-doctor.sh`, which runs as
 part of fleet-command's daily sweep — see that repo's `PORTFOLIO.md` and `SWEEP.md` for
 what gets reported and what (if anything) gets auto-dispatched.
+
+<!-- ci-probe: docs-only PR to prove ci-ok passes with skipped jobs; closed unmerged -->
