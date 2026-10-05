@@ -4,8 +4,9 @@ on:
   push:
     branches: [main]
     paths-ignore: ['docs/**', '**.md']
+  # No paths-ignore here: a required check must report on every PR. The `changes` job below
+  # skips the heavy jobs for docs-only PRs instead, and `ci-ok` (the required check) still passes.
   pull_request:
-    paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:   # allow manual re-runs
 
 concurrency:
@@ -16,7 +17,42 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Classifies the change. docs-only (every file under docs/ or ending .md, same set the push
+  # trigger ignores) -> code=false -> every job below is skipped. Push/dispatch runs and any
+  # doubt (diff error, empty diff) -> code=true, so we fail toward running CI.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          code=true
+          if [ "$EVENT" = pull_request ]; then
+            # --no-renames: a code file renamed into docs/ must still list its old path
+            if files=$(git diff --no-renames --name-only "$BASE_SHA...$HEAD_SHA") && [ -n "$files" ]; then
+              echo "changed files:"; echo "$files"
+              code=false
+              while IFS= read -r f; do
+                case "$f" in
+                  docs/*|*.md) ;;
+                  *) code=true; break ;;
+                esac
+              done <<< "$files"
+            fi
+          fi
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -28,6 +64,8 @@ jobs:
         run: ruff check .
 
   types:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # ADVISORY type-checking (R36): pyright `basic` on passiveworkers/net only. Non-blocking
     # (continue-on-error) — it surfaces type signal without gating merges; promote to a required
     # check once the scoped surface is clean and the include list has widened. See [tool.pyright].
@@ -43,6 +81,8 @@ jobs:
         run: pyright
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # exercise the whole 3.10–3.14 support matrix the classifiers advertise
     runs-on: ubuntu-latest
     strategy:
@@ -70,6 +110,8 @@ jobs:
         run: pytest tests/ -q --cov=passiveworkers.doctor --cov=passiveworkers.net.agent --cov=passiveworkers.operator --cov=passiveworkers.mcp_server --cov-report=term-missing --cov-fail-under=75
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # the served inline JS is Python-version-independent, so run the guards once
     runs-on: ubuntu-latest
     steps:
@@ -87,6 +129,8 @@ jobs:
         run: node scripts/fe_test.js
 
   core-install:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # verify the package installs and RUNS with NO optional extras. Graceful degradation when an
     # extra (trafilatura/pypdf/mcp/pynacl/geoip2) is absent is a headline design point that was
     # never CI-checked — every extra import must stay lazy/optional, or this job fails.
@@ -108,3 +152,22 @@ jobs:
           pworkers reports
       - name: Core-safe tests
         run: pytest tests/test_cli.py tests/test_export.py tests/test_sanitize.py tests/test_citations.py -q
+
+  # The single REQUIRED status check (GitHub ruleset). Always runs; fails if any job failed or was
+  # cancelled; skipped jobs (docs-only PR) are fine. Deliberately no `needs.*.result == success`:
+  # that would fail every docs-only PR.
+  ci-ok:
+    needs: [changes, lint, types, test, frontend, core-install]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any needed job failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+        run: |
+          echo "needed job results: $RESULTS"
+          [ "$CHANGES" = success ] || { echo "changes job did not succeed: $CHANGES"; exit 1; }
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) echo "a needed job failed or was cancelled"; exit 1 ;;
+          esac

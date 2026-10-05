@@ -176,10 +176,16 @@ none is needed: the global hook already covers passiveworkers via its `pr-prefer
 entry in `billed_repos.json`.
 
 `force_push: allowed` in `.orchestration/lanes.yml` — unlike some fleet repos,
-force-pushing your own branch here is fine. Its `required_checks` lists the real CI
-check runs (`lint`, `test` per Python 3.10-3.14, `frontend`, `core-install`; `types` is
-advisory), but the ruleset blocks only deletion and non-fast-forward, so nothing
-enforces them: read the CI results (docs-only PRs skip CI).
+force-pushing your own branch here is fine. Its `required_checks` is `[ci-ok]`: the
+aggregate job in `ci.yml` that needs `changes`, `lint`, `types`, `test` (Python 3.10-3.14),
+`frontend` and `core-install`, always runs, and fails if any needed job failed or was
+cancelled (skipped is fine; `types` is advisory). GitHub enforces `ci-ok` through a
+`required_status_checks` rule on the "fleet: protect default branch" ruleset (alongside
+deletion and non-fast-forward). `ci.yml` has no `paths-ignore` on `pull_request`: a
+`changes` job skips the heavy jobs for docs-only PRs (every file under `docs/` or `*.md`),
+so docs-only PRs still report a passing `ci-ok` and are never blocked. Do not add
+`paths-ignore` back to the `pull_request` trigger, and add any new CI job to `ci-ok`'s
+`needs` (and gate it on `changes`).
 
 No repo-specific shipper skill exists for passiveworkers — use the fleet-wide `/ship`
 skill (branch → commit → PR → squash-merge, guarded-repo aware).
