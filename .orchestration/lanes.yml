@@ -15,12 +15,12 @@ setup:
   copy_env: []
   ports: {}
 
-# Real check-run names from ci.yml (a matrix job reports one run per version, e.g. `test (3.12)`).
-# `types` is continue-on-error (advisory), so it is not listed. The GitHub ruleset on the default
-# branch blocks only deletion and non-fast-forward (read via `gh api` 2026-10-05): these checks are
-# what the fleet waits for, not something GitHub enforces. ci.yml uses paths-ignore for `docs/**`
-# and `**.md`, so a docs-only PR gets no check runs at all.
-required_checks: [lint, "test (3.10)", "test (3.11)", "test (3.12)", "test (3.13)", "test (3.14)", frontend, core-install]
+# `ci-ok` is the single required check: an aggregate job in ci.yml that needs every other job
+# (changes, lint, types, test matrix, frontend, core-install), always runs, and fails if any of them
+# failed or was cancelled. Docs-only PRs skip the heavy jobs (the `changes` job) and ci-ok still
+# passes, so nothing waits forever. GitHub enforces it via a required_status_checks rule on the
+# "fleet: protect default branch" ruleset (id 23950251). `types` is continue-on-error (advisory).
+required_checks: [ci-ok]
 merge: squash
 force_push: allowed
 serialized_ci: []
