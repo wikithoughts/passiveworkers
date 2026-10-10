@@ -26,6 +26,13 @@ from passiveworkers.net._store_base import _StoreProtocol, _clip, _hash, _now
 from passiveworkers.net.config import CONFIG
 
 
+def _is_reserved_handle(handle: str) -> bool:
+    """`__name__`-shaped handles are reserved for system ledger accounts (e.g. ledger.ESCROW_ID
+    "__escrow__"). Checked case/whitespace-insensitively so "__Escrow__ " can't slip through."""
+    key = handle.strip().casefold()
+    return len(key) >= 4 and key.startswith("__") and key.endswith("__")
+
+
 class _LedgerMixin(_StoreProtocol):
     # ------------------------------------------------------------------ ledger persistence
     def _load_ledger(self) -> Ledger:
@@ -129,12 +136,16 @@ class _LedgerMixin(_StoreProtocol):
         with it — so a single-use enrollment token is never burned without producing a node. Returns
         {"error": ...} (no node) if the token is invalid/exhausted."""
         with self.lock:
+            owner = _clip(body["owner"])
+            if _is_reserved_handle(owner):
+                # checked BEFORE any redeem → no token burn; a node must never earn into a system
+                # account such as the assisted escrow
+                return {"error": "owner name is reserved"}
             if enroll_token is not None:
                 red = self._redeem_enrollment_locked(enroll_token, enroll_kind)
                 if not red.get("ok"):
                     return {"error": red.get("error", "valid enrollment token required")}
                 grant_amount = red.get("grant")
-            owner = _clip(body["owner"])
             revert = self._open_account_reversible(owner, grant_amount)
             try:
                 node_id = str(uuid.uuid4())
@@ -201,8 +212,11 @@ class _LedgerMixin(_StoreProtocol):
         An invalid/absent token keeps signup OPEN with a 0 grant (D37) — it is not an error."""
         handle = _clip(handle).strip() or "anon"
         with self.lock:
-            if self.conn.execute("SELECT 1 FROM users WHERE handle=?", (handle,)).fetchone():
-                return {"error": "handle taken"}   # checked BEFORE any redeem → no token burn (D48)
+            # both checked BEFORE any redeem → no token burn (D48)
+            if _is_reserved_handle(handle):
+                return {"error": "handle is reserved"}
+            if self._handle_in_use_locked(handle):
+                return {"error": "handle taken"}
             if enroll_token is not None:
                 red = self._redeem_enrollment_locked(enroll_token, enroll_kind)
                 grant_amount = red.get("grant") if red.get("ok") else 0.0   # bad token → 0 grant, still open
@@ -218,6 +232,17 @@ class _LedgerMixin(_StoreProtocol):
                 self.conn.rollback()   # roll the redeem + user INSERT back…
                 revert()               # …and the in-memory ledger open_account (D48 review)
                 raise
+
+    def _handle_in_use_locked(self, handle: str) -> bool:
+        """A signup may not bind a secret to a name that already holds credit or an identity: an
+        existing user, OR a ledger account with no users row (a node owner's earnings, the escrow,
+        a legacy asker) — otherwise the new secret would spend that balance. Case- and
+        whitespace-insensitive, so "Op " can't shadow or impersonate "op". Caller holds self.lock."""
+        if self.conn.execute("SELECT 1 FROM users WHERE handle=? COLLATE NOCASE",
+                             (handle,)).fetchone():
+            return True
+        key = handle.strip().casefold()
+        return any(k.strip().casefold() == key for k in self.ledger.accounts)
 
     def user_for_secret(self, secret: str) -> Optional[str]:
         if not secret:
