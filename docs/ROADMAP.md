@@ -122,17 +122,25 @@ squash-merged together same-day:
   every analyst/judge/worker/batch/rerank call goes through) now dispatches to either Ollama's
   native API or an OpenAI-compatible `/v1/chat/completions` endpoint (`PW_INFERENCE_BACKEND=openai`
   + `PW_INFERENCE_API_BASE`), so a node can run against llama.cpp-server or LM Studio instead of
-  Ollama with zero changes to any caller. No new hard dependency.
+  Ollama with zero changes to any caller. No new hard dependency. **Done (shipped):** the
+  client now lives at `passiveworkers/ollama.py` (OpenAI-compatible `/v1/chat/completions`
+  path), and `passiveworkers/config.py:46-47` registers `PW_INFERENCE_BACKEND` /
+  `PW_INFERENCE_API_BASE` as known settings.
 - **Coverage gap closed** — `council/paths.py` (AGENTS.md names `write_private_json` explicitly
   as security-sensitive) had no dedicated test; `tests/test_paths.py` now covers the `0600`-write
   path, the `"default"`-sentinel-exclusion bug `coordinator_entries()` exists to prevent, and both
   path-resolution functions' env-var overrides.
-- **Found, not fixed this round**: a genuine pre-existing CI issue on `main` — the `types`
+- **Found this round, fixed right after (done)**: a genuine pre-existing CI issue on `main` — the `types`
   (pyright) job and several test-matrix legs (`test (3.10)`–`test (3.14)`) are failing
   independently of any of this round's changes (confirmed on `main`'s last two pushes, before
   this round started); and a flaky test (`tests/test_credit_invite.py::test_invite_then_ask_with_enroll_token_gets_starter_grant`)
   whose randomly-generated enroll token occasionally starts with `-`, which argparse then
-  misparses as a flag. Both need their own follow-up, not folded into this docs/backlog batch.
+  misparses as a flag. Both were kept out of this docs/backlog batch and fixed by `c17c3c8`
+  (#16, 2026-08-31): it resolved the pyright errors in `council/net/agent.py` /
+  `council/net/store.py` and switched minted tokens from `token_urlsafe(24)` to
+  `token_hex(24)` (never starts with `-`; now `passiveworkers/net/_store_ledger.py`), with a
+  regression test in `tests/test_enrollment.py`. `types` and all five `test` legs have been
+  green on every `main` CI run since (latest checked: run 37290549911, `1294e298`, 2026-10-05).
 - **Explicitly deferred, same as before**: R30 (currency i18n), R34 (two-identities merge, still
   gated on assisted-task volume), R35 (Windows CI vs. classifier), R36 (`council`/`pw` package-name
   collision — a pre-1.0 decision), R37 (store.py extraction, still gated on a second contributor).
