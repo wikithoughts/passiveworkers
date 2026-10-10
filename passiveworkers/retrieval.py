@@ -18,13 +18,48 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter
 
-_TOKEN = re.compile(r"[a-z0-9]+")
+_TOKEN = re.compile(r"[^\W_]+")   # runs of Unicode letters/digits (Arabic, accented Latin, CJK…)
+# Han + kana are written without spaces, so a whole run would be one unmatchable "word": index them
+# as overlapping character bigrams instead (the standard CJK analyzer approach).
+_CJK_RUN = re.compile(r"([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+)")
+_KEEP_MARKS = frozenset("\u3099\u309a")   # kana voicing marks: が must not fold into か
+_TATWEEL = "\u0640"                        # Arabic elongation filler, not a letter
+
+
+def _fold(text: str) -> str:
+    """Casefold + compatibility-decompose, then drop combining marks (accents, Arabic harakat,
+    Hebrew niqqud) so 'café'/'cafe' and diacritized/undiacritized Arabic match; NFC recomposes."""
+    text = unicodedata.normalize("NFKD", text.casefold()).replace(_TATWEEL, "")
+    text = "".join(c for c in text
+                   if c in _KEEP_MARKS or not unicodedata.category(c).startswith("M"))
+    return unicodedata.normalize("NFC", text)
 
 
 def tokenize(text: str) -> list[str]:
-    return _TOKEN.findall((text or "").lower())
+    """Lexical tokens for BM25 and the fidelity scorer. ASCII text takes the old fast path
+    (lowercase [a-z0-9] runs); anything else is Unicode-folded first, so Arabic, accented and CJK
+    text is indexed instead of silently dropped (review F10)."""
+    text = text or ""
+    if text.isascii():
+        return _TOKEN.findall(text.lower())
+    out: list[str] = []
+    for tok in _TOKEN.findall(_fold(text)):
+        if not _CJK_RUN.search(tok):
+            out.append(tok)
+            continue
+        for part in _CJK_RUN.split(tok):
+            if not part:
+                continue
+            if not _CJK_RUN.fullmatch(part):
+                out.append(part)
+            elif len(part) == 1:
+                out.append(part)
+            else:
+                out.extend(part[i:i + 2] for i in range(len(part) - 1))
+    return out
 
 
 class BM25Okapi:
