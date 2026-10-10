@@ -21,7 +21,7 @@ jobs:
   # trigger ignores) -> code=false -> every job below is skipped. Push/dispatch runs and any
   # doubt (diff error, empty diff) -> code=true, so we fail toward running CI.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
@@ -53,7 +53,7 @@ jobs:
   lint:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -69,7 +69,7 @@ jobs:
     # ADVISORY type-checking (R36): pyright `basic` on passiveworkers/net only. Non-blocking
     # (continue-on-error) — it surfaces type signal without gating merges; promote to a required
     # check once the scoped surface is clean and the include list has widened. See [tool.pyright].
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -84,7 +84,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     # exercise the whole 3.10–3.14 support matrix the classifiers advertise
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +113,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     # the served inline JS is Python-version-independent, so run the guards once
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -134,7 +134,7 @@ jobs:
     # verify the package installs and RUNS with NO optional extras. Graceful degradation when an
     # extra (trafilatura/pypdf/mcp/pynacl/geoip2) is absent is a headline design point that was
     # never CI-checked — every extra import must stay lazy/optional, or this job fails.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -159,7 +159,7 @@ jobs:
   ci-ok:
     needs: [changes, lint, types, test, frontend, core-install]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Fail if any needed job failed or was cancelled
         env:
