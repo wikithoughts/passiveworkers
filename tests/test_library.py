@@ -203,3 +203,29 @@ def test_path_confinement_rejects_outside_roots(tmp_path, monkeypatch):
     inside = tmp_path / "ok.md"
     inside.write_text("hello " * 20)
     assert lib.add(str(inside)) >= 1
+
+
+def test_arabic_query_finds_arabic_document(tmp_path, monkeypatch):
+    # F10: BM25 used to tokenize Arabic to nothing, so an Arabic library was unsearchable lexically.
+    # The embedder below ranks the target document only 2nd of 3 (dense), so it can only come out
+    # on top if BM25 ranks it 1st — which needs Arabic tokens.
+    def embed(texts):
+        def v(t):
+            if "الطقس" in t:
+                return [1.0, 1.0]     # weather: least similar to the query
+            if "الذكاء" in t and "التعليم" in t:
+                return [1.0, 0.5]     # the target document: middle
+            if "الرياضة" in t:
+                return [1.0, 0.1]     # sports: most similar (dense alone would pick it)
+            return [1.0, 0.0]         # the query
+        return [v(t) for t in texts]
+    monkeypatch.setattr(L, "embed", embed)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    lib = L.Library(db_path=tmp_path / "lib.db")
+    (tmp_path / "weather.md").write_text("الطقس جميل اليوم في المدينة والسماء صافية. " * 5)
+    (tmp_path / "ai.md").write_text("الذكاء الاصطناعي يغير طريقة التعليم في المدارس. " * 5)
+    (tmp_path / "sports.md").write_text("الرياضة مفيدة للصحة وكرة القدم شعبية جدا. " * 5)
+    for f in ("weather.md", "ai.md", "sports.md"):
+        lib.add(str(tmp_path / f))
+    hits = lib.search("الذكاء الاصطناعي", k=1, window=False)
+    assert hits and hits[0]["title"] == "ai.md"
