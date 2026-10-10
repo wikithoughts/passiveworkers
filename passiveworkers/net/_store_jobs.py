@@ -366,6 +366,10 @@ class _JobsMixin(_StoreProtocol):
                              (job_id,)).fetchone():
             return
         job = self.conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        # a late answer must not resurrect a job the reaper already failed (deadline / no judge):
+        # flipping it to 'judging' would let it settle and charge after being reported failed.
+        if not job or job["status"] != "pending_answers":
+            return
         judges = self.online_nodes(judge_only=True)
         if not judges:
             self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
@@ -619,6 +623,11 @@ class _JobsMixin(_StoreProtocol):
                         continue   # refund failed → keep the offer open, retry next tick
                     self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
                                       (f"assisted offer expired ({int(deadline)}s)", job["job_id"]))
+                    # close the offer itself too: an 'open' task row outliving its refunded job
+                    # could still be listed, accepted and paid out of escrow (minted credit).
+                    self.conn.execute(
+                        "UPDATE tasks SET status='expired' WHERE job_id=? AND type='assisted' "
+                        "AND status IN ('open','claimed')", (job["job_id"],))
                     self._save_ledger()
             stuck = list(self.conn.execute(
                 "SELECT * FROM jobs WHERE status IN ('pending_answers','judging')"))
