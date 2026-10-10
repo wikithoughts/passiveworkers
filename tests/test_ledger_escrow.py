@@ -65,3 +65,21 @@ def test_conservation_flags_negative_escrow_even_when_sum_balances():
     led.accounts["bob"].balance += 50.0      # … with the minted 50 sitting in bob's account
     assert abs(led.total_credit() - 200.0) < 1e-9   # the sum alone still "balances"
     assert not led.conservation_ok()
+
+
+def test_restore_undoes_every_mutation_since_snapshot():
+    # the Store's rollback path: whatever moved in memory before a failed SQL commit goes back
+    led = _ledger()
+    led.hold("alice", 30.0)
+    bob = led.accounts["bob"]
+    snap = led.snapshot()
+    led.release("bob", 30.0)
+    led.open_account("carol", grant_amount=5.0)
+    led._job_count += 1
+    led.restore(snap)
+    assert led.balance(ESCROW_ID) == 30.0 and led.balance("bob") == 100.0
+    assert bob.lifetime_earned == 0.0 and led.accounts["bob"] is bob   # restored in place
+    assert "carol" not in led.accounts and led._granted_total == 200.0 and led._job_count == 0
+    assert led.conservation_ok()
+    led.restore(snap)                                                    # idempotent
+    assert led.balance(ESCROW_ID) == 30.0 and "carol" not in led.accounts
