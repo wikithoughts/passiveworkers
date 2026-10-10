@@ -1,5 +1,7 @@
 """Local document library: chunk → (mocked) embed → cosine retrieval, with isolation."""
 
+import pytest
+
 import passiveworkers.library as L
 
 
@@ -203,3 +205,113 @@ def test_path_confinement_rejects_outside_roots(tmp_path, monkeypatch):
     inside = tmp_path / "ok.md"
     inside.write_text("hello " * 20)
     assert lib.add(str(inside)) >= 1
+
+
+# --------------------------------------------------------- re-index safety + shared corpus cache (F20)
+def _lib(tmp_path, monkeypatch, embed=_fake_embed):
+    monkeypatch.setattr(L, "embed", embed)
+    monkeypatch.setattr(L, "_ROOTS", [tmp_path.resolve()])
+    L._CORPUS_CACHE.clear()
+    return L.Library(db_path=tmp_path / "lib.db")
+
+
+def test_failed_embed_on_reindex_keeps_the_old_chunks(tmp_path, monkeypatch):
+    lib = _lib(tmp_path, monkeypatch)
+    doc, other = tmp_path / "memo.md", tmp_path / "other.md"
+    doc.write_text("Project Polaris ships in Finland. " * 5)
+    other.write_text("The cat sat in the weather. " * 5)
+    assert lib._add_file(doc) >= 1
+    doc.write_text("Project Polaris CHANGED its budget. " * 5)
+
+    def boom(texts):
+        raise RuntimeError("embedder down")
+    monkeypatch.setattr(L, "embed", boom)
+    with pytest.raises(RuntimeError):
+        lib._add_file(doc)
+    monkeypatch.setattr(L, "embed", _fake_embed)
+    assert lib._add_file(other) >= 1        # the next file's commit used to make the DELETE stick
+    texts = [r["text"] for r in lib.conn.execute("SELECT text FROM chunks WHERE source=?",
+                                                 (str(doc),))]
+    assert texts and all("ships in Finland" in t for t in texts)
+    assert any(h["title"] == "memo.md" for h in lib.search("polaris", k=2, window=False))
+
+
+def _count_bm25_builds(monkeypatch):
+    import passiveworkers.retrieval as RT
+    builds = []
+
+    class Counting(RT.BM25Okapi):
+        def __init__(self, corpus, *a, **k):
+            builds.append(len(corpus))
+            super().__init__(corpus, *a, **k)
+    monkeypatch.setattr(RT, "BM25Okapi", Counting)
+    return builds
+
+
+def test_corpus_cache_is_shared_across_library_instances(tmp_path, monkeypatch):
+    lib = _lib(tmp_path, monkeypatch)
+    (tmp_path / "a.md").write_text("Project Polaris ships in Finland. " * 5)
+    lib.add(str(tmp_path / "a.md"))
+    builds = _count_bm25_builds(monkeypatch)
+    for _ in range(3):   # the researcher opens a fresh Library() per analyst call
+        assert L.Library(db_path=tmp_path / "lib.db").search("polaris", k=1)
+    assert len(builds) == 1
+
+
+def test_corpus_cache_invalidated_by_a_reindex_that_reuses_ids(tmp_path, monkeypatch):
+    lib = _lib(tmp_path, monkeypatch)
+    doc = tmp_path / "a.md"
+    doc.write_text("Project Polaris ships in Finland. " * 5)
+    lib.add(str(doc))
+    assert "Finland" in lib.search("polaris", k=1, window=False)[0]["text"]
+    # same chunk count → SQLite reuses the freed rowids, so count+max(id) alone can't see it
+    doc.write_text("Project Polaris moved to Norway. " * 5)
+    L.Library(db_path=tmp_path / "lib.db").add(str(doc))
+    assert "Norway" in lib.search("polaris", k=1, window=False)[0]["text"]
+
+
+def test_corpus_cache_sees_writes_from_another_connection(tmp_path, monkeypatch):
+    import os
+    import sqlite3
+    lib = _lib(tmp_path, monkeypatch)
+    (tmp_path / "a.md").write_text("Project Polaris ships in Finland. " * 5)
+    lib.add(str(tmp_path / "a.md"))
+    assert "Finland" in lib.search("polaris", k=1, window=False)[0]["text"]
+    db = tmp_path / "lib.db"
+    c = sqlite3.connect(str(db))        # e.g. `pworkers library add` in another process
+    c.execute("UPDATE chunks SET text=replace(text, 'Finland', 'Norway')")
+    c.commit()
+    c.close()
+    st = os.stat(db)                    # pin a distinct mtime (coarse FS clocks can repeat one)
+    os.utime(db, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert "Norway" in lib.search("polaris", k=1, window=False)[0]["text"]
+
+
+# --------------------------------------------------------- researcher retry trims local (minor)
+def test_researcher_retry_trims_local_sources_it_drafted_from(monkeypatch):
+    import passiveworkers.researcher as RW
+
+    class FakeLibrary:
+        def search(self, query, k=5):
+            return [{"title": f"doc{i}.md", "source": f"/d/doc{i}.md", "text": f"text {i}"}
+                    for i in range(6)]
+    monkeypatch.setattr(L, "Library", FakeLibrary)
+    seen = []
+
+    def draft(self, brief, evidence, local=None):
+        if not seen:
+            seen.append(None)
+            raise RuntimeError("model timed out")
+        seen.append(len(local or []))
+        return "finding [L1].", 3
+    monkeypatch.setattr(RW.ResearchWorker, "_plan_queries", lambda self, brief: ["q"])
+    monkeypatch.setattr(RW.ResearchWorker, "_refine_queries", lambda self, brief, ev: [])
+    monkeypatch.setattr(RW.ResearchWorker, "_draft", draft)
+    monkeypatch.setattr(RW.ResearchWorker, "_repair_draft", lambda self, brief, d, ev, loc: d)
+    for k in ("PW_RESEARCH_MAX_ROUNDS", "PW_RESEARCH_DEADLINE", "PW_RESEARCH_MAX_SOURCES"):
+        monkeypatch.delenv(k, raising=False)
+    w = RW.ResearchWorker(worker_id="m", model="m", depth="standard", scope="local")
+    out = w.research("a stable brief about basic chemistry facts")
+    assert seen == [None, 4]                                  # the retry drafted from 4 documents
+    assert len(out["research"]["local_sources"]) == 4         # …so only those 4 are listed (was 6)
+    assert "doc4.md" not in out["text"]
