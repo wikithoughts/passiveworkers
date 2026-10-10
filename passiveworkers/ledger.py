@@ -207,11 +207,21 @@ class Ledger:
         a.lifetime_spent = round(a.lifetime_spent + amount, 4)
         self._escrow().balance = round(self._escrow().balance + amount, 4)
 
+    def _check_escrow_covers(self, amount: float) -> None:
+        """Escrow may never go negative: it only ever holds credit moved in by hold(), so paying
+        out more than it holds would mint credit (and silently draw down OTHER askers' holds)."""
+        if self._escrow().balance + 1e-6 < amount:
+            raise InsufficientCredit(
+                f"escrow holds {self._escrow().balance:.1f} but {amount:.1f} was requested — "
+                "refusing to pay out credit that was never held")
+
     def release(self, to_id: str, amount: float) -> None:
-        """Pay an escrow hold out to the operator (on delivery)."""
-        amount = round(amount, 4)
-        self._escrow().balance = round(self._escrow().balance - amount, 4)
+        """Pay an escrow hold out to the operator (on delivery). ATOMIC: the payee account and the
+        escrow balance are both checked BEFORE anything moves, so a refusal mutates nothing."""
         o = self.accounts[to_id]
+        amount = round(amount, 4)
+        self._check_escrow_covers(amount)
+        self._escrow().balance = round(self._escrow().balance - amount, 4)
         o.balance = round(o.balance + amount, 4)
         o.lifetime_earned = round(o.lifetime_earned + amount, 4)
 
@@ -222,6 +232,7 @@ class Ledger:
         (R36 hardening; previously escrow was debited first, so a KeyError destroyed the held credit)."""
         a = self.accounts[asker_id]
         amount = round(amount, 4)
+        self._check_escrow_covers(amount)
         self._escrow().balance = round(self._escrow().balance - amount, 4)
         a.balance = round(a.balance + amount, 4)
         a.lifetime_spent = round(a.lifetime_spent - amount, 4)
@@ -231,7 +242,11 @@ class Ledger:
         return round(sum(a.balance for a in self.accounts.values()), 4)
 
     def conservation_ok(self) -> bool:
-        """Total credit in circulation must equal the sum of starter grants."""
+        """Total credit in circulation must equal the sum of starter grants, AND escrow must not be
+        negative — a negative escrow balances the sum while hiding credit minted from nothing."""
+        escrow = self.accounts.get(ESCROW_ID)
+        if escrow is not None and escrow.balance < -1e-6:
+            return False
         return abs(self.total_credit() - self._granted_total) < 1e-6
 
     def summary(self) -> str:

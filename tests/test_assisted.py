@@ -144,3 +144,89 @@ def test_capability_gate_hides_ineligible_offers(store):
     # operator with it sees the offer
     ok = store.assisted_offers({"profile": '{"models": ["qwen3:14b"]}', "answer_model": "", "owner": "b"})
     assert len(ok) == 1
+
+
+def _task_status(store, tid):
+    return store.conn.execute("SELECT status FROM tasks WHERE task_id=?", (tid,)).fetchone()[0]
+
+
+def test_reaped_open_offer_is_closed_and_cannot_be_paid(store, monkeypatch):
+    # F1 regression: the reaper refunded + failed an expired OPEN offer but left its task row
+    # 'open', so it stayed listed and a later accept + deliver paid the operator out of an escrow
+    # that was already refunded — minting 50 credits (escrow -50) while conservation_ok() said True.
+    import passiveworkers.net._store_jobs as sj
+    j = _offer(store, asker="alice")
+    tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
+    assert store.ledger.accounts["alice"].balance == 50.0       # 50 held in escrow
+    monkeypatch.setattr(sj, "_now", lambda: 10**12)             # reaper sees the offer as expired
+    store._reap_once()
+    assert store.job_status(j["job_id"]) == "failed"
+    assert _task_status(store, tid) == "expired"                 # the offer itself is closed
+    assert store.ledger.accounts["alice"].balance == 100.0      # refunded
+    assert store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"}) == []
+    out = store.accept_assisted(tid, "bobnode", "bob")
+    assert not out["ok"]
+    assert store.job_status(j["job_id"]) == "failed"            # NOT flipped back to 'assisting'
+    assert not store.deliver_assisted(tid, "bobnode", "done")["ok"]
+    assert store.ledger.accounts.get("bob") is None or store.ledger.accounts["bob"].balance == 100.0
+    assert store.ledger._escrow().balance == 0.0
+    assert store.ledger.conservation_ok()
+
+
+def test_reopened_task_row_still_cannot_be_accepted_once_job_failed(store, monkeypatch):
+    # defense in depth: even if a task row were left 'open' (e.g. a DB written by an older
+    # coordinator before this fix), accept must check the JOB is still pending_assist.
+    import passiveworkers.net._store_jobs as sj
+    j = _offer(store, asker="alice")
+    tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
+    monkeypatch.setattr(sj, "_now", lambda: 10**12)
+    store._reap_once()
+    store.conn.execute("UPDATE tasks SET status='open' WHERE task_id=?", (tid,))   # legacy state
+    store.conn.commit()
+    assert store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"}) == []
+    assert not store.accept_assisted(tid, "bobnode", "bob")["ok"]
+    assert store.job_status(j["job_id"]) == "failed"
+    assert store.ledger._escrow().balance == 0.0 and store.ledger.conservation_ok()
+
+
+def test_offer_past_deadline_is_unlisted_and_unacceptable_before_reap(store, monkeypatch):
+    # between the deadline passing and the next reaper tick, the offer must already be dead:
+    # not listed, not acceptable (the reaper is about to refund its hold).
+    import passiveworkers.net._store_assisted as sa
+    j = _offer(store, asker="alice")
+    tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
+    monkeypatch.setattr(sa, "_now", lambda: 10**12)
+    assert store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"}) == []
+    assert not store.accept_assisted(tid, "bobnode", "bob")["ok"]
+    assert store.job_status(j["job_id"]) == "pending_assist"
+    assert _task_status(store, tid) == "open"
+
+
+def test_reaped_claimed_offer_task_is_closed(store, monkeypatch):
+    import passiveworkers.net._store_jobs as sj
+    j = _offer(store, asker="alice")
+    tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
+    assert store.accept_assisted(tid, "bobnode", "bob")["ok"]
+    monkeypatch.setattr(sj, "_now", lambda: 10**12)
+    store._reap_once()
+    assert store.job_status(j["job_id"]) == "failed"
+    assert _task_status(store, tid) == "expired"
+    assert not store.deliver_assisted(tid, "bobnode", "late")["ok"]
+    assert store.ledger.conservation_ok()
+
+
+def test_deliver_refused_cleanly_when_escrow_cannot_cover(store, monkeypatch):
+    # if escrow somehow lacks the hold (ledger desync), delivery is refused — no 500, nothing moves.
+    import passiveworkers.ledger as led
+    import passiveworkers.net._store_assisted as sa
+    # the fixture reloads passiveworkers.ledger (new exception class); re-point the mixin's import
+    monkeypatch.setattr(sa, "InsufficientCredit", led.InsufficientCredit)
+    j = _offer(store, asker="alice")
+    tid = store.assisted_offers({"profile": "{}", "answer_model": "", "owner": "bob"})[0]["task_id"]
+    assert store.accept_assisted(tid, "bobnode", "bob")["ok"]
+    store.ledger._escrow().balance = 0.0                          # simulate a desynced escrow
+    out = store.deliver_assisted(tid, "bobnode", "done")
+    assert not out["ok"] and "settlement refused" in out["error"]
+    assert store.job_status(j["job_id"]) == "assisting"           # not marked done/paid
+    assert store.ledger.accounts["bob"].balance == 100.0          # starter only, nothing paid
+    assert store.ledger._escrow().balance == 0.0                  # never driven negative

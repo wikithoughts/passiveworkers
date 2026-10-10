@@ -135,13 +135,22 @@ class _AssistedMixin(_StoreProtocol):
             except Exception as exc:
                 print(f"[chain] link parent {job_id}↔child {child['job_id']} failed: {exc}", flush=True)
 
+    @staticmethod
+    def _assisted_expired(created: float) -> bool:
+        """Past the assisted deadline (same clock the reaper expires + refunds on)."""
+        return _now() - created > JOB_TYPES["assisted"]["deadline_s"]
+
     def assisted_offers(self, node: dict) -> list:
         """Open assisted offers this operator's node is eligible for (capability-matched).
         Returns the brief + BOUNDED context + price so the operator can give informed consent."""
         with self.lock:
             out = []
             for t in self.conn.execute(
-                    "SELECT * FROM tasks WHERE type='assisted' AND status='open' ORDER BY created"):
+                    "SELECT t.*, j.created AS job_created FROM tasks t JOIN jobs j ON j.job_id=t.job_id "
+                    "WHERE t.type='assisted' AND t.status='open' AND j.status='pending_assist' "
+                    "ORDER BY t.created"):
+                if self._assisted_expired(t["job_created"]):
+                    continue   # past its deadline — the reaper will close + refund it
                 payload = json.loads(t["payload"]) if t["payload"] else {}
                 req = payload.get("requires") or None
                 if not self._meets(node, req) or not self._meets_reputation(node["owner"], req):
@@ -170,8 +179,13 @@ class _AssistedMixin(_StoreProtocol):
                 # every assisted claim must bind to a non-empty operator identity — it's the
                 # handle an asker pins for out-of-band key trust (D25); an empty one has no anchor.
                 return {"ok": False, "error": "operator identity (owner) required to accept"}
-            job = self.conn.execute("SELECT asker FROM jobs WHERE job_id=?", (t["job_id"],)).fetchone()
-            if job and owner == job["asker"]:
+            job = self.conn.execute("SELECT asker, status, created FROM jobs WHERE job_id=?",
+                                    (t["job_id"],)).fetchone()
+            # the offer must still be live: its job not already failed/refunded by the reaper,
+            # and not past its deadline (accepting a lapsed offer would pay out a refunded hold).
+            if job is None or job["status"] != "pending_assist" or self._assisted_expired(job["created"]):
+                return {"ok": False, "error": "offer is no longer open (expired or withdrawn)"}
+            if owner == job["asker"]:
                 return {"ok": False, "error": "cannot accept your own assisted offer"}
             payload = json.loads(t["payload"]) if t["payload"] else {}
             req = payload.get("requires") or None
@@ -183,11 +197,17 @@ class _AssistedMixin(_StoreProtocol):
                 return {"ok": False, "error": "your node does not meet this offer's requirements"}
             if not self._meets_reputation(owner, req):
                 return {"ok": False, "error": "this offer requires a higher operator reputation"}
+            # conditional transitions: only an OPEN task / PENDING_ASSIST job can be claimed
+            claimed = self.conn.execute(
+                "UPDATE tasks SET status='claimed', node_id=?, owner=?, claimed_at=? "
+                "WHERE task_id=? AND status='open'", (node_id, owner, _now(), task_id)).rowcount
+            moved = self.conn.execute(
+                "UPDATE jobs SET status='assisting' WHERE job_id=? AND status='pending_assist'",
+                (t["job_id"],)).rowcount if claimed else 0
+            if not (claimed and moved):
+                self.conn.rollback()
+                return {"ok": False, "error": "offer is no longer open (expired or withdrawn)"}
             self.ledger.open_account(owner)   # operator must have an account to be paid
-            self.conn.execute(
-                "UPDATE tasks SET status='claimed', node_id=?, owner=?, claimed_at=? WHERE task_id=?",
-                (node_id, owner, _now(), task_id))
-            self.conn.execute("UPDATE jobs SET status='assisting' WHERE job_id=?", (t["job_id"],))
             self._save_ledger()
             self.conn.commit()
             return {"ok": True, "task_id": task_id, "job_id": t["job_id"],
@@ -226,7 +246,10 @@ class _AssistedMixin(_StoreProtocol):
             pool = job["pool"] or 0.0
             # release the escrow hold to the operator (asker was already debited at offer
             # creation, so this can't fail on asker balance and pays exactly once).
-            self.ledger.release(t["owner"], pool)
+            try:
+                self.ledger.release(t["owner"], pool)   # atomic: refuses (mutating nothing) if
+            except InsufficientCredit as exc:           # escrow can't cover it — never go negative
+                return {"ok": False, "error": f"settlement refused: {exc}"}
             acct = self.ledger.accounts.get(t["owner"])
             if acct:
                 acct.jobs_helped += 1
