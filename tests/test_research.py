@@ -1,5 +1,7 @@
 """Research backend: row-shaping, host curation, SSRF guard, engine routing — all mocked
 (no network in CI)."""
+import time
+
 import passiveworkers.research as R
 
 
@@ -43,11 +45,13 @@ def test_extract_main_falls_back_without_trafilatura(monkeypatch):
 
 # --------------------------------------------------------- SSRF redirect hardening (D34)
 class _Raw:
+    # a real stream: the body once, then EOF (fetch_extract reads in chunks until b"")
     def __init__(self, data):
         self._d = data
 
     def read(self, n=-1, decode_content=True):
-        return self._d
+        out, self._d = (self._d, b"") if n is None or n < 0 else (self._d[:n], self._d[n:])
+        return out
 
 
 class _Resp:
@@ -56,12 +60,13 @@ class _Resp:
         self.is_permanent_redirect = False
         self.headers = {"Location": location} if location else {}
         self.raw = _Raw(body)
+        self.closed = False
 
     def raise_for_status(self):
         pass
 
     def close(self):
-        pass
+        self.closed = True
 
 
 def test_guarded_get_blocks_redirect_to_internal(monkeypatch):
@@ -106,6 +111,159 @@ def test_fetch_extract_happy_path_through_guarded_get(monkeypatch):
     monkeypatch.setattr(requests, "get",
                         lambda url, **kw: _Resp(body=b"<html><body><p>Hello SSRF-safe</p></body></html>"))
     assert "Hello SSRF-safe" in R.fetch_extract("http://good.example/page")
+
+
+def test_guarded_get_closes_every_redirect_hop(monkeypatch):
+    import pytest
+    import requests
+    seen = []
+
+    def fake_get(url, **kw):
+        seen.append(_Resp(location="http://good.example/next"))
+        return seen[-1]
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    monkeypatch.setattr(requests, "get", fake_get)
+    with pytest.raises(ValueError):
+        R._guarded_get("http://good.example/start", timeout=5)
+    assert seen and all(r.closed for r in seen)
+
+
+# --------------------------------------------------------- linear HTML strip + fetch deadline (F7/F8)
+_HOSTILE_HTML = {
+    "unclosed_nav_openers": "<nav>" * 40_000 + "<p>body</p>",
+    "nested_nav": "<nav>" * 40_000 + "inner" + "</nav>" * 40_000 + "<p>body</p>",
+    "openers_without_gt": "<nav " * 40_000 + "body",
+    "lone_lt": "<" * 200_000 + "body",
+}
+
+
+def test_strip_html_is_linear_on_hostile_markup():
+    # The old `<(nav|…)[^>]*>.*?</\1>` regex rescanned to EOF from every unclosed opener:
+    # ~6.5 s at 20k `<nav>`, ~26 s at 40k (one 200 KB _FETCH_CAP page). Must stay well under 1 s.
+    for name, html in _HOSTILE_HTML.items():
+        t0 = time.monotonic()
+        out = R._strip_html(html)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.0, f"{name}: {elapsed:.2f}s"
+        assert "body" in out, name
+
+
+def test_strip_html_drops_junk_elements_and_keeps_text():
+    html = ("<p>keep</p><SCRIPT type='x'>evil()</script ><nav class=m>menu</nav>"
+            "<style>.a{}</style><svg><g/></svg><header>hdr</header><p>also</p>"
+            "<footer>ftr</footer><navigation>tail</navigation>")
+    assert R._strip_html(html) == "keep also tail"
+    # an unclosed junk opener only loses its tag (old behaviour), and later elements still strip
+    assert R._strip_html("<nav>a<script>x</script>b") == "a b"
+
+
+def test_fetch_extract_closes_response_on_every_path(monkeypatch):
+    import pytest
+    import requests
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    ok = _Resp(body=b"<html><body><p>fine</p></body></html>")
+    pdf = _Resp(body=b"%PDF")
+    pdf.headers = {"Content-Type": "application/pdf"}
+    bad = _Resp()
+
+    def boom():
+        raise requests.HTTPError("503")
+    bad.raise_for_status = boom
+    for resp, err in ((ok, None), (pdf, ValueError), (bad, requests.HTTPError)):
+        monkeypatch.setattr(requests, "get", lambda url, _r=resp, **kw: _r)
+        if err:
+            with pytest.raises(err):
+                R.fetch_extract("http://good.example/page")
+        else:
+            assert "fine" in R.fetch_extract("http://good.example/page")
+        assert resp.closed
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def monotonic(self):
+        return self.t
+
+
+def test_fetch_extract_deadline_stops_a_drip_fed_body(monkeypatch):
+    # every read returns one byte and "takes" 10 s — per-read timeouts never fire, the total must
+    import pytest
+    import requests
+    import types
+    clock = _Clock()
+    monkeypatch.setattr(R, "time", types.SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    reads = []
+
+    class _Drip:
+        def read1(self, n=-1, decode_content=True):
+            clock.t += 10
+            reads.append(n)
+            return b"x"
+    resp = _Resp()
+    resp.raw = _Drip()
+    monkeypatch.setattr(requests, "get", lambda url, **kw: resp)
+    with pytest.raises(TimeoutError):
+        R.fetch_extract("http://good.example/slow")
+    assert len(reads) <= R._FETCH_DEADLINE / 10 + 1 and resp.closed
+
+
+def test_guarded_get_deadline_spans_redirect_hops(monkeypatch):
+    import pytest
+    import requests
+    import types
+    clock = _Clock()
+    monkeypatch.setattr(R, "time", types.SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    timeouts, seen = [], []
+
+    def slow_redirect(url, timeout, **kw):
+        clock.t += 20
+        timeouts.append(timeout)
+        seen.append(_Resp(location="http://good.example/next"))
+        return seen[-1]
+    monkeypatch.setattr(requests, "get", slow_redirect)
+    with pytest.raises(TimeoutError):
+        R._guarded_get("http://good.example/a", timeout=15, deadline=clock.t + 30)
+    # hop 1 gets the full per-read timeout, hop 2 only the 10 s left, hop 3 never starts
+    assert timeouts == [15, 10] and all(r.closed for r in seen)
+
+
+def test_fetch_extract_deadline_against_a_real_drip_server(monkeypatch):
+    # loopback stub server: headers, then one byte every 50 ms forever. Proves the real
+    # requests/urllib3 read path honours the deadline (no external network).
+    import socket
+    import threading
+    import pytest
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n")
+            try:
+                while not stop.wait(0.05):
+                    conn.sendall(b"x")
+            except OSError:
+                pass
+    th = threading.Thread(target=serve, daemon=True)
+    th.start()
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    monkeypatch.setattr(R, "_FETCH_DEADLINE", 0.5)
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            R.fetch_extract(f"http://127.0.0.1:{srv.getsockname()[1]}/")
+        assert time.monotonic() - t0 < 3.0
+    finally:
+        stop.set()
+        th.join(2)
+        srv.close()
 
 
 # --------------------------------------------------------- keyed web backends (R33/D49)
