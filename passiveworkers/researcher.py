@@ -395,8 +395,11 @@ class ResearchWorker:
             draft, tokens = self._draft(brief, evidence, local)
         except Exception:
             try:
+                # trim IN PLACE, both lists: the source listing and the fidelity repair below read
+                # them, so an [L5+] the retry draft never saw must not stay listed/citable
                 evidence[:] = evidence[:7]
-                draft, tokens = self._draft(brief, evidence, local[:4] if local else None)
+                local[:] = local[:4]
+                draft, tokens = self._draft(brief, evidence, local or None)
             except Exception:
                 draft, tokens = (f"(This {self.country} node found the sources below but could "
                                  "not synthesize in time — titles and links are its findings.)", 0)

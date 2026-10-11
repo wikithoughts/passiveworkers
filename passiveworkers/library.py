@@ -40,6 +40,12 @@ _CONTEXTUAL = os.environ.get("PW_CONTEXTUAL_CHUNKS", "") not in ("", "0", "false
 _CTX_MODEL = os.environ.get("PW_CONTEXT_MODEL", "")   # small chat model for situating blurbs
 _RERANK = os.environ.get("PW_RERANK", "") not in ("", "0", "false")   # opt-in listwise rerank
 _SEARCH_WARNED = False       # print the "search unavailable" hint at most once per process
+# Built corpus (rows, normalized matrix, BM25) per library DB, shared by every Library instance in
+# the process: the researcher opens a fresh Library() per analyst call, so a per-instance cache
+# never hit and each analyst rebuilt the whole index (review F20). Keyed in _corpus(); writes made
+# through Library drop their entry, and the DB/WAL file stamps catch writes from other processes.
+_CORPUS_CACHE: dict = {}
+_CORPUS_CACHE_MAX = 8
 _TEXT_EXT = {".txt", ".md", ".markdown", ".rst", ".csv", ".log"}
 # Ingest guards (resource exhaustion): per-file size, file count, total bytes per add().
 _MAX_FILE_BYTES = int(os.environ.get("PW_MAX_FILE_MB", "30")) * 1_000_000
@@ -228,8 +234,7 @@ class Library:
         LIB_DIR.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
-        self._corpus_key = None
-        self._corpus_cache = None
+        self._db_path = os.path.abspath(str(db_path))
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS chunks("
             "id INTEGER PRIMARY KEY, source TEXT, title TEXT, ord INT, text TEXT, vec TEXT)")
@@ -317,14 +322,19 @@ class Library:
             ctx = (f"{title}. {blurb}".strip()) if blurb else title
             contexts.append(ctx)
             augmented.append(f"{ctx}\n{c}")
-        self.conn.execute("DELETE FROM chunks WHERE source=?", (src,))   # re-index = replace
+        # Embed FIRST: if it fails, the file's previous chunks stay indexed and searchable. The
+        # replace itself is one transaction (`with conn` commits or rolls back), so there is no
+        # window where the source has nothing indexed (review F20).
         vecs = embed(augmented)
-        self.conn.executemany(
-            "INSERT INTO chunks(source,title,ord,text,context,vec) VALUES(?,?,?,?,?,?)",
-            [(src, title, i, c, ctx, json.dumps(v))
-             for i, (c, ctx, v) in enumerate(zip(chunks, contexts, vecs))])
-        self.conn.execute("INSERT OR REPLACE INTO filemeta(source,fhash) VALUES(?,?)", (src, fhash))
-        self.conn.commit()
+        with self.conn:
+            self.conn.execute("DELETE FROM chunks WHERE source=?", (src,))   # re-index = replace
+            self.conn.executemany(
+                "INSERT INTO chunks(source,title,ord,text,context,vec) VALUES(?,?,?,?,?,?)",
+                [(src, title, i, c, ctx, json.dumps(v))
+                 for i, (c, ctx, v) in enumerate(zip(chunks, contexts, vecs))])
+            self.conn.execute("INSERT OR REPLACE INTO filemeta(source,fhash) VALUES(?,?)",
+                              (src, fhash))
+        self._invalidate_corpus()
         tag = " (contextual)" if ctx_model else ""
         print(f"  indexed {title}: {len(chunks)} chunks{tag}", flush=True)
         return len(chunks)
@@ -334,12 +344,14 @@ class Library:
         cur = self.conn.execute("DELETE FROM chunks WHERE source=?", (src,))
         self.conn.execute("DELETE FROM filemeta WHERE source=?", (src,))
         self.conn.commit()
+        self._invalidate_corpus()
         return cur.rowcount
 
     def clear(self) -> None:
         self.conn.execute("DELETE FROM chunks")
         self.conn.execute("DELETE FROM filemeta")
         self.conn.commit()
+        self._invalidate_corpus()
 
     def sources(self) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
@@ -348,16 +360,33 @@ class Library:
     def is_empty(self) -> bool:
         return self.conn.execute("SELECT 1 FROM chunks LIMIT 1").fetchone() is None
 
+    def _invalidate_corpus(self) -> None:
+        _CORPUS_CACHE.pop(self._db_path, None)
+
+    def _corpus_key(self) -> tuple:
+        """Cheap fingerprint: chunk count + max id, plus the DB and WAL files' (mtime_ns, size).
+        Count/max-id alone missed a re-index that reused the same ids (SQLite hands the freed top
+        rowids out again), and another process's writes never pass through _invalidate_corpus."""
+        stamps = []
+        for f in (self._db_path, self._db_path + "-wal"):
+            try:
+                st = os.stat(f)
+                stamps.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                stamps.append(None)
+        fp = self.conn.execute("SELECT COUNT(*), COALESCE(MAX(id),0) FROM chunks").fetchone()
+        return (fp[0], fp[1], *stamps)
+
     def _corpus(self):
-        """Load rows + build the normalized embedding matrix and BM25 index ONCE, cached on a
-        cheap fingerprint (chunk count + max id) so repeated searches (e.g. 3 analysts/run, or
-        the serve/MCP loop) don't rebuild the whole index each call."""
+        """Load rows + build the normalized embedding matrix and BM25 index ONCE per library DB,
+        cached at module level (see _CORPUS_CACHE) so repeated searches (e.g. 3 analysts/run, each
+        with its own Library(), or the serve/MCP loop) don't rebuild the whole index each call."""
         import numpy as np
         from passiveworkers.retrieval import BM25Okapi, tokenize
-        fp = self.conn.execute("SELECT COUNT(*), COALESCE(MAX(id),0) FROM chunks").fetchone()
-        key = (fp[0], fp[1])
-        if getattr(self, "_corpus_key", None) == key and self._corpus_cache is not None:
-            return self._corpus_cache
+        key = self._corpus_key()
+        hit = _CORPUS_CACHE.get(self._db_path)
+        if hit is not None and hit[0] == key:
+            return hit[1]
         rows = list(self.conn.execute("SELECT source,title,ord,text,context,vec FROM chunks"))
         if rows and any(r["context"] is None for r in rows) and any(r["context"] for r in rows):
             print("  note: library mixes pre/post-contextual rows — `pworkers library clear` then "
@@ -365,8 +394,11 @@ class Library:
         mat = np.asarray([json.loads(r["vec"]) for r in rows], dtype="float32")
         norm = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
         bm25 = BM25Okapi([tokenize((r["context"] or "") + " " + r["text"]) for r in rows])
-        self._corpus_key, self._corpus_cache = key, (rows, norm, bm25)
-        return self._corpus_cache
+        _CORPUS_CACHE.pop(self._db_path, None)
+        while len(_CORPUS_CACHE) >= _CORPUS_CACHE_MAX:   # a few DBs at most; drop the oldest
+            _CORPUS_CACHE.pop(next(iter(_CORPUS_CACHE)))
+        _CORPUS_CACHE[self._db_path] = (key, (rows, norm, bm25))
+        return _CORPUS_CACHE[self._db_path][1]
 
     def search(self, query: str, k: int = 5, window: bool = True) -> list[dict]:
         """Hybrid retrieval (R8/D20): dense cosine ⊕ BM25 lexical, fused by Reciprocal Rank

@@ -20,7 +20,9 @@ content-addressing here already gives integrity. Stdlib only.
 from __future__ import annotations
 
 import hashlib
+import os
 import pathlib
+import tempfile
 
 CHUNK_SIZE = 256 * 1024          # 256 KiB chunks
 MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MiB per deliverable file (v1 cap)
@@ -138,11 +140,17 @@ def reassemble(manifest: dict, fetch_chunk, out_dir: str, decrypt=None) -> pathl
     the file into out_dir only if everything checks out. fetch_chunk failures or any hash
     mismatch raise — a corrupted/swapped chunk never reaches disk. Path-safe: the manifest
     name is reduced to a basename inside out_dir. If the manifest is `encrypted`, `decrypt`
-    (bytes->bytes) is applied AFTER the ciphertext hash is verified."""
+    (bytes->bytes) is applied AFTER the ciphertext hash is verified.
+    Chunks stream into a hidden temp `.part` file beside the destination, capped as they arrive
+    at the manifest's declared size (and MAX_FILE_BYTES); only a complete, verified file is
+    renamed into place, so a failure leaves neither a partial file nor a clobbered earlier one."""
     if manifest.get("encrypted") and decrypt is None:
         raise ValueError("manifest is encrypted but no decrypt key provided")
     if not verify_manifest(manifest):
         raise ValueError("manifest root does not match its chunk list")
+    if manifest["size"] > MAX_FILE_BYTES:
+        raise ValueError(f"file too large ({manifest['size'] // 1_000_000} MB > "
+                         f"{MAX_FILE_BYTES // 1_000_000} MB)")
     out = pathlib.Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     name = pathlib.Path(str(manifest.get("name", ""))).name or "deliverable.bin"  # strip traversal
@@ -152,20 +160,26 @@ def reassemble(manifest: dict, fetch_chunk, out_dir: str, decrypt=None) -> pathl
         raise ValueError("unsafe output path")
     total = 0
     encrypted = bool(manifest.get("encrypted"))
-    with dest.open("wb") as f:
-        for h in manifest["chunks"]:
-            data = fetch_chunk(h)
-            if data is None or _h(data) != h:   # verify the (cipher)text against its address
-                raise ValueError(f"chunk {h[:12]}… missing or corrupted — aborting")
-            if encrypted:
-                try:
-                    data = decrypt(data)        # decrypt AFTER integrity check
-                except Exception:
-                    dest.unlink(missing_ok=True)
-                    raise ValueError("decryption failed (wrong key or tampered chunk)")
-            f.write(data)
-            total += len(data)
-    if manifest.get("size") is not None and total != manifest["size"]:
-        dest.unlink(missing_ok=True)
-        raise ValueError("reassembled size mismatch")
+    fd, tmp = tempfile.mkstemp(dir=out, prefix=f".{name}.", suffix=".part")
+    part = pathlib.Path(tmp)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            for h in manifest["chunks"]:
+                data = fetch_chunk(h)
+                if data is None or _h(data) != h:   # verify the (cipher)text against its address
+                    raise ValueError(f"chunk {h[:12]}… missing or corrupted — aborting")
+                if encrypted:
+                    try:
+                        data = decrypt(data)        # decrypt AFTER integrity check
+                    except Exception:
+                        raise ValueError("decryption failed (wrong key or tampered chunk)") from None
+                total += len(data)
+                if total > manifest["size"]:        # running cap: never write past the declared size
+                    raise ValueError("reassembled size mismatch")
+                f.write(data)
+        if total != manifest["size"]:
+            raise ValueError("reassembled size mismatch")
+        os.replace(part, dest)
+    finally:
+        part.unlink(missing_ok=True)   # no-op after a successful replace
     return dest

@@ -98,3 +98,58 @@ def test_empty_file_manifest_valid():
 def test_manifest_rejects_bad_hashes_and_size():
     assert not A.verify_manifest({"name": "x", "size": 5, "chunks": ["nothex"], "root": "r"})
     assert not A.verify_manifest({"name": "x", "size": -1, "chunks": [], "root": "r"})
+
+
+# --------------------------------------------------------- .part + running cap (review F19)
+def _three_chunk_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(A, "CHUNK_SIZE", 4)
+    src = tmp_path / "deliv.txt"
+    src.write_bytes(b"aaaabbbbcccc")
+    return A.chunk_file(str(src))
+
+
+def test_corrupt_chunk_leaves_no_partial_file(tmp_path, monkeypatch):
+    man, blobs = _three_chunk_file(tmp_path, monkeypatch)
+    bad = dict(blobs)
+    bad[man["chunks"][2]] = b"XXXX"                       # last chunk corrupted
+    out = tmp_path / "o"
+    with pytest.raises(ValueError):
+        A.reassemble(man, lambda h: bad.get(h), str(out))
+    assert list(out.iterdir()) == []                     # no deliv.txt, no leftover .part
+
+
+def test_failed_reassembly_keeps_an_existing_file(tmp_path, monkeypatch):
+    man, blobs = _three_chunk_file(tmp_path, monkeypatch)
+    out = tmp_path / "o"
+    out.mkdir()
+    (out / "deliv.txt").write_bytes(b"earlier good copy")
+    with pytest.raises(ValueError):
+        A.reassemble(man, lambda h: None if h == man["chunks"][1] else blobs.get(h), str(out))
+    assert (out / "deliv.txt").read_bytes() == b"earlier good copy"
+    assert [p.name for p in out.iterdir()] == ["deliv.txt"]
+    # and a good reassembly then replaces it atomically
+    assert A.reassemble(man, lambda h: blobs.get(h), str(out)).read_bytes() == b"aaaabbbbcccc"
+    assert [p.name for p in out.iterdir()] == ["deliv.txt"]
+
+
+def test_running_cap_stops_at_declared_size(tmp_path, monkeypatch):
+    man, blobs = _three_chunk_file(tmp_path, monkeypatch)
+    man = dict(man, size=5)                               # lies: 12 bytes of chunks
+    fetched = []
+
+    def fetch(h):
+        fetched.append(h)
+        return blobs.get(h)
+    with pytest.raises(ValueError):
+        A.reassemble(man, fetch, str(tmp_path / "o"))
+    assert len(fetched) == 2                              # aborted once past 5 bytes, not after all 3
+    assert list((tmp_path / "o").iterdir()) == []
+
+
+def test_declared_size_over_cap_rejected_before_fetching(tmp_path, monkeypatch):
+    man, blobs = _three_chunk_file(tmp_path, monkeypatch)
+    monkeypatch.setattr(A, "MAX_FILE_BYTES", 8)
+    fetched = []
+    with pytest.raises(ValueError):
+        A.reassemble(man, lambda h: fetched.append(h) or blobs.get(h), str(tmp_path / "o"))
+    assert fetched == []
