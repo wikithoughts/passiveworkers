@@ -39,6 +39,35 @@ def test_sweep_drops_idle_keys_on_overflow():
     rl = RateLimiter(max_keys=3)
     for i in range(5):
         rl.allow(f"old{i}", 5, 60, now=0)               # 5 keys, all hit at t=0 → over capacity
-    assert len(rl._hits) == 5
+    # the first overflow (old3) swept and evicted the LRU key back to the cap; old4 arrived inside
+    # the same throttle interval, so no second sweep yet (F16)
+    assert len(rl._hits) == 4 and "old0" not in rl._hits
     rl.allow("new", 5, 60, now=10_000)                  # far future → triggers sweep of idle keys
     assert set(rl._hits) == {"new"}                     # idle 'old*' keys swept; only 'new' remains
+
+
+def test_sweep_is_throttled_while_over_capacity():
+    """F16: once over max_keys, the O(n) sweep used to run on EVERY allow(); now at most once per
+    _SWEEP_EVERY_S, however many calls arrive in between."""
+    from passiveworkers.net import ratelimit as RL
+    rl = RateLimiter(max_keys=10)
+    sweeps = []
+    real = rl._sweep
+    rl._sweep = lambda now: (sweeps.append(now), real(now))
+    for i in range(1000):                               # key rotation: every call is a fresh key
+        rl.allow(f"k{i}", 5, 60, now=100 + i * 0.001)   # 1000 calls inside one second
+    assert len(sweeps) == 1
+    rl.allow("later", 5, 60, now=100 + RL._SWEEP_EVERY_S + 1)
+    assert len(sweeps) == 2                             # the throttle re-opens after the interval
+
+
+def test_sweep_evicts_oldest_keys_when_none_are_idle():
+    """F16: rotating keys keep every entry fresh, so the idle-horizon sweep alone never shrank the
+    table. A sweep now evicts the least-recently-hit keys down to max_keys."""
+    rl = RateLimiter(max_keys=3)
+    for i in range(3):
+        rl.allow(f"k{i}", 5, 60, now=i)
+    rl.allow("k0", 5, 60, now=3)                        # k0 is now the MOST recently hit
+    rl.allow("k3", 5, 60, now=4)                        # over the cap → sweep, nothing idle
+    assert set(rl._hits) == {"k0", "k2", "k3"}          # k1 (least recently hit) evicted
+    assert rl.allow("k0", 2, 60, now=5) is False        # survivors keep their windows (k0 has 2 hits)
