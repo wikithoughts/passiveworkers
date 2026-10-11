@@ -5,7 +5,8 @@ passiveworkers/sanitize.py — the untrusted-content gate (D16)
 Everything fetched from the live web is UNTRUSTED DATA. Before any model sees it:
 
   1. strip invisible-text vectors (zero-width Unicode, soft hyphens, HTML comments,
-     bidi controls) used to hide prompt-injection payloads from humans;
+     bidi controls, TAG characters, variation selectors) used to hide prompt-injection
+     payloads from humans;
   2. wrap it in spotlighting delimiters with an explicit data-not-instructions notice,
      so every prompt that includes web content marks its provenance.
 
@@ -24,7 +25,11 @@ _INVISIBLE = re.compile(
     "[​‌‍‎‏"        # zero-width space/joiners, LRM/RLM
     "⁠⁡⁢⁣⁤"         # word-joiner + invisible operators
     "­﻿؜"                      # soft hyphen, BOM/ZWNBSP, Arabic letter mark
-    "‪-‮⁦-⁩]"             # bidi embedding/overrides/isolates
+    "‪-‮⁦-⁩"              # bidi embedding/overrides/isolates
+    "\u2065\u206a-\u206f"                  # unassigned slot + deprecated format controls
+    "\u180e\ufff9-\ufffb"                  # Mongolian vowel separator, interlinear annotation
+    "\ufe00-\ufe0f\U000e0100-\U000e01ef"   # variation selectors (+ supplement)
+    "\U000e0000-\U000e007f]"                # TAG block: invisible ASCII-smuggling carrier
 )
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
