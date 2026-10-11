@@ -145,6 +145,7 @@ def _guarded_get(url: str, timeout: float, deadline: float | None = None):
 
 
 def _clean(results: list[dict]) -> str:
+    from passiveworkers.sanitize import clean
     out, seen = [], set()
     for r in results:
         url = (r.get("href") or r.get("url") or "").strip()
@@ -152,8 +153,9 @@ def _clean(results: list[dict]) -> str:
         if not host or host in seen or not _host_is_public(host) or not _is_quality_host(host):
             continue
         seen.add(host)
-        title = (r.get("title") or "").strip()
-        body = (r.get("body") or r.get("content") or "").strip()[:400]
+        # One line each, like search_structured: a newline could forge a "[S9] ..." source line.
+        title = " ".join(clean(r.get("title") or "").split())
+        body = " ".join(clean(r.get("body") or r.get("content") or "").split())[:400]
         out.append(f"- {title} ({host})\n  {body}\n  source: {url}")
         if len(out) >= _MAX_RESULTS:
             break

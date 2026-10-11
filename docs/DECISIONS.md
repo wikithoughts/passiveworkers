@@ -1607,3 +1607,45 @@ question-relative, which is what the M3 finding actually called for ("target ≈
 `passiveworkers/coordinator.py`'s `Council.run()`, which already computes `scored` before merging.
 Covered by `tests/test_merge_length.py` (target-selection, shorter-than-target, longer-but-under-cap,
 and hard-cap-still-holds cases, plus direct unit coverage of the truncation helper).
+
+## D55 — The sanitizer keeps four invisible characters only where legitimate text needs them (W6, 2026-10-11)
+**Context:** PR #37 widened `passiveworkers/sanitize.py`'s strip set (TAG characters, variation
+selectors). An independent review then found the gate was no longer meaning-preserving. ZWJ emoji
+sequences fell apart into separate emoji. U+FE0F was dropped, so emoji and keycaps lost their
+presentation. The England/Scotland/Wales flags became a plain black flag. Persian ZWNJ (U+200C, as
+in «می‌خواهم») was removed, which changes the spelling. ZWJ and ZWNJ had always been stripped, so
+keeping them anywhere narrows the gate, and AGENTS.md requires a recorded decision for that.
+
+**Decision:** a single regex pass. It tries a small keep-list before the strip class, and each kept
+form is allowed in exactly one context:
+- **ZWJ (U+200D):** kept only when the character before it is an emoji (optionally followed by
+  U+FE0F) and the character after it is an emoji. Never kept between ASCII or other letters, so it
+  cannot split or forge a delimiter or a `[S#]` marker.
+- **U+FE0F:** kept only directly after an emoji base, or in a keycap (`[0-9#*]` + U+FE0F + U+20E3).
+- **ZWNJ (U+200C):** kept only between two Arabic-script letters (tatweel counts as a letter, and
+  up to two Arabic combining marks may follow the first letter). ZWNJ in other scripts, such as
+  Devanagari or Hebrew, is still stripped. That is a known limitation, not an oversight.
+- **TAG characters:** kept only as one of the three RGI subdivision flags: U+1F3F4 followed by
+  `gbeng`, `gbsct` or `gbwls` in tags, then U+E007F. Every other tag run is stripped, including a
+  syntactically well-formed one. A free-form tag_spec would let a few ASCII letters per black flag
+  through, and that is the smuggling carrier this gate exists to remove.
+
+The same change also strips more invisible characters: U+034F, U+115F/U+1160/U+3164/U+FFA0 (Hangul
+fillers), U+17B4/U+17B5, U+2800, U+FFFC, U+1D173–U+1D17A, and the unassigned rest of
+U+E0000–U+E0FFF. Invisible characters are now stripped *before* HTML comments are removed, so a
+hidden character inside the opener (`<!-`, U+200B, `-`) can no longer stop the comment from being
+removed (that gap predates this change).
+
+**Why this is still safe:** each kept form is one fixed code point (or one of three fixed sequences)
+in a fixed context next to visible text. A run of emoji or Arabic letters can therefore still hide
+about one bit per position (join or no join). That is a low-bandwidth channel a model will not read
+back as text. It is not the ASCII payload TAG characters can carry. The emoji and Arabic-letter
+classes are explicit code-point ranges (Python `re` has no Unicode properties), so they are
+approximate. A character they miss loses its joiner (over-stripping). Where the emoji class is
+broader than true emoji (it takes the whole U+2600–U+27BF block), a joiner between two such symbols
+is kept. That only adds to the same one-bit channel.
+
+**Status:** Settled. `passiveworkers/sanitize.py` (`_KEEP`, `_strip`), used by `clean`,
+`strip_invisible` and `sanitize_brief`. Covered by `tests/test_sanitize.py`: ZWJ family, VS16
+emoji and keycap, England flag and Persian ZWNJ are preserved; a non-RGI tag payload, ZWJ between
+letters or inside a delimiter, and ZWNJ outside Arabic script are stripped.
