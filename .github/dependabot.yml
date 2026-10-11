@@ -1,0 +1,21 @@
+# Version updates (security updates are already enabled in the repo settings).
+# Weekly, one grouped PR per ecosystem so the review load stays small.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"   # pyproject.toml (requirements.txt is a convenience mirror of it)
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"   # .github/workflows/
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]

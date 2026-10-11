@@ -9,6 +9,11 @@ on:
   pull_request:
   workflow_dispatch:   # allow manual re-runs
 
+# Read-only token for every job: CI only checks out and runs checks, it never writes to the repo.
+# If a future job needs more, grant it at job level, not here.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   # Never cancel a main run: it's the merge commit's actual verification, and a squash-merge
