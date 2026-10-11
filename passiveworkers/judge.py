@@ -28,6 +28,21 @@ from passiveworkers import ollama as _ollama
 from passiveworkers.sanitize import spotlight, strip_invisible
 
 
+# Markdown/HTML characters that could open a link, emphasis, heading, table cell or tag. A node
+# label never needs them, so they are dropped rather than escaped (the report renderers in
+# serve.py and net/app.py don't honour backslash escapes).
+_LABEL_DROP = re.compile(r"[`*\[\]<>#|~\\]")
+
+
+def _report_label(value, cap: int = 60) -> str:
+    """A node-supplied `country`/`model` made safe for the final report: invisibles stripped, one
+    line, markdown control characters dropped, "://" broken so no renderer turns it into a link,
+    and capped. These come from untrusted payloads; a newline would forge a heading or a
+    "[S9]" line in the report the user reads (and any model that reads the report later)."""
+    text = " ".join(_LABEL_DROP.sub("", strip_invisible(str(value or ""))).split())
+    return text.replace("://", ": //")[:cap].strip()
+
+
 def _data_block(label: str, text: str) -> str:
     """A labelled block of analyst/node output for a judge or editor prompt. Drafts are built from
     fetched pages (and may echo a smuggled directive), so each one is spotlighted: delimited and
@@ -416,10 +431,10 @@ class Judge:
         agreements = strip_invisible(str(parsed.get("agreements", "")).strip())
         differences = strip_invisible(str(parsed.get("differences", "")).strip())
 
-        countries = sorted({c.get("country", "?") for c in contributions})
+        countries = sorted({_report_label(c.get("country"), 40) or "?" for c in contributions})
         if local:
             byline = (f"_Researched independently by {len(contributions)} local model(s) "
-                      f"({', '.join(c.get('model', '?') for c in contributions)}) on this "
+                      f"({', '.join(_report_label(c.get('model')) or '?' for c in contributions)}) on this "
                       "computer, live web, compiled by a blind editor._")
         else:
             byline = (f"_Researched independently by {len(contributions)} computer(s) in "
@@ -441,7 +456,8 @@ class Judge:
                                    for d in dis if d.get("point")))
         parts.append("## Findings by analyst" if local else "## Findings by country")
         for c in contributions:
-            head = c.get("model", "") if local else f"{c.get('country', '?')} — {c.get('model', '')}"
+            model = _report_label(c.get("model"))
+            head = model if local else f"{_report_label(c.get('country'), 40) or '?'} — {model}"
             parts.append(f"### {head}")
             # contribution text is model output that may echo an injected source → strip hidden
             # chars but KEEP markdown layout/citations (don't collapse indentation)

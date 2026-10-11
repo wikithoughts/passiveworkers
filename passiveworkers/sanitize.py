@@ -38,8 +38,9 @@ _INVISIBLE_CLASS = (
 
 # A few of those characters carry real meaning in legitimate text, so they survive in exactly the
 # contexts where they do — and nowhere else. Each kept form is one fixed code point (or one of three
-# fixed sequences) next to a visible emoji or letter: at most one "present / absent" bit per position,
-# never a payload a model could read back as text (unlike TAG-encoded ASCII).
+# fixed sequences) next to a visible emoji or letter, never a payload a model could read back as text
+# (unlike TAG-encoded ASCII). Presence/absence is still a hidden channel (ZWJ and VS16 are independent
+# in an emoji gap: 2 bits), so a run keeps at most _MAX_KEPT_PER_RUN of them (D55).
 _EMOJI = ("\u00a9\u00ae\u203c\u2049\u2122\u2139\u2194-\u2199\u21a9\u21aa\u231a\u231b\u2328\u23cf"
           "\u23e9-\u23f3\u23f8-\u23fa\u24c2\u25aa\u25ab\u25b6\u25c0\u25fb-\u25fe\u2600-\u27bf"
           "\u2934\u2935\u2b05-\u2b07\u2b1b\u2b1c\u2b50\u2b55\u3030\u303d\u3297\u3299"
@@ -63,10 +64,29 @@ _KEEP = (
     f"\u200c(?=[{_ARABIC_LETTER}])"                                      # ZWNJ between Arabic letters
 )
 _INVISIBLE = re.compile(f"(?P<keep>{_KEEP})|{_INVISIBLE_CLASS}")
+# A "run" is an unbroken stretch of emoji, Arabic letters/marks and keycap parts (stripped invisibles
+# don't break it, or a ZWSP would reset the count). The longest real sequences (kiss, family with
+# VS16) keep 4, so 8 covers two of them back to back; kept forms past the cap are stripped (a longer
+# unspaced row of joined emoji splits into separate emoji: accepted over-stripping, D55).
+_MAX_KEPT_PER_RUN = 8
+_RUN_GAP = re.compile(f"(?:[{_EMOJI}{_ARABIC_LETTER}{_ARABIC_MARK}0-9#*\u20e3]|{_INVISIBLE_CLASS})*")
 
 
 def _strip(text: str) -> str:
-    return _INVISIBLE.sub(lambda m: m.group("keep") or "", text)
+    kept, run_end = 0, -1
+
+    def repl(m: re.Match) -> str:
+        nonlocal kept, run_end
+        keep = m.group("keep")
+        if not keep:
+            return ""
+        if run_end < 0 or not _RUN_GAP.fullmatch(text, run_end, m.start()):
+            kept = 0                     # something visible and unjoinable since the last kept form
+        run_end = m.end()
+        kept += 1
+        return keep if kept <= _MAX_KEPT_PER_RUN else ""
+
+    return _INVISIBLE.sub(repl, text)
 
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
