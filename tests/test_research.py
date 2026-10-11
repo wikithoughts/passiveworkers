@@ -69,6 +69,14 @@ class _Resp:
         self.closed = True
 
 
+def _patch_get(monkeypatch, fake):
+    """fetch_extract GETs through its deadline-watched requests.Session; route that (and the bare
+    requests.get _guarded_get uses by default) to `fake(url, **kw)`."""
+    import requests
+    monkeypatch.setattr(requests, "get", fake)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kw: fake(url, **kw))
+
+
 def test_guarded_get_blocks_redirect_to_internal(monkeypatch):
     # a public URL must NOT be able to 30x-redirect to a metadata/private address (SSRF)
     import pytest
@@ -98,18 +106,16 @@ def test_guarded_get_bounds_redirect_chains(monkeypatch):
 
 def test_fetch_extract_blocks_redirect_to_metadata(monkeypatch):
     import pytest
-    import requests
     monkeypatch.setattr(R, "_host_is_public", lambda h: h != "169.254.169.254")
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _Resp(location="http://169.254.169.254/"))
+    _patch_get(monkeypatch, lambda url, **kw: _Resp(location="http://169.254.169.254/"))
     with pytest.raises(ValueError):
         R.fetch_extract("http://good.example/page")
 
 
 def test_fetch_extract_happy_path_through_guarded_get(monkeypatch):
-    import requests
     monkeypatch.setattr(R, "_host_is_public", lambda h: True)
-    monkeypatch.setattr(requests, "get",
-                        lambda url, **kw: _Resp(body=b"<html><body><p>Hello SSRF-safe</p></body></html>"))
+    _patch_get(monkeypatch,
+               lambda url, **kw: _Resp(body=b"<html><body><p>Hello SSRF-safe</p></body></html>"))
     assert "Hello SSRF-safe" in R.fetch_extract("http://good.example/page")
 
 
@@ -170,7 +176,7 @@ def test_fetch_extract_closes_response_on_every_path(monkeypatch):
         raise requests.HTTPError("503")
     bad.raise_for_status = boom
     for resp, err in ((ok, None), (pdf, ValueError), (bad, requests.HTTPError)):
-        monkeypatch.setattr(requests, "get", lambda url, _r=resp, **kw: _r)
+        _patch_get(monkeypatch, lambda url, _r=resp, **kw: _r)
         if err:
             with pytest.raises(err):
                 R.fetch_extract("http://good.example/page")
@@ -190,7 +196,6 @@ class _Clock:
 def test_fetch_extract_deadline_stops_a_drip_fed_body(monkeypatch):
     # every read returns one byte and "takes" 10 s — per-read timeouts never fire, the total must
     import pytest
-    import requests
     import types
     clock = _Clock()
     monkeypatch.setattr(R, "time", types.SimpleNamespace(monotonic=clock.monotonic))
@@ -204,7 +209,7 @@ def test_fetch_extract_deadline_stops_a_drip_fed_body(monkeypatch):
             return b"x"
     resp = _Resp()
     resp.raw = _Drip()
-    monkeypatch.setattr(requests, "get", lambda url, **kw: resp)
+    _patch_get(monkeypatch, lambda url, **kw: resp)
     with pytest.raises(TimeoutError):
         R.fetch_extract("http://good.example/slow")
     assert len(reads) <= R._FETCH_DEADLINE / 10 + 1 and resp.closed
@@ -266,6 +271,104 @@ def test_fetch_extract_deadline_against_a_real_drip_server(monkeypatch):
         srv.close()
 
 
+def _drip_server(first: bytes, drip: bytes, give_up: float = 8.0):
+    """Loopback stub: read the request, send `first`, then one `drip` every 50 ms until stopped or
+    `give_up` seconds pass (so old code fails the timing assert instead of hanging the suite)."""
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            try:
+                conn.recv(65536)
+                conn.sendall(first)
+                t0 = time.monotonic()
+                while not stop.wait(0.05) and time.monotonic() - t0 < give_up:
+                    conn.sendall(drip)
+            except OSError:
+                pass
+    th = threading.Thread(target=serve, daemon=True)
+    th.start()
+    return srv, stop, th
+
+
+_DRIPS = {
+    # per-read timeouts never fire on any of these; only a hard wall clock stops them
+    "http_headers": ("http", b"HTTP/1.1 200 OK\r\nX-Pad: ", b"a"),
+    "gzip_header_comment": ("http", b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                            b"Content-Encoding: gzip\r\nConnection: close\r\n\r\n"
+                            b"\x1f\x8b\x08\x10\x00\x00\x00\x00\x00\xff", b"c"),
+    # CPython already bounds a TLS handshake by one deadline; kept so the watched session can't regress it
+    "tls_handshake": ("https", b"\x16\x03\x03\x40\x00", b"\x00"),   # a 16 KB record, 1 byte at a time
+}
+
+
+def test_fetch_extract_deadline_cuts_a_drip_before_the_body(monkeypatch):
+    # The between-chunk check can't see these: the drip sits inside requests' header parse or
+    # urllib3's own read1 loop over a gzip header. The watchdog must cut them.
+    import pytest
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")   # a runner's HTTP(S)_PROXY must not catch loopback
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    monkeypatch.setattr(R, "_FETCH_DEADLINE", 0.5)
+    for name, (scheme, first, drip) in _DRIPS.items():
+        srv, stop, th = _drip_server(first, drip)
+        t0 = time.monotonic()
+        try:
+            with pytest.raises(TimeoutError):
+                R.fetch_extract(f"{scheme}://127.0.0.1:{srv.getsockname()[1]}/")
+            assert time.monotonic() - t0 < 3.0, name
+        finally:
+            stop.set()
+            th.join(2)
+            srv.close()
+
+
+def test_fetch_watchdog_cuts_a_socket_connected_after_the_deadline():
+    import socket
+    a, b = socket.socketpair()
+    wd = R._FetchWatchdog(time.monotonic() - 1)
+    try:
+        assert wd.fired.wait(2)
+        wd.track(a)
+        a.settimeout(2)
+        assert a.recv(1) == b""          # shut down at once, not left to block
+    finally:
+        wd.close()
+        a.close()
+        b.close()
+
+
+def test_fetch_extract_real_page_through_the_watched_session(monkeypatch):
+    # happy path over a real loopback socket: the swapped connection class still fetches, and the
+    # watchdog leaves no timer thread and no dup()ed fd behind
+    import os
+    import threading
+    srv, stop, th = _drip_server(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 39"
+                                 b"\r\nConnection: close\r\n\r\n<html><body><p>served</p></body></html>",
+                                 b"", give_up=0)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    fds = os.listdir("/proc/self/fd") if os.path.isdir("/proc/self/fd") else None
+    try:
+        assert "served" in R.fetch_extract(f"http://127.0.0.1:{srv.getsockname()[1]}/")
+    finally:
+        stop.set()
+        th.join(2)
+        srv.close()
+    for _ in range(100):
+        if not any(t.name == "pw-fetch-deadline" for t in threading.enumerate()):
+            break
+        time.sleep(0.01)
+    assert not any(t.name == "pw-fetch-deadline" for t in threading.enumerate())
+    if fds is not None:
+        assert len(os.listdir("/proc/self/fd")) <= len(fds)
+
+
 # --------------------------------------------------------- keyed web backends (R33/D49)
 def _row(name):
     return [{"title": name, "href": "https://good.example/x", "body": name}]
@@ -307,31 +410,28 @@ def test_searxng_rejects_non_http_scheme(monkeypatch):
 # --------------------------------------------------------- content-type gate (R14 review)
 def test_fetch_extract_skips_pdf_content_type(monkeypatch):
     import pytest
-    import requests
     monkeypatch.setattr(R, "_host_is_public", lambda h: True)
     resp = _Resp(body=b"%PDF-1.4 binary garbage")
     resp.headers = {"Content-Type": "application/pdf"}
-    monkeypatch.setattr(requests, "get", lambda url, **kw: resp)
+    _patch_get(monkeypatch, lambda url, **kw: resp)
     with pytest.raises(ValueError):
         R.fetch_extract("http://good.example/doc.pdf")
 
 
 def test_fetch_extract_allows_text_plain(monkeypatch):
-    import requests
     monkeypatch.setattr(R, "_host_is_public", lambda h: True)
     resp = _Resp(body=b"plain text body")
     resp.headers = {"Content-Type": "text/plain; charset=utf-8"}
-    monkeypatch.setattr(requests, "get", lambda url, **kw: resp)
+    _patch_get(monkeypatch, lambda url, **kw: resp)
     assert "plain text body" in R.fetch_extract("http://good.example/page.txt")
 
 
 def test_fetch_extract_allows_missing_content_type(monkeypatch):
     # some legitimately HTML-serving hosts omit Content-Type — stay permissive (regression-pin
     # the existing happy-path behavior, which relies on this).
-    import requests
     monkeypatch.setattr(R, "_host_is_public", lambda h: True)
-    monkeypatch.setattr(requests, "get",
-                        lambda url, **kw: _Resp(body=b"<html><body><p>Hello</p></body></html>"))
+    _patch_get(monkeypatch,
+               lambda url, **kw: _Resp(body=b"<html><body><p>Hello</p></body></html>"))
     assert "Hello" in R.fetch_extract("http://good.example/page")
 
 
