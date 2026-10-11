@@ -19,7 +19,7 @@ def reports(tmp_path, monkeypatch):
 @pytest.fixture()
 def client(reports):
     from fastapi.testclient import TestClient
-    return TestClient(serve.app)
+    return TestClient(serve.app, base_url="http://127.0.0.1:8770")   # Host must pass the allow-list
 
 
 def test_report_guard_basenames_blocks_traversal(reports):
@@ -127,3 +127,53 @@ def test_cancelled_run_reports_cancelled(client, reports, monkeypatch):
     jid = client.post("/research", json={"brief": "x"}).json()["job_id"]
     p = _drain(client, jid)
     assert p["done"] and p["error"] == "cancelled"
+
+
+# --- DNS-rebinding defence (F25): only loopback names + PW_SERVE_HOST may reach the desk ---
+
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:8770", "127.0.0.1.evil.example",
+                                  "localhost.evil.example:8770", "0.0.0.0:8770", "", "[::1"])
+def test_foreign_host_header_is_403(client, host, monkeypatch):
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    called = []
+    monkeypatch.setattr(serve, "run_research", lambda *a, **k: called.append(1))
+    hdr = {"host": host}
+    assert client.get("/", headers=hdr).status_code == 403
+    assert client.get("/reports", headers=hdr).status_code == 403
+    assert client.get("/report/x.md", headers=hdr).status_code == 403
+    assert client.post("/research", json={"brief": "x"}, headers=hdr).status_code == 403
+    assert not called                                         # no run was started
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.1:8770", "localhost:8770", "LOCALHOST",
+                                  "[::1]:8770", "[::1]"])
+def test_loopback_host_headers_pass(client, host, monkeypatch):
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    assert client.get("/reports", headers={"host": host}).status_code == 200
+
+
+def test_configured_bind_host_is_allowed_but_wildcard_is_not(client, monkeypatch):
+    monkeypatch.setenv("PW_SERVE_HOST", "192.168.1.5")
+    assert client.get("/reports", headers={"host": "192.168.1.5:8770"}).status_code == 200
+    assert client.get("/reports", headers={"host": "192.168.1.6:8770"}).status_code == 403
+    monkeypatch.setenv("PW_SERVE_HOST", "0.0.0.0")             # Docker bind: loopback names only
+    assert client.get("/reports", headers={"host": "0.0.0.0:8770"}).status_code == 403
+    assert client.get("/reports", headers={"host": "localhost:8770"}).status_code == 200
+
+
+@pytest.mark.parametrize("origin, ok", [("http://127.0.0.1:8770", True), ("http://localhost:8770", True),
+                                        ("http://evil.example", False), ("null", False),
+                                        ("http://127.0.0.1.evil.example", False)])
+def test_cross_origin_requests_are_403(client, reports, monkeypatch, origin, ok):
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    monkeypatch.setattr(serve, "run_research",
+                        lambda *a, **k: (_ for _ in ()).throw(SystemExit("no ollama")))
+    r = client.post("/research", json={"brief": "x"}, headers={"origin": origin})
+    assert (r.status_code == 200) is ok and (r.status_code == 403) is (not ok)
+
+
+def test_history_items_use_data_name_not_inline_onclick():
+    # a planted report name must never be spliced into an inline JS handler (HTML-decoded first)
+    html = serve.SERVE_HTML
+    assert "onclick=\"openReport" not in html
+    assert 'data-name="' in html and "dataset.name" in html
