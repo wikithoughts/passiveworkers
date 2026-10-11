@@ -1,0 +1,36 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+  schedule:
+    - cron: "27 4 * * 1"   # weekly (Monday 04:27 UTC): picks up new queries on unchanged code
+  workflow_dispatch:
+
+# Read-only token by default; only the analyze job gets the one write scope it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  # Same rule as ci.yml: never cancel a main run, only superseded feature-branch pushes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Not a required check (only ci.yml's `ci-ok` is); results land in the Security tab.
+  analyze:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write   # upload SARIF results to code scanning
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: python
+          build-mode: none   # interpreted language: no build step
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: "/language:python"

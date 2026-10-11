@@ -30,7 +30,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - id: filter
@@ -60,8 +60,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - run: pip install -e '.[dev]'
@@ -71,18 +71,16 @@ jobs:
   types:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # ADVISORY type-checking (R36): pyright `basic` on passiveworkers/net only. Non-blocking
-    # (continue-on-error) — it surfaces type signal without gating merges; promote to a required
-    # check once the scoped surface is clean and the include list has widened. See [tool.pyright].
+    # BLOCKING type-checking (R36): pyright `basic` on passiveworkers/net only. A pyright error
+    # fails this job and therefore `ci-ok`. Widen the include list module-by-module. See [tool.pyright].
     runs-on: ubuntu-24.04
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - run: pip install -e . pyright   # -e . gives pyright the real fastapi/pydantic types
-      - name: Pyright (basic, passiveworkers/net — advisory)
+      - name: Pyright (basic, passiveworkers/net)
         run: pyright
 
   test:
@@ -95,8 +93,8 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install (all extras + dev tools)
@@ -120,11 +118,11 @@ jobs:
     # the served inline JS is Python-version-independent, so run the guards once
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: "24"
       - run: pip install -e .
@@ -141,8 +139,8 @@ jobs:
     # never CI-checked — every extra import must stay lazy/optional, or this job fails.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - name: Install core only (no extras)

@@ -58,11 +58,11 @@ CI gate is scoped to `select = ["E9", "F"]` (pyflakes + syntax errors only — s
 ```bash
 python -m py_compile $(git ls-files '*.py')
 ```
-This is a syntax-compile check, not a real type checker. CI separately runs an
-**advisory** `pyright` pass scoped to `passiveworkers/net` only
-(`continue-on-error: true`, non-blocking — see `[tool.pyright]` in `pyproject.toml`
-and the `types` job in `.github/workflows/ci.yml`); it surfaces signal but doesn't
-gate merges yet.
+This is a syntax-compile check, not a real type checker. CI separately runs a
+**blocking** `pyright` pass scoped to `passiveworkers/net` only (the `types` job in
+`.github/workflows/ci.yml`, configured by `[tool.pyright]` in `pyproject.toml`): a
+pyright error fails `types` and so the required `ci-ok`. Run `pyright` locally
+before pushing a change under `passiveworkers/net`.
 
 **Test**
 
@@ -163,7 +163,7 @@ entry in `billed_repos.json`.
 force-pushing your own branch here is fine. Its `required_checks` is `[ci-ok]`: the
 aggregate job in `ci.yml` that needs `changes`, `lint`, `types`, `test` (Python 3.10-3.14),
 `frontend` and `core-install`, always runs, and fails if any needed job failed or was
-cancelled (skipped is fine; `types` is advisory). GitHub enforces `ci-ok` through a
+cancelled (skipped is fine). GitHub enforces `ci-ok` through a
 `required_status_checks` rule on the "fleet: protect default branch" ruleset (alongside
 deletion and non-fast-forward). `ci.yml` has no `paths-ignore` on `pull_request`: a
 `changes` job skips the heavy jobs for docs-only PRs (every file under `docs/` or `*.md`),
