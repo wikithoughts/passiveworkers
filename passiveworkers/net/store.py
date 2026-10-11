@@ -152,4 +152,17 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
             self.conn.execute("ALTER TABLE nodes ADD COLUMN ok_count INTEGER DEFAULT 0")
         if "fail_count" not in ncols:
             self.conn.execute("ALTER TABLE nodes ADD COLUMN fail_count INTEGER DEFAULT 0")
+        # F13 review: the hot lookups (secret auth on every heartbeat/poll, a job's tasks on every
+        # job_view, a node's queue, an asker's jobs, the reaper's status scans) were full-table scans
+        # under the global lock. IF NOT EXISTS → idempotent on every open, existing DBs included.
+        self.conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_nodes_secret_hash ON nodes(secret_hash);
+            CREATE INDEX IF NOT EXISTS idx_users_secret_hash ON users(secret_hash);
+            CREATE INDEX IF NOT EXISTS idx_tasks_job_id ON tasks(job_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_node_status ON tasks(node_id, status);
+            CREATE INDEX IF NOT EXISTS idx_jobs_asker_created ON jobs(asker, created);
+            CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+            """
+        )
         self.conn.commit()
