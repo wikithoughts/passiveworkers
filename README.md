@@ -211,6 +211,19 @@ always sees the brief and consents to that one task (D53). No token, no secondar
 market, money only ever at the edges. Deeper design:
 [docs/FEDERATION_V2.md](docs/FEDERATION_V2.md).
 
+Two coordinator limits a self-hoster can tune:
+
+- `PW_MAX_BODY_BYTES` (default 4 MiB) is the request-body ceiling. A body over its
+  route's cap gets a 413 before auth or parsing. The free-form routes (node results,
+  `/jobs`, blob uploads) are capped at the ceiling. `/tasks/{id}/deliver` is capped at
+  2,416,384 bytes, which fits a 200k-char deliverable even when it is fully
+  JSON-escaped. Every other route is capped at 64 KiB. A lower ceiling lowers all of
+  these caps.
+- `PW_BASELINE_WORKERS` (default 4) sets how many single-model baselines run at once.
+  Each one can hold its slot for up to 15 minutes. A job submitted while every slot
+  is busy gets no baseline, and the app falls back to the best single council answer.
+  Each skip is logged and counted as `baseline_skipped_busy` on `GET /metrics`.
+
 ## We work with the ledger open
 
 Every round of work is logged — what shipped, what we tried and reverted, and why —

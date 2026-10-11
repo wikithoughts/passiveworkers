@@ -23,10 +23,12 @@ Endpoints:
   GET  /dashboard                                      → live operator map
   GET  /healthz
 
-Request bodies are capped at PW_MAX_BODY_BYTES (default 4 MiB) BEFORE any parsing or auth: a larger
-declared Content-Length, or a chunked body that streams past the cap, gets a 413 (F11 review). The
-cap sits above the largest legitimate body (a 200k-char /deliver JSON-escaped is ≤ ~2.4 MB); blob
-uploads keep their own tighter 512 KiB cap.
+Request bodies are capped per route BEFORE any parsing or auth: a larger declared Content-Length,
+or a chunked body that streams past the cap, gets a 413 (F11 review). PW_MAX_BODY_BYTES (default
+4 MiB) is the ceiling for every route and the cap for the free-form bodies (node /result dicts,
+/jobs, blob uploads — which keep their own tighter 512 KiB cap). Routes with a documented smaller
+bound get that instead: /deliver ≤ _DELIVER_BODY_CAP (a 200k-char deliverable, JSON-escaped), and
+the small field-capped bodies (/users, heartbeat, progress, enroll, …) ≤ 64 KiB.
 
 Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app
 """
@@ -35,6 +37,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import secrets
 import threading
 
@@ -78,16 +81,41 @@ if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
 
 
 _MAX_BODY_DEFAULT = 4 * 1024 * 1024   # see the module docstring for why 4 MiB
+# /deliver: 200k chars at ≤ 12 bytes each (an astral char JSON-escaped as a \uXXXX\uXXXX surrogate
+# pair), plus 16 KiB for signature + signer_pub (≤ 300 chars) and the JSON keys.
+_DELIVER_BODY_CAP = 12 * 200_000 + 16 * 1024
+_SMALL_BODY_CAP = 64 * 1024           # bodies whose every field is length-capped (or that have none)
+
+# POST routes whose body has a documented bound below the ceiling. Non-POST requests carry no body
+# (64 KiB); unlisted POSTs — /result's free-form dict, /jobs, blob uploads — get the ceiling. A new
+# POST route with a small body belongs here.
+_ROUTE_CAPS = (
+    (re.compile(r"/tasks/[^/]+/deliver"), _DELIVER_BODY_CAP),
+    (re.compile(r"/tasks/[^/]+/(?:progress|accept)"), _SMALL_BODY_CAP),
+    (re.compile(r"/jobs/[^/]+/(?:feedback|rate)"), _SMALL_BODY_CAP),
+    (re.compile(r"/(?:users|nodes/register|nodes/heartbeat|admin/enroll)"), _SMALL_BODY_CAP),
+)
 
 
 def _max_body_bytes() -> int:
-    """The request-body cap in bytes (PW_MAX_BODY_BYTES). Invalid or non-positive → the default:
+    """The request-body ceiling in bytes (PW_MAX_BODY_BYTES). Invalid or non-positive → the default:
     there is deliberately no 'unbounded' setting."""
     try:
         cap = int(os.environ.get("PW_MAX_BODY_BYTES", _MAX_BODY_DEFAULT))
     except (TypeError, ValueError):
         return _MAX_BODY_DEFAULT
     return cap if cap > 0 else _MAX_BODY_DEFAULT
+
+
+def _body_cap_for(method: str, path: str) -> int:
+    """One request's cap: its route's documented bound, never above PW_MAX_BODY_BYTES."""
+    ceiling = _max_body_bytes()
+    if method != "POST":
+        return min(_SMALL_BODY_CAP, ceiling)
+    for pattern, cap in _ROUTE_CAPS:
+        if pattern.fullmatch(path):
+            return min(cap, ceiling)
+    return ceiling
 
 
 class _BodyTooLarge(HTTPException):
@@ -109,7 +137,7 @@ class BodySizeLimit:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        cap = _max_body_bytes()
+        cap = _body_cap_for(scope.get("method", ""), scope.get("path", ""))
         for name, value in scope.get("headers", []):
             if name == b"content-length":
                 try:
@@ -511,13 +539,22 @@ def _baseline_workers() -> int:
 # workers are joined at interpreter exit, which would stall a coordinator shutdown for 15 minutes.
 _BASELINE_MAX = _baseline_workers()
 _baseline_slots = threading.BoundedSemaphore(_BASELINE_MAX)
+# Jobs that got no baseline because every slot was busy, since process start — on GET /metrics as
+# `baseline_skipped_busy`, so a degraded single-model compare under load is visible, not silent.
+_baseline_skipped = 0
+_baseline_skipped_lock = threading.Lock()
 
 
 def _start_baseline(job_id: str, question: str) -> bool:
-    """Start the baseline if a slot is free. False (and a log line) when all slots are busy."""
+    """Start the baseline if a slot is free. False (a log line + the skip counter) when all are busy."""
+    global _baseline_skipped
     slots = _baseline_slots   # release the semaphore we acquired, even if the global is rebound
     if not slots.acquire(blocking=False):
-        print(f"[baseline] skipped for job {job_id[:8]}: {_BASELINE_MAX} already running", flush=True)
+        with _baseline_skipped_lock:
+            _baseline_skipped += 1
+            skipped = _baseline_skipped
+        print(f"[baseline] skipped for job {job_id[:8]}: all {_BASELINE_MAX} slots busy "
+              f"(PW_BASELINE_WORKERS); {skipped} skipped since start", flush=True)
         return False
 
     def run() -> None:
@@ -602,7 +639,7 @@ def feedback(job_id: str, body: FeedbackBody, x_user_secret: str | None = Header
 
 @app.get("/metrics")
 def metrics():
-    return store.metrics()
+    return {**store.metrics(), "baseline_skipped_busy": _baseline_skipped}
 
 
 @app.get("/status")

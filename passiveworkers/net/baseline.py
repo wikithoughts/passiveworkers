@@ -14,7 +14,9 @@ Order of preference:
   3. None → the UI falls back to best-single-council-answer, clearly labelled.
 
 Runs in a background thread per job (parallel with the council), result stored on the
-job row. Failures are silent by design — the baseline must never block or fail a job.
+job row — but on at most PW_BASELINE_WORKERS (default 4) threads at once: a job submitted
+while every slot is busy gets no baseline, which the coordinator logs and counts
+(`baseline_skipped_busy` on GET /metrics). Failures never block or fail a job; they are logged.
 """
 
 from __future__ import annotations
