@@ -11,17 +11,20 @@
 # Docker Engine (20.10+) `host.docker.internal` now resolves via the `extra_hosts` entry below.
 # Running `pworkers` directly on the host with only SearXNG in Docker is still the simplest setup.
 #
-# Note (Linux only): the image has no USER, so it runs as root by default — harmless on Docker
-# Desktop (its VirtioFS/gRPC-FUSE layer remaps bind-mount ownership to your host user), but on
-# plain Linux Docker Engine a bind mount does NOT remap UIDs, so container root would write
-# root-owned (and for 0600 credential files, root-only-readable) files into your shared
-# ~/.passiveworkers, locking out your host-native `pworkers` CLI. PW_UID/PW_GID below default to 1000
-# (the common first-user UID on single-user Linux boxes) — override them with `id -u`/`id -g` if
-# yours differ, e.g.: PW_UID=$(id -u) PW_GID=$(id -g) docker compose up -d research-desk
+# Note (Linux only): the image runs as the unprivileged user `pw` (UID/GID 1000), never root. On
+# Docker Desktop that's moot (its VirtioFS/gRPC-FUSE layer remaps bind-mount ownership to your host
+# user), but on plain Linux Docker Engine a bind mount does NOT remap UIDs, so the container's UID is
+# what owns (and, for 0600 credential files, alone can read) the files it writes into your shared
+# ~/.passiveworkers. PW_UID/PW_GID below default to 1000 (the common first-user UID on single-user
+# Linux boxes) — override them with `id -u`/`id -g` if yours differ, so your host-native `pworkers`
+# CLI can still read them, e.g.: PW_UID=$(id -u) PW_GID=$(id -g) docker compose up -d research-desk
+#
+# Images are pinned by digest (tag kept for readability). Refresh a pin with
+#   docker buildx imagetools inspect <image>:<tag>   → the top-level "Digest:" line
 
 services:
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:latest@sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272
     container_name: pw-searxng
     ports:
       - "127.0.0.1:8080:8080"
@@ -78,6 +81,9 @@ services:
       - PW_PORT=${PW_PORT:-8088}
       - PW_DB=/app/data/coordinator.db
     volumes:
+      # a fresh volume inherits the image's pw-owned /app/data. A volume created by an older,
+      # root-running image stays root-owned — hand it over once before upgrading:
+      #   docker compose run --rm --user root --entrypoint chown coordinator -R pw:pw /app/data
       - pw-coordinator-db:/app/data
     restart: unless-stopped
 
