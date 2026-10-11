@@ -294,3 +294,55 @@ def test_score_report_caps_url_refetches(monkeypatch):
     results = _EV.score_report(report, grounded=0.5, weak=0.3)
     assert calls["n"] <= 2                                           # never fanned out past the cap
     assert any(r["bucket"] == "UNVERIFIABLE" for r in results)       # over-cap sources unverifiable
+
+
+# ----------------------------------------------------------------------------- Unicode + numbers (F10)
+def test_tokenize_keeps_arabic_accents_and_cjk():
+    from passiveworkers.retrieval import tokenize
+    # was ['caf']: every non-ASCII letter dropped
+    assert tokenize("الذكاء الاصطناعي café 東京") == ["الذكاء", "الاصطناعي", "cafe", "東京"]
+    # diacritized ≡ undiacritized Arabic (harakat + tatweel fold away); accents fold
+    assert tokenize("مُحَمَّد كـتاب") == tokenize("محمد كتاب")
+    assert tokenize("Résumé") == tokenize("resume")
+    # Han/kana runs index as overlapping bigrams; kana voicing marks survive (が ≠ か)
+    assert tokenize("学校に行く") == ["学校", "校に", "に行", "行く"]
+    assert tokenize("が") != tokenize("か")
+
+
+def test_tokenize_ascii_unchanged():
+    from passiveworkers.retrieval import tokenize
+    assert tokenize("The AED4200000 ceiling, INV-7731 snake_case") == \
+        ["the", "aed4200000", "ceiling", "inv", "7731", "snake", "case"]
+
+
+def test_arabic_claim_is_actually_checked():
+    src = "أعلنت الحكومة أن الذكاء الاصطناعي سيدخل المدارس في عام 2026"
+    on = grounding_score("الذكاء الاصطناعي سيدخل المدارس [S1]", src)
+    off = grounding_score("ارتفعت أسعار النفط بشدة [S1]", src)
+    assert on["n_content"] > 0 and classify(on) == "GROUNDED"    # was NO_CONTENT
+    assert classify(off) == "UNGROUNDED"
+
+
+def test_cjk_claim_is_actually_checked():
+    src = "東京は日本の首都であり、人口は約1400万人です。"
+    assert classify(grounding_score("日本の首都は東京です [S1]", src)) == "GROUNDED"
+    assert classify(grounding_score("大阪の天気は晴れ [S1]", src)) == "UNGROUNDED"
+
+
+def test_thousands_separators_do_not_read_as_missing_numbers():
+    g = grounding_score("Revenue was 12,500 dollars [S1].", "Revenue was 12500 dollars")
+    assert g["missing_numbers"] == [] and g["num_cov"] == 1.0          # was ['12', '500']
+    g = grounding_score("Revenue was 12500 dollars [S1].", "Revenue was 12 500 dollars")
+    assert g["missing_numbers"] == []
+    # a genuinely different number is still flagged, as ONE number
+    g = grounding_score("Revenue was 12,600 dollars [S1].", "Revenue was 12,500 dollars")
+    assert g["missing_numbers"] == ["12600"]
+    # lists / adjacent years are not glued together
+    assert numeric_tokens("items 1,2,3 in 2024,2025") == {"1", "2", "3", "2024", "2025"}
+
+
+def test_unsupported_survived_sees_a_regrouped_number():
+    from passiveworkers.fidelity import unsupported_survived
+    flagged = [{"missing_numbers": ["12500"]}]
+    assert unsupported_survived(flagged, "Revenue was 12,500 dollars.")   # kept, just regrouped
+    assert not unsupported_survived(flagged, "Revenue was 9,800 dollars.")

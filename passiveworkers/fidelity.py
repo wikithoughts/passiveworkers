@@ -18,13 +18,14 @@ scripts/eval_citation_fidelity.py). So read a GROUNDED verdict as "not obviously
 fabricated", never as "proven true". A high score is necessary, not sufficient.
 
 No network, no Ollama, no new dependencies — it reuses passiveworkers.retrieval.tokenize so
-the scorer tokenizes EXACTLY like the retriever it is grading.
+the scorer tokenizes like the retriever it is grading (plus one step: thousands separators inside
+numbers are joined first, so '12,500' and '12500' are the same fact).
 """
 from __future__ import annotations
 
 import re
 
-from passiveworkers.retrieval import tokenize
+from passiveworkers.retrieval import tokenize as _tokenize
 
 # Compact English stop-word set: content-overlap must not be inflated by glue words.
 # (Kept small and obvious on purpose — this is a floor, not a linguistics project.)
@@ -51,6 +52,19 @@ _SECTION_SPLIT = re.compile(r"(?m)^###\s+")
 
 
 # ----------------------------------------------------------------------------- tokens
+# A thousands-grouped number ('12,500', '1 000 000' with NBSP/thin space, Arabic '١٢٬٥٠٠'): strictly
+# 3-digit groups, so a list like '1,2,3' or '2024,2025' is left alone. Joined BEFORE tokenizing —
+# else '12,500' became the tokens '12' + '500' and read as two missing numbers against '12500'.
+_GROUPED_NUM = re.compile(r"(?<![\d,])\d{1,3}(?:[,\u066c\u00a0\u2009\u202f]\d{3})+(?!\d)")
+_GROUP_SEP = re.compile(r"[,\u066c\u00a0\u2009\u202f]")
+
+
+def tokenize(text: str) -> list[str]:
+    """retrieval.tokenize, after joining thousands separators inside numbers (claim AND source
+    go through this, so '12,500' and '12500' compare equal)."""
+    return _tokenize(_GROUPED_NUM.sub(lambda m: _GROUP_SEP.sub("", m.group(0)), text or ""))
+
+
 def _strip_markers(text: str) -> str:
     """Remove [...] spans so the markers themselves never count as claim content
     (otherwise every cited sentence carries a guaranteed-missing 's3' token)."""
