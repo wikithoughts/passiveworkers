@@ -592,11 +592,29 @@ class _JobsMixin(_StoreProtocol):
         while not self._stop.wait(interval):
             try:
                 self._reap_once()
-            except Exception:
-                pass  # never let the reaper die
+            except Exception as exc:
+                # never let the reaper die; _reap_once already rolled back SQL + ledger together
+                print(f"[reaper] pass failed, retrying next tick: {type(exc).__name__}: {exc}",
+                      flush=True)
 
     def _reap_once(self) -> None:
         with self.lock:
+            # One transaction per pass (committed at the end). Refunds mutate the ledger IN MEMORY
+            # before their rows are written, so a failed write or commit must roll the ledger back
+            # with the SQL: else the job stays open with the asker already refunded, and the next
+            # tick refunds again out of ANOTHER offer's hold (Codex review P1).
+            snap = self.ledger.snapshot()
+            try:
+                self._reap_pass()
+            except Exception:
+                try:
+                    self.conn.rollback()
+                finally:
+                    self.ledger.restore(snap)
+                raise
+
+    def _reap_pass(self) -> None:
+        with self.lock:   # re-entrant; _reap_once owns the rollback on failure
             now = _now()
             # reclaim blobs of long-finished jobs (retention window gives the asker time to
             # fetch); bounds unbounded SQLite growth from delivered files.

@@ -244,23 +244,35 @@ class _AssistedMixin(_StoreProtocol):
                 result["signer_pub"] = signer_pub[:100]
             result["_digest"] = self.result_digest(result)
             pool = job["pool"] or 0.0
+            # The release below is IN MEMORY; the job only stops being payable once the 'done'
+            # rows COMMIT. If any write or the commit fails, roll the ledger back with the SQL —
+            # else the job stays 'assisting' with the operator already paid, and a retry pays again
+            # out of ANOTHER offer's hold (Codex review P1).
+            snap = self.ledger.snapshot()
             # release the escrow hold to the operator (asker was already debited at offer
             # creation, so this can't fail on asker balance and pays exactly once).
             try:
                 self.ledger.release(t["owner"], pool)   # atomic: refuses (mutating nothing) if
             except InsufficientCredit as exc:           # escrow can't cover it — never go negative
                 return {"ok": False, "error": f"settlement refused: {exc}"}
-            acct = self.ledger.accounts.get(t["owner"])
-            if acct:
-                acct.jobs_helped += 1
-            receipt = {"job_id": t["job_id"], "asker_id": job["asker"], "total_cost": pool,
-                       "payouts": {t["owner"]: pool}, "judge_fee": 0.0}
-            # score stays NULL — it's the asker's rating slot (set by rate_assisted, D24)
-            self.conn.execute("UPDATE tasks SET status='done', result=? WHERE task_id=?",
-                              (json.dumps(result), task_id))
-            self.conn.execute("UPDATE jobs SET status='done', merged=?, receipt=? WHERE job_id=?",
-                              (deliverable, json.dumps(receipt), t["job_id"]))
-            self._save_ledger(); self.conn.commit()
+            try:
+                acct = self.ledger.accounts.get(t["owner"])
+                if acct:
+                    acct.jobs_helped += 1
+                receipt = {"job_id": t["job_id"], "asker_id": job["asker"], "total_cost": pool,
+                           "payouts": {t["owner"]: pool}, "judge_fee": 0.0}
+                # score stays NULL — it's the asker's rating slot (set by rate_assisted, D24)
+                self.conn.execute("UPDATE tasks SET status='done', result=? WHERE task_id=?",
+                                  (json.dumps(result), task_id))
+                self.conn.execute("UPDATE jobs SET status='done', merged=?, receipt=? WHERE job_id=?",
+                                  (deliverable, json.dumps(receipt), t["job_id"]))
+                self._save_ledger(); self.conn.commit()
+            except Exception:
+                try:
+                    self.conn.rollback()
+                finally:
+                    self.ledger.restore(snap)
+                raise
             # stage chaining (D35): spawn a `then` follow-on if this assisted job declared one
             # (currently only automated parents set then_spec, so this is a no-op for now —
             # symmetry + future assisted→assisted chains).

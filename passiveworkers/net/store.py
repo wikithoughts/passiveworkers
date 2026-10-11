@@ -24,6 +24,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 
+from passiveworkers.ledger import ESCROW_ID
 from passiveworkers.net._store_assisted import _AssistedMixin
 from passiveworkers.net._store_base import _hash as _hash
 from passiveworkers.net._store_jobs import _JobsMixin
@@ -58,6 +59,26 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
         self._stop = threading.Event()
         self._reaper = threading.Thread(target=self._reap_loop, daemon=True, name="pw-reaper")
         self._reaper.start()
+
+    # ------------------------------------------------------------------ integrity
+    def ledger_integrity(self) -> dict:
+        """Ledger conservation PLUS escrow reconciled against the DB. Escrow must hold exactly the
+        pools of the assisted offers still awaiting delivery or refund (pending_assist/assisting).
+        Less means some hold was paid out twice and a live offer is underfunded; more means credit
+        is stranded in escrow. Ledger.conservation_ok() alone can't see either: it only knows the
+        escrow total, not what it owes (Codex review P2)."""
+        with self.lock:
+            owed = round(sum(round(r["pool"] or 0.0, 4) for r in self.conn.execute(
+                "SELECT pool FROM jobs WHERE status IN ('pending_assist','assisting')")), 4)
+            escrow = self.ledger.accounts.get(ESCROW_ID)
+            held = escrow.balance if escrow else 0.0
+            conserved = self.ledger.conservation_ok()
+            return {"ok": conserved and abs(held - owed) < 1e-6, "ledger_conserved": conserved,
+                    "escrow": held, "outstanding_holds": owed}
+
+    def conservation_ok(self) -> bool:
+        """Store-level conservation: ledger_integrity()["ok"]."""
+        return self.ledger_integrity()["ok"]
 
     # ------------------------------------------------------------------ schema
     def _init_schema(self) -> None:

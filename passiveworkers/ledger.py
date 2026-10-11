@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 ESCROW_ID = "__escrow__"   # internal assisted-offer holding account (no starter grant)
 
@@ -236,6 +236,28 @@ class Ledger:
         self._escrow().balance = round(self._escrow().balance - amount, 4)
         a.balance = round(a.balance + amount, 4)
         a.lifetime_spent = round(a.lifetime_spent - amount, 4)
+
+    # ------------------------------------------------------------------ transactions
+    def snapshot(self) -> tuple:
+        """A copy of every account and both counters, for restore(). The Store mutates this ledger in
+        memory and then persists it inside a SQLite transaction; when that transaction rolls back, the
+        ledger must roll back with it, or a retry pays/refunds a second time out of another offer's
+        hold (ledger and DB diverge)."""
+        return ({k: replace(a) for k, a in self.accounts.items()},
+                self._granted_total, self._job_count)
+
+    def restore(self, snap: tuple) -> None:
+        """Put the ledger back exactly as snapshot() saw it: accounts opened since are dropped, the
+        rest get their saved fields back IN PLACE (live Account references stay valid)."""
+        accounts, granted, jobs = snap
+        for k in [k for k in self.accounts if k not in accounts]:
+            del self.accounts[k]
+        for k, saved in accounts.items():
+            if k in self.accounts:
+                vars(self.accounts[k]).update(vars(saved))
+            else:
+                self.accounts[k] = replace(saved)
+        self._granted_total, self._job_count = granted, jobs
 
     # ------------------------------------------------------------------ integrity
     def total_credit(self) -> float:
