@@ -455,7 +455,12 @@ def search_structured(query: str, max_results: int = 5, engine: str = "web") -> 
             rows = _web_rows(q, backend)
     except Exception:
         return []
-    from passiveworkers.sanitize import clean as _sanitize
+    from passiveworkers.sanitize import clean
+
+    def _sanitize(text: str) -> str:
+        # One line only: a newline in a title/snippet could forge a "[S9] ..." source line.
+        return " ".join(clean(text).split())
+
     out, seen = [], set()
     for r in rows:
         url = (r.get("href") or r.get("url") or "").strip()
