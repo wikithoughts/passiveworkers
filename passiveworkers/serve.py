@@ -16,8 +16,9 @@ import os
 import pathlib
 import threading
 import uuid
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -31,6 +32,37 @@ _lock = threading.Lock()
 _MAX_JOBS = max(1, int(os.environ.get("PW_SERVE_MAX_JOBS", "2") or 2))   # concurrent research runs
 _sem = threading.BoundedSemaphore(_MAX_JOBS)   # cap concurrency so two heavy runs don't thrash Ollama
 _JOB_HISTORY = 50         # cap the in-memory job map so a long-running desk doesn't leak
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _allowed_hosts() -> frozenset:
+    """Loopback names plus the configured bind host (a wildcard bind adds nothing: it is not a
+    name a browser should be using to reach this unauthenticated desk)."""
+    host = os.environ.get("PW_SERVE_HOST", "127.0.0.1").strip().strip("[]").lower()
+    if host and host not in ("0.0.0.0", "::"):
+        return _LOOPBACK_HOSTS | {host}
+    return _LOOPBACK_HOSTS
+
+
+def _hostname(netloc: str) -> str:
+    """'localhost:8770' → 'localhost', '[::1]:8770' → '::1'; '' when unparseable."""
+    try:
+        return (urlsplit("//" + netloc).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+@app.middleware("http")
+async def _host_allowlist(request: Request, call_next):
+    # DNS-rebinding defence: the desk has no auth by design, so a page on evil.example that
+    # rebinds its name to 127.0.0.1 must not be able to read reports or start runs. A browser
+    # always sends the name it resolved in Host, so only loopback names (+ PW_SERVE_HOST) pass.
+    allowed = _allowed_hosts()
+    origin = request.headers.get("origin")
+    if (_hostname(request.headers.get("host", "")) not in allowed
+            or (origin is not None and _hostname(origin.split("://", 1)[-1]) not in allowed)):
+        return PlainTextResponse("forbidden host", status_code=403)
+    return await call_next(request)
 
 
 class Brief(BaseModel):
@@ -195,7 +227,7 @@ async function refreshHist(){
   try{const l=await (await fetch('/reports')).json();
     const el=document.getElementById('hist');
     if(!l.length){el.textContent='none yet';return}
-    el.innerHTML=l.map(n=>'<div onclick="openReport(\\''+esc(n)+'\\')">'+esc(n)+'</div>').join('');
+    el.innerHTML=l.map(n=>'<div data-name="'+esc(n)+'">'+esc(n)+'</div>').join('');
   }catch(e){}
 }
 async function openReport(name){
@@ -239,6 +271,9 @@ document.getElementById('cancel').onclick=async()=>{
   if(!jobId)return;const cb=document.getElementById('cancel');cb.disabled=true;cb.textContent='cancelling…';
   try{await fetch('/cancel/'+jobId,{method:'POST'})}catch(e){}
 };
+document.getElementById('hist').addEventListener('click',e=>{
+  const d=e.target.closest('[data-name]');if(d)openReport(d.dataset.name);
+});
 refreshHist();
 </script></div></body></html>
 """

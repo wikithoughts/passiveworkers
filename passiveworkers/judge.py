@@ -25,7 +25,14 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from passiveworkers import ollama as _ollama
-from passiveworkers.sanitize import strip_invisible
+from passiveworkers.sanitize import spotlight, strip_invisible
+
+
+def _data_block(label: str, text: str) -> str:
+    """A labelled block of analyst/node output for a judge or editor prompt. Drafts are built from
+    fetched pages (and may echo a smuggled directive), so each one is spotlighted: delimited and
+    marked as data, never instructions (F21). The label stays outside so answer numbering holds."""
+    return f"--- {label} ---\n{spotlight(text)}"
 
 
 def _blind_order(n: int, seed: str) -> list[int]:
@@ -217,7 +224,7 @@ class Judge:
 
         blocks = []
         for display_idx, real_idx in enumerate(order, start=1):
-            blocks.append(f"--- Answer {display_idx} ---\n{answers[real_idx].text}")
+            blocks.append(_data_block(f"Answer {display_idx}", answers[real_idx].text))
         joined = "\n\n".join(blocks)
 
         prompt = (
@@ -256,7 +263,7 @@ class Judge:
         given, the merge TARGETS the best-scoring single answer's own length (M3 refinement) rather
         than just the longest perspective; omit it to fall back to the prior longest-based target
         (used by callers, and tests, that merge without scoring first)."""
-        blocks = [f"--- Perspective {i + 1} ---\n{a.text}" for i, a in enumerate(answers)]
+        blocks = [_data_block(f"Perspective {i + 1}", a.text) for i, a in enumerate(answers)]
         joined = "\n\n".join(blocks)
         longest = max((len(a.text.split()) for a in answers), default=200)
         target = _best_single_word_count(answers, scored) or longest
@@ -304,7 +311,7 @@ class Judge:
         order = _blind_order(len(answers), question)
         blocks = []
         for disp, real in enumerate(order, start=1):
-            blocks.append(f"--- Answer {disp} ---\n{answers[real].text}")
+            blocks.append(_data_block(f"Answer {disp}", answers[real].text))
         joined = "\n\n".join(blocks)
         longest = max((len(a.text.split()) for a in answers), default=200)
         prompt = (
@@ -385,7 +392,7 @@ class Judge:
         read: the deliberate() result (used as fallback + disagreement bullets).
         """
         drafts = "\n\n".join(
-            f"--- Contribution from {c.get('country', '?')} ---\n{strip_invisible((c.get('text') or '')[:2500])}"
+            _data_block(f"Contribution from {c.get('country', '?')}", (c.get("text") or "")[:2500])
             for c in contributions)
         raw = self._generate(
             "You are the editor of a multi-country research report. Read the brief and the "
@@ -450,7 +457,7 @@ class Judge:
             pairs = "\n".join(
                 f"  ITEM: {str(s.get('item', ''))[:300]}\n  OUTPUT: {str(s.get('output', ''))[:400]}"
                 for s in sample) or "  (no sample — node returned nothing)"
-            blocks.append(f"--- Worker {disp} sample ---\n{pairs}")
+            blocks.append(_data_block(f"Worker {disp} sample", pairs))
         raw = self._generate(
             "You are a QA inspector for batch work. Each worker applied the INSTRUCTION to "
             "its items; you see a random sample per worker. Score each worker 0-10 on "
@@ -480,8 +487,8 @@ class Judge:
             "Two answers to the same question are below. Decide which is the better answer "
             "(more complete, accurate, and useful). Judge blind.\n\n"
             f"QUESTION:\n{question}\n\n"
-            f"=== Answer A ===\n{text_a}\n\n"
-            f"=== Answer B ===\n{text_b}\n\n"
+            f"{_data_block('Answer A', text_a)}\n\n"
+            f"{_data_block('Answer B', text_b)}\n\n"
             'Respond with ONLY JSON: {"winner": "A" | "B" | "tie", "reason": "..."}'
         )
         raw = self._generate(prompt, num_predict=300)
