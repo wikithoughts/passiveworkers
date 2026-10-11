@@ -1,11 +1,14 @@
 """Coordinator resource bounds (review F11, F12, F13):
-  • F11 — request bodies over PW_MAX_BODY_BYTES get a 413 BEFORE parsing or auth, whether the
-    size is declared (Content-Length) or only discovered while streaming (chunked / lying client).
-  • F12 — baseline generation runs on at most PW_BASELINE_WORKERS threads, not one per job.
+  • F11 — request bodies over their route's cap (never above PW_MAX_BODY_BYTES) get a 413 BEFORE
+    parsing or auth, whether the size is declared (Content-Length) or only discovered while
+    streaming (chunked / lying client).
+  • F12 — baseline generation runs on at most PW_BASELINE_WORKERS threads, not one per job; a
+    job that finds every slot busy is skipped with a log line and a /metrics counter.
   • F13 — the hot lookups have SQLite indexes, created idempotently on every open.
 """
 import asyncio
 import importlib
+import json
 import sqlite3
 import threading
 
@@ -215,3 +218,104 @@ def test_indexes_are_added_to_an_existing_db_and_reopen_is_idempotent(tmp_path):
     Store(path)                                  # open → indexes created
     s = Store(path)                              # open again → no error, no duplicates
     assert _indexes(s.conn) == _EXPECTED
+
+
+# ----------------------------------------------------------------------- F11 per-route caps
+def _node_secret(client):
+    r = client.post("/nodes/register", headers=TOK,
+                    json={"owner": "op", "answer_model": "m", "profile": {"models": ["m"]}})
+    return r.json()["node_secret"]
+
+
+def _padded_json(prefix: bytes, size: int) -> bytes:
+    """A valid JSON object `prefix…}` padded with whitespace to exactly `size` bytes."""
+    assert len(prefix) + 1 <= size
+    return prefix + b" " * (size - len(prefix) - 1) + b"}"
+
+
+def test_deliver_body_exactly_at_the_cap_passes_and_one_byte_more_is_413(capp, client, monkeypatch):
+    """The worst-case legitimate /deliver — 200k astral chars, each JSON-escaped to 12 bytes —
+    fits under the route cap; the cap is exact (cap passes, cap+1 is refused before the endpoint)."""
+    calls = []
+    monkeypatch.setattr(capp.store, "deliver_assisted",
+                        lambda task_id, node_id, deliverable, **k:
+                        calls.append(len(deliverable)) or {"ok": True})
+    hdr = {"content-type": "application/json", "X-Node-Secret": _node_secret(client)}
+    prefix = json.dumps({"deliverable": "\U0001F600" * 200_000}).encode()[:-1]   # drop the "}"
+    cap = capp._DELIVER_BODY_CAP
+
+    r = client.post("/tasks/t1/deliver", content=_padded_json(prefix, cap), headers=hdr)
+    assert r.status_code == 200, r.text
+    assert calls == [200_000]
+
+    r = client.post("/tasks/t1/deliver", content=_padded_json(prefix, cap + 1), headers=hdr)
+    assert r.status_code == 413
+    assert r.json()["detail"] == "request body too large"
+    assert calls == [200_000]                    # the endpoint never ran
+
+
+_SMALL_ROUTES = ["/users", "/nodes/register", "/nodes/heartbeat", "/admin/enroll",
+                 "/tasks/t1/progress", "/tasks/t1/accept", "/jobs/j1/feedback", "/jobs/j1/rate"]
+
+
+@pytest.mark.parametrize("path", _SMALL_ROUTES)
+def test_small_body_routes_are_capped_at_64_kib(capp, client, path):
+    cap = 64 * 1024
+    hdr = {"content-type": "application/json"}
+    r = client.post(path, content=_padded_json(b'{"x": 1', cap + 1), headers=hdr)
+    assert r.status_code == 413
+    r = client.post(path, content=_padded_json(b'{"x": 1', cap), headers=hdr)
+    assert r.status_code != 413                  # at the cap: the normal auth/validation path
+
+
+def test_small_route_cap_also_applies_to_a_chunked_body(client):
+    def gen():                                   # no Content-Length → Transfer-Encoding: chunked
+        yield b'{"handle": "'
+        yield b"x" * (64 * 1024)
+        yield b'"}'
+
+    r = client.post("/users", content=gen(), headers={"content-type": "application/json"})
+    assert r.status_code == 413
+
+
+def test_free_form_routes_keep_the_ceiling(client):
+    """/result's dict and /jobs have no documented smaller bound, so a 1 MiB body still reaches
+    the endpoint (its auth check / body validation) under the default 4 MiB ceiling."""
+    body = _padded_json(b'{"text": "x"', 1024 * 1024)
+    hdr = {"content-type": "application/json", "X-Node-Secret": "nope", "X-User-Secret": "nope"}
+    assert client.post("/tasks/t1/result", content=body, headers=hdr).status_code == 401
+    assert client.post("/jobs", content=body, headers=hdr).status_code == 422   # no "question"
+
+
+def test_body_cap_for_routes_and_the_ceiling(capp, monkeypatch):
+    small, ceiling = 64 * 1024, 4 * 1024 * 1024
+    assert capp._body_cap_for("POST", "/tasks/t1/deliver") == capp._DELIVER_BODY_CAP
+    assert capp._body_cap_for("POST", "/tasks/t1/result") == ceiling
+    assert capp._body_cap_for("POST", "/jobs/j1/blobs/abc") == ceiling
+    assert capp._body_cap_for("POST", "/users") == small
+    assert capp._body_cap_for("GET", "/status") == small
+    assert capp._body_cap_for("POST", "/tasks/a/b/deliver") == ceiling   # not the deliver route
+    monkeypatch.setenv("PW_MAX_BODY_BYTES", "4096")     # an operator's lower ceiling wins everywhere
+    assert capp._body_cap_for("POST", "/tasks/t1/deliver") == 4096
+    assert capp._body_cap_for("POST", "/users") == 4096
+
+
+# ----------------------------------------------------------------------- F12 skipped baselines
+def test_busy_slots_skip_the_baseline_with_a_log_line_and_a_counter(capp, client, monkeypatch,
+                                                                    capsys):
+    release = threading.Event()
+    monkeypatch.setattr(capp, "_baseline_async", lambda job_id, question: release.wait(10))
+    before = set(threading.enumerate())
+    assert client.get("/metrics").json()["baseline_skipped_busy"] == 0
+    try:
+        assert capp._start_baseline("jobaaaa1", "q") is True
+        assert capp._start_baseline("jobaaaa2", "q") is True     # PW_BASELINE_WORKERS=2
+        assert capp._start_baseline("jobbusy1", "q") is False
+        assert capp._start_baseline("jobbusy2", "q") is False
+    finally:
+        release.set()
+    _join(_new_baseline_threads(before))
+    out = capsys.readouterr().out
+    assert "[baseline] skipped for job jobbusy1: all 2 slots busy" in out
+    assert "2 skipped since start" in out
+    assert client.get("/metrics").json()["baseline_skipped_busy"] == 2
