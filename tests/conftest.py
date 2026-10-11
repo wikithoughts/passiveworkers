@@ -8,6 +8,8 @@ a module's `requests` with `RequestsShim(client, base)` and its network calls hi
 from __future__ import annotations
 
 import importlib
+import sys
+import threading
 
 import pytest
 
@@ -71,6 +73,30 @@ class RequestsShim:
 
     def post(self, url, **kw):
         return _ShimResp(self.client.post(self._path(url), **self._kw(kw)))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_baseline_threads(monkeypatch):
+    """Never start the coordinator's REAL baseline thread in tests. Every POST /jobs starts a
+    `pw-baseline` daemon thread (net/coordinator_app.py) that polls for up to 900 s, tries a local
+    Ollama on loopback and then prints. One still running when the suite ends can print into
+    interpreter shutdown, and CPython aborts with "Fatal Python error: _enter_buffered_busy"
+    (test (3.10), PR #48, CI run 38124448503). Setting PW_BASELINE_LOCAL_MODEL="" is not enough:
+    the thread still starts, polls and prints. A module-level patch would not survive the
+    importlib.reload() calls many tests make, so the guard sits on Thread.start and checks the
+    module's CURRENT _baseline_async. Raising RuntimeError uses _start_baseline's own "can't start
+    a thread" path, which releases the slot. Tests that swap in their own _baseline_async
+    (tests/test_coordinator_limits.py) still get real threads."""
+    real_start = threading.Thread.start
+
+    def start(self):
+        if self.name == "pw-baseline":
+            capp = sys.modules.get("passiveworkers.net.coordinator_app")
+            fn = getattr(capp, "_baseline_async", None)
+            if getattr(fn, "__module__", None) == "passiveworkers.net.coordinator_app":
+                raise RuntimeError("the real baseline thread is disabled in tests")
+        return real_start(self)
+    monkeypatch.setattr(threading.Thread, "start", start)
 
 
 @pytest.fixture

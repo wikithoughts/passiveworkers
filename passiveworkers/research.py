@@ -39,6 +39,7 @@ import ipaddress
 import os
 import re
 import socket
+import threading
 import time
 from functools import lru_cache
 from urllib.parse import urlparse
@@ -106,7 +107,7 @@ def _host_is_public(host: str) -> bool:
 _MAX_REDIRECTS = 3
 
 
-def _guarded_get(url: str, timeout: float, deadline: float | None = None):
+def _guarded_get(url: str, timeout: float, deadline: float | None = None, session=None):
     """A streaming GET that re-validates the host on the INITIAL request AND on EVERY redirect hop.
     A public URL must never be able to 30x-redirect to a loopback/private/CGNAT/metadata address —
     so we disable requests' automatic redirects and follow them manually, bounded and re-checked.
@@ -114,13 +115,15 @@ def _guarded_get(url: str, timeout: float, deadline: float | None = None):
     asker-influenced fetch (page evidence, shard_map fetch:true, the download_extract task type).
     `deadline` (a time.monotonic() value) bounds the whole chain: TimeoutError once it passes, and
     each hop's per-read timeout is clipped to the time left. Every response is closed except the
-    one returned, which the caller owns and must close.
+    one returned, which the caller owns and must close. `session` (default: the requests module)
+    lets fetch_extract route every hop through its deadline-watched session.
     Residual (documented, Phase-3+): getaddrinfo runs again inside requests, so a DNS-rebinding
     attacker could in principle swap a public→private address between this check and the connect
     (TOCTOU); the allowlist narrows it, full IP-pinning needs a custom connector. The timeout is
-    per socket read, so a server dripping its HEADERS can still overrun the deadline inside
-    requests.get; the body read (fetch_extract) is checked against it between chunks."""
+    per socket read, so on its own a server dripping its HEADERS would overrun the deadline inside
+    the get; fetch_extract's _FetchWatchdog shuts the socket down at the deadline to stop that."""
     import requests
+    get = (session or requests).get
     cur = url
     for _hop in range(_MAX_REDIRECTS + 1):
         host = (urlparse(cur).hostname or "").lower()
@@ -132,8 +135,8 @@ def _guarded_get(url: str, timeout: float, deadline: float | None = None):
             if left <= 0:
                 raise TimeoutError(f"fetch deadline exceeded before {cur[:80]}")
             hop_timeout = min(timeout, left)
-        r = requests.get(cur, headers={"User-Agent": _UA}, timeout=hop_timeout, stream=True,
-                         allow_redirects=False)
+        r = get(cur, headers={"User-Agent": _UA}, timeout=hop_timeout, stream=True,
+                allow_redirects=False)
         if not (r.is_redirect or r.is_permanent_redirect):
             return r
         loc = r.headers.get("Location") or ""
@@ -758,6 +761,86 @@ def order_by_recency(evidence: list[dict]) -> list[dict]:
 _HTML_LIKE = ("text/html", "application/xhtml+xml", "text/plain")
 
 
+class _FetchWatchdog:
+    """Makes _FETCH_DEADLINE a hard wall clock. Per-read timeouts only bound ONE recv, so a server
+    dripping a byte every few seconds through its status line/headers, or through a gzip header
+    comment (which urllib3's read1 loops over internally), would hold the fetch thread for hours.
+    At the deadline this shuts down every socket the fetch opened, so whatever recv is blocked
+    returns at once and the fetch fails; fetch_extract then raises TimeoutError. It shuts down a
+    dup() of each socket: shutdown acts on the shared connection, and the dup stays valid after
+    TLS wrapping detaches the original object."""
+
+    def __init__(self, deadline: float):
+        self.fired = threading.Event()
+        self._socks: list[socket.socket] = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(max(0.0, deadline - time.monotonic()), self._fire)
+        self._timer.name = "pw-fetch-deadline"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def track(self, sock: socket.socket) -> None:
+        dup = sock.dup()
+        with self._lock:
+            self._socks.append(dup)
+            if self.fired.is_set():   # connected after the deadline: cut it straight away
+                _shutdown(dup)
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.fired.set()
+            for s in self._socks:
+                _shutdown(s)
+
+    def close(self) -> None:
+        # cancel AND join: the timer thread must never outlive fetch_extract (a daemon thread still
+        # alive at interpreter exit is a shutdown hazard). join() only waits out a _fire already in
+        # progress, which takes the lock briefly and makes non-blocking shutdown() calls.
+        self._timer.cancel()
+        self._timer.join()
+        with self._lock:
+            for s in self._socks:
+                s.close()
+            self._socks.clear()
+
+
+def _shutdown(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
+def _watched_session(watchdog: _FetchWatchdog):
+    """A requests Session whose connections hand each new socket to `watchdog`. The connection
+    class is swapped per pool instance (a subclass of whatever the pool uses, so HTTPS and proxy
+    pools keep their behaviour); the session is per-fetch, so nothing outside it is affected."""
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    def watched(base):
+        class _Watched(base):
+            _pw_watched = True
+
+            def _new_conn(self):
+                sock = super()._new_conn()
+                watchdog.track(sock)
+                return sock
+        return _Watched
+
+    class _Adapter(HTTPAdapter):
+        def get_connection_with_tls_context(self, *a, **kw):
+            pool = super().get_connection_with_tls_context(*a, **kw)
+            if not getattr(pool.ConnectionCls, "_pw_watched", False):
+                pool.ConnectionCls = watched(pool.ConnectionCls)
+            return pool
+
+    sess = requests.Session()
+    sess.mount("http://", _Adapter())
+    sess.mount("https://", _Adapter())
+    return sess
+
+
 def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
     """One polite, SSRF-guarded fetch of a PUBLIC http(s) page → sanitized main text.
     Shared by the researcher (page evidence) and batch fetch shards. Raises on failure —
@@ -765,10 +848,27 @@ def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
     from passiveworkers.sanitize import clean
     # SSRF-guarded GET that re-validates the host on every redirect hop (a public URL must not be
     # able to bounce to an internal address). Raises on a non-public hop or too many redirects.
-    # One wall-clock deadline for redirects + body: `timeout` alone is per socket read, so a server
-    # dripping a byte every 14 s would otherwise hold this thread for hours (F8).
+    # One wall-clock deadline for redirects + headers + body: `timeout` alone is per socket read, so
+    # a server dripping a byte every 14 s would otherwise hold this thread for hours (F8). The
+    # checks below fail fast between hops/chunks; the watchdog cuts a recv that is still blocked.
     deadline = time.monotonic() + _FETCH_DEADLINE
-    r = _guarded_get(url, timeout=15, deadline=deadline)
+    watchdog = _FetchWatchdog(deadline)
+    try:
+        with _watched_session(watchdog) as sess:
+            raw = _fetch_body(url, deadline, sess, watchdog)
+    except Exception as e:
+        if watchdog.fired.is_set():
+            raise TimeoutError("fetch deadline exceeded") from e
+        raise
+    finally:
+        watchdog.close()
+    text, date = _extract_main(raw)
+    text = clean(text)[:max_chars]
+    return (text, date) if with_date else text
+
+
+def _fetch_body(url: str, deadline: float, sess, watchdog: _FetchWatchdog) -> str:
+    r = _guarded_get(url, timeout=15, deadline=deadline, session=sess)
     try:
         r.raise_for_status()
         # A PDF/image/binary body decoded as UTF-8 ("replace") still LOOKS like extracted text and
@@ -790,9 +890,8 @@ def fetch_extract(url: str, max_chars: int = 6000, with_date: bool = False):
                 break
             buf.append(chunk)
             size += len(chunk)
+        if watchdog.fired.is_set():   # a cut socket can look like a clean EOF: never keep that body
+            raise TimeoutError("fetch deadline exceeded while reading the body")
     finally:
         r.close()
-    raw = b"".join(buf)[:_FETCH_CAP].decode("utf-8", "replace")
-    text, date = _extract_main(raw)
-    text = clean(text)[:max_chars]
-    return (text, date) if with_date else text
+    return b"".join(buf)[:_FETCH_CAP].decode("utf-8", "replace")
