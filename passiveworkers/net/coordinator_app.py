@@ -23,6 +23,11 @@ Endpoints:
   GET  /dashboard                                      → live operator map
   GET  /healthz
 
+Request bodies are capped at PW_MAX_BODY_BYTES (default 4 MiB) BEFORE any parsing or auth: a larger
+declared Content-Length, or a chunked body that streams past the cap, gets a 413 (F11 review). The
+cap sits above the largest legitimate body (a 200k-char /deliver JSON-escaped is ≤ ~2.4 MB); blob
+uploads keep their own tighter 512 KiB cap.
+
 Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app
 """
 
@@ -34,7 +39,7 @@ import secrets
 import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from passiveworkers.net import geoip
@@ -70,7 +75,81 @@ if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
     print("[coordinator] PW_TRUST_XFF enabled — rate-limit keys trust X-Forwarded-For. Ensure your "
           "reverse proxy sets AND sanitizes that header (drops client-supplied values), or attackers "
           "can rotate it to defeat per-client limits.", flush=True)
+
+
+_MAX_BODY_DEFAULT = 4 * 1024 * 1024   # see the module docstring for why 4 MiB
+
+
+def _max_body_bytes() -> int:
+    """The request-body cap in bytes (PW_MAX_BODY_BYTES). Invalid or non-positive → the default:
+    there is deliberately no 'unbounded' setting."""
+    try:
+        cap = int(os.environ.get("PW_MAX_BODY_BYTES", _MAX_BODY_DEFAULT))
+    except (TypeError, ValueError):
+        return _MAX_BODY_DEFAULT
+    return cap if cap > 0 else _MAX_BODY_DEFAULT
+
+
+class _BodyTooLarge(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="request body too large")
+
+
+class BodySizeLimit:
+    """Pure-ASGI request-body cap (F11 review). A declared Content-Length over the cap is refused
+    before the app runs at all; otherwise the body is counted as it streams (chunked or lying
+    clients), and the first message that crosses the cap raises 413 — the app never buffers more
+    than cap + one server-sized chunk. Raised as an HTTPException so FastAPI's body parser re-raises
+    it unchanged (a generic error there would become a 400)."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cap = _max_body_bytes()
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    break          # the server rejects malformed lengths; the stream count still applies
+                if declared > cap:
+                    await JSONResponse({"detail": "request body too large"}, status_code=413)(
+                        scope, receive, send)
+                    return
+                break
+        seen = 0
+        started = False
+
+        async def capped_receive():
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > cap:
+                    raise _BodyTooLarge()
+            return message
+
+        async def tracking_send(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, capped_receive, tracking_send)
+        except _BodyTooLarge:
+            if started:
+                raise
+            await JSONResponse({"detail": "request body too large"}, status_code=413)(
+                scope, receive, send)
+
+
 app = FastAPI(title="Passive Workers — Council Coordinator")
+app.add_middleware(BodySizeLimit)
 store = Store()
 _rl = RateLimiter()   # per-process sliding-window rate limiter (D36)
 
@@ -419,6 +498,44 @@ def _baseline_async(job_id: str, question: str) -> None:
         print(f"[baseline] store failed for job {job_id[:8]}: {type(e).__name__}: {e}", flush=True)
 
 
+def _baseline_workers() -> int:
+    try:
+        return max(1, int(os.environ.get("PW_BASELINE_WORKERS", "4")))
+    except (TypeError, ValueError):
+        return 4
+
+
+# F12 review: at most `_BASELINE_MAX` baseline threads at once instead of one per job. Each can live
+# up to 900 s (waiting for a local job to settle), so a job submitted while every slot is busy simply
+# gets no baseline — never a queued backlog. Daemon threads, not a ThreadPoolExecutor: executor
+# workers are joined at interpreter exit, which would stall a coordinator shutdown for 15 minutes.
+_BASELINE_MAX = _baseline_workers()
+_baseline_slots = threading.BoundedSemaphore(_BASELINE_MAX)
+
+
+def _start_baseline(job_id: str, question: str) -> bool:
+    """Start the baseline if a slot is free. False (and a log line) when all slots are busy."""
+    slots = _baseline_slots   # release the semaphore we acquired, even if the global is rebound
+    if not slots.acquire(blocking=False):
+        print(f"[baseline] skipped for job {job_id[:8]}: {_BASELINE_MAX} already running", flush=True)
+        return False
+
+    def run() -> None:
+        try:
+            _baseline_async(job_id, question)
+        except Exception as e:  # best-effort, like _baseline_async's own store failure
+            print(f"[baseline] failed for job {job_id[:8]}: {type(e).__name__}: {e}", flush=True)
+        finally:
+            slots.release()
+
+    try:
+        threading.Thread(target=run, daemon=True, name="pw-baseline").start()
+    except RuntimeError:   # can't start a thread (resource limit / interpreter shutdown)
+        slots.release()
+        return False
+    return True
+
+
 @app.get("/job-types")
 def job_types():
     """The marketplace catalog — what kinds of work computers can request here."""
@@ -442,8 +559,7 @@ def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     if out.get("status") == "pending_answers" and not task_behavior(body.type).sharded:
         # the honest single-model compare only makes sense for answer/report jobs —
         # a one-shot model can't process a sharded item batch (shard_map/download_extract/code_generation)
-        threading.Thread(target=_baseline_async, args=(out["job_id"], body.question),
-                         daemon=True, name="pw-baseline").start()
+        _start_baseline(out["job_id"], body.question)
     return out
 
 
