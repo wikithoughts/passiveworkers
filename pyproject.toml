@@ -107,10 +107,10 @@ filterwarnings = [
 ]
 
 [tool.pyright]
-# Scoped, ADVISORY type-checking (R36/D52). Starts on the federation layer only — the highest-value,
+# Scoped, BLOCKING type-checking (R36/D52). Starts on the federation layer only — the highest-value,
 # most-tested surface, where the pydantic request/response models already carry real types. `basic` mode
 # is Any-tolerant, so the dynamic `sqlite3.Row["col"]` / `json.loads(...)` patterns don't explode. The CI
-# `types` job runs this but does NOT gate the build (continue-on-error) — signal now, enforcement later.
+# `types` job runs this and gates the build: a pyright error fails `types` and so the required `ci-ok`.
 # Widen `include` module-by-module as the surface is annotated; NOT strict, NOT repo-wide by design.
 include = ["passiveworkers/net"]
 typeCheckingMode = "basic"
