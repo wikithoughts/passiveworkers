@@ -190,3 +190,6 @@ def test_run_cap_leaves_real_text_alone():
     assert clean(text) == text
     # each space-separated run gets its own budget
     assert clean(" ".join([ZWJ.join(["👨"] * 9)] * 3)).count(ZWJ) == 24
+    # the accepted cost (D55): an unspaced row past the cap splits; a space between them doesn't
+    family = f"👨{ZWJ}👩{ZWJ}👧{ZWJ}👦"
+    assert clean(family * 3).count(ZWJ) == 8 and clean(" ".join([family] * 3)) == " ".join([family] * 3)

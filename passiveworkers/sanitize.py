@@ -66,7 +66,8 @@ _KEEP = (
 _INVISIBLE = re.compile(f"(?P<keep>{_KEEP})|{_INVISIBLE_CLASS}")
 # A "run" is an unbroken stretch of emoji, Arabic letters/marks and keycap parts (stripped invisibles
 # don't break it, or a ZWSP would reset the count). The longest real sequences (kiss, family with
-# VS16) keep 4, so 8 covers two of them back to back; kept forms past the cap are stripped.
+# VS16) keep 4, so 8 covers two of them back to back; kept forms past the cap are stripped (a longer
+# unspaced row of joined emoji splits into separate emoji: accepted over-stripping, D55).
 _MAX_KEPT_PER_RUN = 8
 _RUN_GAP = re.compile(f"(?:[{_EMOJI}{_ARABIC_LETTER}{_ARABIC_MARK}0-9#*\u20e3]|{_INVISIBLE_CLASS})*")
 
