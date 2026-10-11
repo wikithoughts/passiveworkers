@@ -347,7 +347,6 @@ def test_fetch_extract_real_page_through_the_watched_session(monkeypatch):
     # happy path over a real loopback socket: the swapped connection class still fetches, and the
     # watchdog leaves no timer thread and no dup()ed fd behind
     import os
-    import threading
     srv, stop, th = _drip_server(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 39"
                                  b"\r\nConnection: close\r\n\r\n<html><body><p>served</p></body></html>",
                                  b"", give_up=0)
@@ -360,13 +359,37 @@ def test_fetch_extract_real_page_through_the_watched_session(monkeypatch):
         stop.set()
         th.join(2)
         srv.close()
-    for _ in range(100):
-        if not any(t.name == "pw-fetch-deadline" for t in threading.enumerate()):
-            break
-        time.sleep(0.01)
-    assert not any(t.name == "pw-fetch-deadline" for t in threading.enumerate())
+    assert not _watchdog_threads()   # joined in fetch_extract's finally: no polling needed
     if fds is not None:
         assert len(os.listdir("/proc/self/fd")) <= len(fds)
+
+
+def _watchdog_threads():
+    import threading
+    return [t for t in threading.enumerate() if t.name == "pw-fetch-deadline" and t.is_alive()]
+
+
+def test_fetch_watchdog_thread_never_outlives_fetch_extract(monkeypatch):
+    # A daemon timer still alive at interpreter exit is a shutdown hazard, so fetch_extract must
+    # cancel AND join it on every exit path: success, error, and the deadline actually firing.
+    import pytest
+    monkeypatch.setattr(R, "_host_is_public", lambda h: True)
+    _patch_get(monkeypatch, lambda url, **kw: _Resp(body=b"<html><body><p>fine</p></body></html>"))
+    assert "fine" in R.fetch_extract("http://good.example/page")
+    assert not _watchdog_threads()
+
+    def boom(url, **kw):
+        raise ConnectionError("refused")
+    _patch_get(monkeypatch, boom)
+    with pytest.raises(ConnectionError):
+        R.fetch_extract("http://good.example/page")
+    assert not _watchdog_threads()
+
+    monkeypatch.setattr(R, "_FETCH_DEADLINE", 0.0)   # already due: the timer fires (or is cancelled) mid-call
+    _patch_get(monkeypatch, lambda url, **kw: _Resp(body=b"<p>late</p>"))
+    with pytest.raises(TimeoutError):
+        R.fetch_extract("http://good.example/page")
+    assert not _watchdog_threads()
 
 
 # --------------------------------------------------------- keyed web backends (R33/D49)

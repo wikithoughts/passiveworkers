@@ -793,7 +793,11 @@ class _FetchWatchdog:
                 _shutdown(s)
 
     def close(self) -> None:
+        # cancel AND join: the timer thread must never outlive fetch_extract (a daemon thread still
+        # alive at interpreter exit is a shutdown hazard). join() only waits out a _fire already in
+        # progress, which takes the lock briefly and makes non-blocking shutdown() calls.
         self._timer.cancel()
+        self._timer.join()
         with self._lock:
             for s in self._socks:
                 s.close()
