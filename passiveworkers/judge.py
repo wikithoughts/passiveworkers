@@ -391,8 +391,12 @@ class Judge:
         contributions: payload answers [{country, model, lens, text, research}].
         read: the deliberate() result (used as fallback + disagreement bullets).
         """
+        # country comes from a node's payload (untrusted): one short line, so it can't forge a block
+        # header or slip an instruction in outside the data delimiters
         drafts = "\n\n".join(
-            _data_block(f"Contribution from {c.get('country', '?')}", (c.get("text") or "")[:2500])
+            _data_block("Contribution from "
+                        + (" ".join(strip_invisible(str(c.get("country") or "?")).split())[:40] or "?"),
+                        (c.get("text") or "")[:2500])
             for c in contributions)
         raw = self._generate(
             "You are the editor of a multi-country research report. Read the brief and the "

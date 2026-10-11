@@ -41,6 +41,7 @@ brief in, live progress, rendered report, history of everything you've researche
 it (and the operator map, and the marketplace UI) without installing anything: the live
 evidence site at **[wikithoughts.github.io/passiveworkers](https://wikithoughts.github.io/passiveworkers/)**,
 or the screenshots in [docs/preview/](docs/preview/).
+The desk has no auth and only answers loopback names; to reach it from a LAN IP or Tailscale name, set e.g. `PW_SERVE_HOST=0.0.0.0 PW_SERVE_ALLOWED_HOSTS=desk.tailnet.ts.net,192.168.1.5` on a network you trust.
 
 ## What leaves your machine
 

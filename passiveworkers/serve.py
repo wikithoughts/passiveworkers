@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import threading
 import uuid
-from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -36,32 +36,59 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _allowed_hosts() -> frozenset:
-    """Loopback names plus the configured bind host (a wildcard bind adds nothing: it is not a
-    name a browser should be using to reach this unauthenticated desk)."""
+    """Loopback names, the configured bind host (a wildcard bind adds nothing: it is not a name a
+    browser should be using to reach this unauthenticated desk) and any PW_SERVE_ALLOWED_HOSTS
+    entries (comma list of hostnames/IPs, for reaching the desk over a LAN or Tailscale name)."""
+    extra = set()
     host = os.environ.get("PW_SERVE_HOST", "127.0.0.1").strip().strip("[]").lower()
     if host and host not in ("0.0.0.0", "::"):
-        return _LOOPBACK_HOSTS | {host}
-    return _LOOPBACK_HOSTS
+        extra.add(host)
+    for entry in os.environ.get("PW_SERVE_ALLOWED_HOSTS", "").split(","):
+        parsed = _split_host(entry.strip().lower())
+        if parsed and parsed[0] not in ("0.0.0.0", "::"):
+            extra.add(parsed[0])
+    return _LOOPBACK_HOSTS | extra
 
 
-def _hostname(netloc: str) -> str:
-    """'localhost:8770' → 'localhost', '[::1]:8770' → '::1'; '' when unparseable."""
-    try:
-        return (urlsplit("//" + netloc).hostname or "").lower()
-    except ValueError:
-        return ""
+# host[:port] exactly, as a browser sends it: no userinfo, path, spaces or other junk.
+_HOST_PORT = re.compile(r"(?:\[(?P<v6>[0-9a-f:.]+)\]|(?P<name>[a-z0-9.-]+))(?::(?P<port>[0-9]{1,5}))?")
+_DEFAULT_PORT = {"http": 80, "https": 443}
+
+
+def _split_host(netloc: str):
+    """'localhost:8770' → ('localhost', 8770), '[::1]' → ('::1', None); None when it is not a
+    plain host[:port] (e.g. 'evil@localhost', '[::1', '')."""
+    m = _HOST_PORT.fullmatch(netloc)
+    if not m:
+        return None
+    return m.group("v6") or m.group("name"), int(m.group("port")) if m.group("port") else None
+
+
+def _origin_of(scheme: str, netloc: str):
+    """(scheme, host, port) with the scheme's default port filled in; None when unparseable."""
+    parsed = _split_host(netloc)
+    if parsed is None or scheme not in _DEFAULT_PORT:
+        return None
+    return scheme, parsed[0], parsed[1] or _DEFAULT_PORT[scheme]
 
 
 @app.middleware("http")
 async def _host_allowlist(request: Request, call_next):
     # DNS-rebinding defence: the desk has no auth by design, so a page on evil.example that
     # rebinds its name to 127.0.0.1 must not be able to read reports or start runs. A browser
-    # always sends the name it resolved in Host, so only loopback names (+ PW_SERVE_HOST) pass.
-    allowed = _allowed_hosts()
-    origin = request.headers.get("origin")
-    if (_hostname(request.headers.get("host", "")) not in allowed
-            or (origin is not None and _hostname(origin.split("://", 1)[-1]) not in allowed)):
+    # always sends the name it resolved in Host, so only loopback names (+ PW_SERVE_HOST and
+    # PW_SERVE_ALLOWED_HOSTS) pass. A cross-origin browser request must also carry an Origin equal
+    # to the desk's own (scheme, host AND port), so another app on localhost:3000 can't POST here.
+    host = request.headers.get("host", "").lower()
+    parsed = _split_host(host)
+    if parsed is None or parsed[0] not in _allowed_hosts():
         return PlainTextResponse("forbidden host", status_code=403)
+    origin = request.headers.get("origin")
+    if origin is not None:
+        scheme, _, netloc = origin.lower().partition("://")
+        served = _origin_of(request.url.scheme, host)
+        if served is None or _origin_of(scheme, netloc) != served:
+            return PlainTextResponse("forbidden origin", status_code=403)
     return await call_next(request)
 
 
