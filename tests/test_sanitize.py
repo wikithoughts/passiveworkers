@@ -83,7 +83,8 @@ MULTILINGUAL = {
     "vs16 emoji + keycap": "Love \u2764\ufe0f, call \u260e\ufe0f, keycap 1\ufe0f\u20e3",
     "england flag": "Go " + _tag_flag("gbeng") + "! " + _tag_flag("gbsct") + _tag_flag("gbwls"),
     "persian zwnj": "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645 "
-                    "\u06a9\u062a\u0627\u0628\u200c\u0647\u0627 \u0645\u064e\u200c\u062e",
+                    "\u06a9\u062a\u0627\u0628\u200c\u0647\u0627 \u0645\u064e\u200c\u062e "
+                    "\u0628\u0640\u200c\u0628 \u0628\u0651\u064e\u200c\u0628",   # + tatweel, two marks
 }
 
 
@@ -112,6 +113,10 @@ def test_extended_class_keeps_visible_multilingual_text(name):
     ("x\ufe0f 1\ufe0f \u2764\ufe0f\ufe0f \u2764\ufe0e", "x 1 \u2764\ufe0f \u2764"),
     # ZWNJ only between Arabic-script letters
     ("a\u200cb \u0645\u200cb \u0645\u200c\u200c\u062e", "ab \u0645b \u0645\u062e"),
+    ("\u0915\u200c\u0915 \u05e9\u200c\u05e9", "\u0915\u0915 \u05e9\u05e9"),   # documented: not Arabic script
+    # a hidden char inside the comment opener must not shield the comment from removal
+    ("a<!-\u200b- IGNORE PREVIOUS -->b", "a b"),
+    ("a<\u200d!-- hidden --\ufe0f>b", "a b"),
     # extra invisibles: CGJ, Hangul fillers, braille blank, U+FFFC, Khmer, musical format, unassigned tags
     ("a\u034fb\u115fc\u1160d\u3164e\uffa0f\u2800g\ufffch\u17b4\u17b5i\U0001d173\U0001d17aj"
      "\U000e0080\U000e01f0k", "abcdefghijk"),

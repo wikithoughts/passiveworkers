@@ -38,12 +38,13 @@ _INVISIBLE_CLASS = (
 
 # A few of those characters carry real meaning in legitimate text, so they survive in exactly the
 # contexts where they do — and nowhere else. Each kept form is one fixed code point (or one of three
-# fixed sequences), so it can carry at most "present / absent", never a decodable payload.
+# fixed sequences) next to a visible emoji or letter: at most one "present / absent" bit per position,
+# never a payload a model could read back as text (unlike TAG-encoded ASCII).
 _EMOJI = ("\u00a9\u00ae\u203c\u2049\u2122\u2139\u2194-\u2199\u21a9\u21aa\u231a\u231b\u2328\u23cf"
           "\u23e9-\u23f3\u23f8-\u23fa\u24c2\u25aa\u25ab\u25b6\u25c0\u25fb-\u25fe\u2600-\u27bf"
           "\u2934\u2935\u2b05-\u2b07\u2b1b\u2b1c\u2b50\u2b55\u3030\u303d\u3297\u3299"
           "\U0001f000-\U0001faff")         # ~Extended_Pictographic, incl. skin-tone modifiers
-_ARABIC_LETTER = ("\u0620-\u063f\u0641-\u064a\u066e\u066f\u0671-\u06d3\u06d5\u06ee\u06ef"
+_ARABIC_LETTER = ("\u0620-\u064a\u066e\u066f\u0671-\u06d3\u06d5\u06ee\u06ef"
                   "\u06fa-\u06fc\u06ff\u0750-\u077f\u0870-\u0887\u0889-\u088e\u08a0-\u08c9"
                   "\ufb50-\ufbb1\ufbd3-\ufd3d\ufd50-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc")
 _ARABIC_MARK = "\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7\u06e8\u06ea-\u06ed"
@@ -57,7 +58,8 @@ _KEEP = (
     f"|(?:(?<=[{_EMOJI}])|(?<=[{_EMOJI}]\ufe0f))\u200d(?=[{_EMOJI}])"   # ZWJ inside an emoji sequence
     f"|(?<=[{_EMOJI}])\ufe0f"                                            # VS16 after an emoji base
     f"|(?<=[0-9#*])\ufe0f(?=\u20e3)"                                    # keycap: 1 + VS16 + U+20E3
-    f"|(?:(?<=[{_ARABIC_LETTER}])|(?<=[{_ARABIC_LETTER}][{_ARABIC_MARK}]))"
+    f"|(?:(?<=[{_ARABIC_LETTER}])|(?<=[{_ARABIC_LETTER}][{_ARABIC_MARK}])"
+    f"|(?<=[{_ARABIC_LETTER}][{_ARABIC_MARK}][{_ARABIC_MARK}]))"
     f"\u200c(?=[{_ARABIC_LETTER}])"                                      # ZWNJ between Arabic letters
 )
 _INVISIBLE = re.compile(f"(?P<keep>{_KEEP})|{_INVISIBLE_CLASS}")
@@ -81,14 +83,13 @@ def strip_invisible(text: str) -> str:
     (whitespace and newlines preserved). Use this to sanitize model OUTPUT before it enters a
     report: it neutralizes smuggled hidden characters re-emitted from an injected source while
     keeping markdown structure (lists, code, citations) intact."""
-    text = _HTML_COMMENT.sub(" ", text or "")
-    return _strip(text)
+    return _HTML_COMMENT.sub(" ", _strip(text or ""))
 
 
 def clean(text: str) -> str:
     """Strip invisible-text injection vectors and HTML comments from fetched content."""
-    text = _HTML_COMMENT.sub(" ", text or "")
-    text = _strip(text)
+    # invisibles go first, so a hidden char inside "<!--" can't stop the comment being removed
+    text = _HTML_COMMENT.sub(" ", _strip(text or ""))
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
@@ -109,8 +110,8 @@ MAX_BRIEF_CHARS = int(os.environ.get("PW_MAX_BRIEF_CHARS", "4000"))
 def sanitize_brief(text: str, limit: int = 0) -> str:
     """Clean + length-bound a user-supplied brief/question. Returns a safe, trimmed string."""
     limit = limit or MAX_BRIEF_CHARS
-    text = _HTML_COMMENT.sub(" ", text or "")
-    text = _strip(text)
+    # invisibles go first, so a hidden char inside "<!--" can't stop the comment being removed
+    text = _HTML_COMMENT.sub(" ", _strip(text or ""))
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)        # collapse runaway newlines (visual padding/DoS)
     text = text.strip()
