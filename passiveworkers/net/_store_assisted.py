@@ -47,23 +47,27 @@ class _AssistedMixin(_StoreProtocol):
                 return {"job_id": job_id, "status": "failed",
                         "error": "min_reputation must be a number 0-10"}
         pool = pool_for("assisted")
-        self.ledger.open_account(asker)
-        # HOLD the reward in escrow now so it can't be spent before the operator delivers.
+        # The account opening and the escrow hold below are applied IN MEMORY; the offer only
+        # exists once its job + task rows COMMIT. If any write or the commit fails, roll the SQL
+        # back AND restore the ledger (#32's pattern). Refunding the hold alone (review D35) left the
+        # already-executed jobs INSERT in the open transaction: the next unrelated commit persisted a
+        # pending_assist job whose pool escrow never held, and once it expired the reaper refunded
+        # the asker a second time out of ANOTHER offer's hold (review batch 6, §7).
+        snap = self.ledger.snapshot()
         try:
-            self.ledger.hold(asker, pool)
-        except InsufficientCredit:
-            self.conn.execute(
-                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
-                " VALUES(?,?,?,?,?,?,?,?,?)",
-                (job_id, asker, question, "failed", _now(), None, None,
-                 "insufficient credit — help on a job first", None))
-            self._save_ledger(); self.conn.commit()
-            return {"job_id": job_id, "status": "failed",
-                    "error": "insufficient credit — help on a job first"}
-        # The escrow hold is now applied IN MEMORY. If persisting the offer fails, undo it so the
-        # in-memory ledger can't diverge from the DB (review D35) — otherwise a phantom hold would
-        # later persist, stranding the asker's credit in escrow for a job that never existed.
-        try:
+            self.ledger.open_account(asker)
+            # HOLD the reward in escrow now so it can't be spent before the operator delivers.
+            try:
+                self.ledger.hold(asker, pool)
+            except InsufficientCredit:
+                self.conn.execute(
+                    "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                    (job_id, asker, question, "failed", _now(), None, None,
+                     "insufficient credit — help on a job first", None))
+                self._save_ledger(); self.conn.commit()
+                return {"job_id": job_id, "status": "failed",
+                        "error": "insufficient credit — help on a job first"}
             self.conn.execute(
                 "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
                 "pool,type,then_spec) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -81,7 +85,10 @@ class _AssistedMixin(_StoreProtocol):
                  json.dumps(payload), None, None, None, "", "", "", _now(), None, None))
             self._save_ledger(); self.conn.commit()
         except Exception:
-            self.ledger.refund(asker, pool)   # roll the in-memory hold back to keep ledger==DB
+            try:
+                self.conn.rollback()
+            finally:
+                self.ledger.restore(snap)
             raise
         return {"job_id": job_id, "status": "pending_assist", "price": pool}
 
