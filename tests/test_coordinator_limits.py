@@ -3,7 +3,8 @@
     parsing or auth, whether the size is declared (Content-Length) or only discovered while
     streaming (chunked / lying client).
   • F12 — baseline generation runs on at most PW_BASELINE_WORKERS threads, not one per job; a
-    job that finds every slot busy is skipped with a log line and a /metrics counter.
+    job that finds every slot busy is skipped with an exact /metrics counter and a throttled log
+    line (the first skip, then every Nth).
   • F13 — the hot lookups have SQLite indexes, created idempotently on every open.
 """
 import asyncio
@@ -291,7 +292,8 @@ def test_body_cap_for_routes_and_the_ceiling(capp, monkeypatch):
     small, ceiling = 64 * 1024, 4 * 1024 * 1024
     assert capp._body_cap_for("POST", "/tasks/t1/deliver") == capp._DELIVER_BODY_CAP
     assert capp._body_cap_for("POST", "/tasks/t1/result") == ceiling
-    assert capp._body_cap_for("POST", "/jobs/j1/blobs/abc") == ceiling
+    assert capp._body_cap_for("POST", "/jobs/j1/blobs/abc") == capp._BLOB_BODY_CAP
+    assert capp._BLOB_BODY_CAP == capp._BLOB_CAP + 16 * 1024    # derived from the handler's cap
     assert capp._body_cap_for("POST", "/users") == small
     assert capp._body_cap_for("GET", "/status") == small
     assert capp._body_cap_for("POST", "/tasks/a/b/deliver") == ceiling   # not the deliver route
@@ -317,5 +319,127 @@ def test_busy_slots_skip_the_baseline_with_a_log_line_and_a_counter(capp, client
     _join(_new_baseline_threads(before))
     out = capsys.readouterr().out
     assert "[baseline] skipped for job jobbusy1: all 2 slots busy" in out
-    assert "2 skipped since start" in out
+    assert "1 skipped since start" in out
+    assert "jobbusy2" not in out                 # throttled: only the first and every Nth are logged
     assert client.get("/metrics").json()["baseline_skipped_busy"] == 2
+
+
+def test_skip_log_is_throttled_but_the_counter_stays_exact(capp, client, monkeypatch, capsys):
+    """Low 5 (#50 review): one line for the first skip and then every Nth, not one per job."""
+    monkeypatch.setattr(capp, "_BASELINE_SKIP_LOG_EVERY", 3)
+    monkeypatch.setattr(capp, "_baseline_slots", threading.BoundedSemaphore(1))
+    assert capp._baseline_slots.acquire(blocking=False)          # every slot busy
+    try:
+        for i in range(1, 8):
+            assert capp._start_baseline(f"busy{i:04d}", "q") is False
+    finally:
+        capp._baseline_slots.release()
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("[baseline] skipped")]
+    assert [ln.split()[4].rstrip(":") for ln in lines] == ["busy0001", "busy0003", "busy0006"]
+    assert "6 skipped since start" in lines[-1]
+    assert client.get("/metrics").json()["baseline_skipped_busy"] == 7
+
+
+# ----------------------------------------------- F11 exact caps on every cap class (#50 review)
+def test_small_route_body_exactly_at_the_cap_passes_and_one_byte_more_is_413(client):
+    cap = 64 * 1024
+    hdr = {"content-type": "application/json"}
+    r = client.post("/users", content=_padded_json(b'{"handle": "alice"', cap), headers=hdr)
+    assert r.status_code == 200 and r.json()["user_secret"]
+    r = client.post("/users", content=_padded_json(b'{"handle": "bob"', cap + 1), headers=hdr)
+    assert r.status_code == 413
+    assert r.json()["detail"] == "request body too large"
+
+
+def test_result_body_exactly_at_the_ceiling_passes_and_one_byte_more_is_413(capp, client,
+                                                                            monkeypatch):
+    calls = _spy_complete(capp, monkeypatch)
+    hdr = {"content-type": "application/json", "X-Node-Secret": _node_secret(client)}
+    ceiling = 4 * 1024 * 1024
+    r = client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', ceiling), headers=hdr)
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1
+    r = client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', ceiling + 1),
+                    headers=hdr)
+    assert r.status_code == 413
+    assert len(calls) == 1                       # the endpoint never ran
+
+
+def test_jobs_body_exactly_at_the_ceiling_passes_and_one_byte_more_is_413(capp, client,
+                                                                          monkeypatch):
+    calls = []
+    monkeypatch.setattr(capp.store, "create_job",
+                        lambda *a, **k: calls.append(a) or {"job_id": "j1", "status": "queued"})
+    usec = client.post("/users", json={"handle": "alice"}).json()["user_secret"]
+    hdr = {"content-type": "application/json", "X-User-Secret": usec}
+    ceiling = 4 * 1024 * 1024
+    r = client.post("/jobs", content=_padded_json(b'{"question": "q"', ceiling), headers=hdr)
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1
+    r = client.post("/jobs", content=_padded_json(b'{"question": "q"', ceiling + 1), headers=hdr)
+    assert r.status_code == 413
+    assert len(calls) == 1
+
+
+def test_blob_route_cap_is_the_chunk_cap_plus_slack_not_the_ceiling(capp, client, monkeypatch):
+    """Medium 1 (#50 review): a blob upload over _BLOB_BODY_CAP is refused before auth, not let
+    through to 4 MiB; within it, put_blob's own exact _BLOB_CAP check still decides."""
+    stored = []
+    node_secret = _node_secret(client)
+    node_id = capp.store.node_for_secret(node_secret)
+    monkeypatch.setattr(capp.store, "assisted_claimant", lambda job_id: node_id)   # it claimed j1
+    monkeypatch.setattr(capp.store, "put_blob",
+                        lambda job_id, h, data: stored.append(len(data)) or {"ok": True})
+    good = {"content-type": "application/octet-stream", "X-Node-Secret": node_secret}
+    bad = {"content-type": "application/octet-stream", "X-Node-Secret": "nope"}
+    chunk, route_cap = capp._BLOB_CAP, capp._BLOB_BODY_CAP
+
+    r = client.post("/jobs/j1/blobs/h1", content=b"x" * chunk, headers=good)
+    assert r.status_code == 200, r.text
+    assert stored == [chunk]
+    r = client.post("/jobs/j1/blobs/h1", content=b"x" * (chunk + 1), headers=good)
+    assert r.status_code == 413 and r.json()["detail"] == "chunk too large"     # the handler's cap
+    r = client.post("/jobs/j1/blobs/h1", content=b"x" * route_cap, headers=bad)
+    assert r.status_code == 401                  # within the route cap: reaches auth
+    r = client.post("/jobs/j1/blobs/h1", content=b"x" * (route_cap + 1), headers=bad)
+    assert r.status_code == 413 and r.json()["detail"] == "request body too large"   # pre-auth
+    assert stored == [chunk]
+
+
+def test_get_with_a_body_over_64_kib_is_413(client):
+    cap = 64 * 1024
+    assert client.request("GET", "/status", content=b"x" * cap).status_code == 200
+    r = client.request("GET", "/status", content=b"x" * (cap + 1))
+    assert r.status_code == 413
+    assert r.json()["detail"] == "request body too large"
+
+
+def test_trailing_slash_gets_the_route_cap_not_the_ceiling(capp, client):
+    cap = 64 * 1024
+    hdr = {"content-type": "application/json"}
+    r = client.post("/users/", content=_padded_json(b'{"x": 1', cap + 1), headers=hdr,
+                    follow_redirects=False)
+    assert r.status_code == 413                  # was a 307 to /users under the 4 MiB ceiling
+    r = client.post("/users/", content=_padded_json(b'{"x": 1', cap), headers=hdr,
+                    follow_redirects=False)
+    assert r.status_code != 413
+    assert capp._body_cap_for("POST", "/tasks/t1/deliver/") == capp._DELIVER_BODY_CAP
+    assert capp._body_cap_for("POST", "/jobs/j1/blobs/abc/") == capp._BLOB_BODY_CAP
+
+
+def test_root_path_prefix_gets_the_route_cap(capp):
+    """Medium-Low 3 (#50 review): uvicorn --root-path puts the prefix in scope["path"] too; the
+    cap must be chosen from the app-relative path, as Starlette's router does."""
+    from fastapi.testclient import TestClient
+    client = TestClient(capp.app, root_path="/pw")
+    cap = 64 * 1024
+    hdr = {"content-type": "application/json"}
+    r = client.post("/pw/users", content=_padded_json(b'{"handle": "alice"', cap), headers=hdr)
+    assert r.status_code == 200, r.text          # routed to /users under the prefix
+    r = client.post("/pw/users", content=_padded_json(b'{"handle": "bob"', cap + 1), headers=hdr)
+    assert r.status_code == 413
+    small, ceiling = cap, 4 * 1024 * 1024
+    assert capp._body_cap_for("POST", "/pw/users", "/pw") == small
+    assert capp._body_cap_for("POST", "/users", "/pw") == small        # server left path unprefixed
+    assert capp._body_cap_for("POST", "/pw", "/pw") == ceiling
+    assert capp._body_cap_for("POST", "/pwx/users", "/pw") == ceiling  # not a whole-segment prefix

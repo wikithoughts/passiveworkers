@@ -26,9 +26,10 @@ Endpoints:
 Request bodies are capped per route BEFORE any parsing or auth: a larger declared Content-Length,
 or a chunked body that streams past the cap, gets a 413 (F11 review). PW_MAX_BODY_BYTES (default
 4 MiB) is the ceiling for every route and the cap for the free-form bodies (node /result dicts,
-/jobs, blob uploads — which keep their own tighter 512 KiB cap). Routes with a documented smaller
-bound get that instead: /deliver ≤ _DELIVER_BODY_CAP (a 200k-char deliverable, JSON-escaped), and
-the small field-capped bodies (/users, heartbeat, progress, enroll, …) ≤ 64 KiB.
+/jobs). Routes with a documented smaller bound get that instead: /deliver ≤ _DELIVER_BODY_CAP (a
+200k-char deliverable, JSON-escaped), blob uploads ≤ _BLOB_BODY_CAP (one 512 KiB chunk + slack),
+and the small field-capped bodies (/users, heartbeat, progress, enroll, …) ≤ 64 KiB. The route is
+matched on the app-relative path (root_path and trailing slashes stripped), as Starlette routes it.
 
 Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app
 """
@@ -85,12 +86,17 @@ _MAX_BODY_DEFAULT = 4 * 1024 * 1024   # see the module docstring for why 4 MiB
 # pair), plus 16 KiB for signature + signer_pub (≤ 300 chars) and the JSON keys.
 _DELIVER_BODY_CAP = 12 * 200_000 + 16 * 1024
 _SMALL_BODY_CAP = 64 * 1024           # bodies whose every field is length-capped (or that have none)
+_BLOB_CAP = 512 * 1024   # max bytes for one content-addressed chunk
+# A blob upload is the raw chunk (application/octet-stream, no JSON/multipart envelope), so the
+# route cap only adds slack: put_blob's exact _BLOB_CAP check ("chunk too large") decides at the edge.
+_BLOB_BODY_CAP = _BLOB_CAP + 16 * 1024
 
 # POST routes whose body has a documented bound below the ceiling. Non-POST requests carry no body
-# (64 KiB); unlisted POSTs — /result's free-form dict, /jobs, blob uploads — get the ceiling. A new
-# POST route with a small body belongs here.
+# (64 KiB); unlisted POSTs — /result's free-form dict, /jobs — get the ceiling. A new POST route
+# with a small body belongs here.
 _ROUTE_CAPS = (
     (re.compile(r"/tasks/[^/]+/deliver"), _DELIVER_BODY_CAP),
+    (re.compile(r"/jobs/[^/]+/blobs/[^/]+"), _BLOB_BODY_CAP),
     (re.compile(r"/tasks/[^/]+/(?:progress|accept)"), _SMALL_BODY_CAP),
     (re.compile(r"/jobs/[^/]+/(?:feedback|rate)"), _SMALL_BODY_CAP),
     (re.compile(r"/(?:users|nodes/register|nodes/heartbeat|admin/enroll)"), _SMALL_BODY_CAP),
@@ -107,11 +113,21 @@ def _max_body_bytes() -> int:
     return cap if cap > 0 else _MAX_BODY_DEFAULT
 
 
-def _body_cap_for(method: str, path: str) -> int:
+def _route_path(path: str, root_path: str) -> str:
+    """The path the router sees: uvicorn --root-path (and ASGI mounts) put root_path in front of
+    scope["path"], and Starlette strips it the same way (a whole segment only) before matching.
+    Trailing slashes go too, so /users/ gets /users's cap, not the ceiling."""
+    if root_path and (path == root_path or path.startswith(root_path + "/")):
+        path = path[len(root_path):]
+    return path.rstrip("/")
+
+
+def _body_cap_for(method: str, path: str, root_path: str = "") -> int:
     """One request's cap: its route's documented bound, never above PW_MAX_BODY_BYTES."""
     ceiling = _max_body_bytes()
     if method != "POST":
         return min(_SMALL_BODY_CAP, ceiling)
+    path = _route_path(path, root_path)
     for pattern, cap in _ROUTE_CAPS:
         if pattern.fullmatch(path):
             return min(cap, ceiling)
@@ -137,7 +153,7 @@ class BodySizeLimit:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        cap = _body_cap_for(scope.get("method", ""), scope.get("path", ""))
+        cap = _body_cap_for(scope.get("method", ""), scope.get("path", ""), scope.get("root_path", ""))
         for name, value in scope.get("headers", []):
             if name == b"content-length":
                 try:
@@ -416,9 +432,6 @@ def deliver_assisted(task_id: str, body: DeliverBody,
     return out
 
 
-_BLOB_CAP = 512 * 1024   # max bytes for one content-addressed chunk
-
-
 @app.post("/jobs/{job_id}/blobs/{blob_hash}")
 async def put_blob(job_id: str, blob_hash: str, request: Request,
                    x_pw_token: str | None = Header(default=None),
@@ -543,18 +556,24 @@ _baseline_slots = threading.BoundedSemaphore(_BASELINE_MAX)
 # `baseline_skipped_busy`, so a degraded single-model compare under load is visible, not silent.
 _baseline_skipped = 0
 _baseline_skipped_lock = threading.Lock()
+# One log line for the first skip and then every Nth, not one per job: open signup means a busy or
+# hostile coordinator could otherwise write thousands a minute. The counter itself stays exact.
+_BASELINE_SKIP_LOG_EVERY = 100
 
 
 def _start_baseline(job_id: str, question: str) -> bool:
-    """Start the baseline if a slot is free. False (a log line + the skip counter) when all are busy."""
+    """Start the baseline if a slot is free. False (the skip counter + a throttled log line) when all
+    are busy."""
     global _baseline_skipped
     slots = _baseline_slots   # release the semaphore we acquired, even if the global is rebound
     if not slots.acquire(blocking=False):
         with _baseline_skipped_lock:
             _baseline_skipped += 1
             skipped = _baseline_skipped
-        print(f"[baseline] skipped for job {job_id[:8]}: all {_BASELINE_MAX} slots busy "
-              f"(PW_BASELINE_WORKERS); {skipped} skipped since start", flush=True)
+        if skipped == 1 or skipped % _BASELINE_SKIP_LOG_EVERY == 0:
+            print(f"[baseline] skipped for job {job_id[:8]}: all {_BASELINE_MAX} slots busy "
+                  f"(PW_BASELINE_WORKERS); {skipped} skipped since start (logged for the first and "
+                  f"every {_BASELINE_SKIP_LOG_EVERY}th; exact count on /metrics)", flush=True)
         return False
 
     def run() -> None:
