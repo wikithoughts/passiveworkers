@@ -2,7 +2,7 @@
 the env-gated evidence capture in researcher.py. No network, no Ollama (all boundaries mocked)."""
 from passiveworkers.fidelity import (classify, content_tokens, grounding_score, markers_in,
                               numeric_tokens, parse_cited_claims, parse_source_map,
-                              score_claim, split_draft, split_sections)
+                              score_claim, significant_numbers, split_draft, split_sections)
 
 
 # ----------------------------------------------------------------------------- token helpers
@@ -346,3 +346,17 @@ def test_unsupported_survived_sees_a_regrouped_number():
     flagged = [{"missing_numbers": ["12500"]}]
     assert unsupported_survived(flagged, "Revenue was 12,500 dollars.")   # kept, just regrouped
     assert not unsupported_survived(flagged, "Revenue was 9,800 dollars.")
+
+
+def test_arabic_indic_digits_match_ascii_digits():
+    # an Arabic page writes '١٢٬٥٠٠' (Arabic-Indic digits + U+066C); the analyst writes '12,500'
+    src = "بلغت الإيرادات ١٢٬٥٠٠ دولار في عام ٢٠٢٤"
+    g = grounding_score("بلغت الإيرادات 12,500 دولار في عام 2024 [S1].", src)
+    assert g["missing_numbers"] == [] and g["num_cov"] == 1.0          # was ['12500', '2024']
+    assert g["content_cov"] == 1.0
+    # Persian/Extended Arabic-Indic digits in the claim, ASCII in the source
+    assert grounding_score("Revenue was ۱۲۵۰۰ [S1].", "Revenue was 12500")["missing_numbers"] == []
+    # a genuinely different number is still flagged, in ASCII form
+    g = grounding_score("بلغت الإيرادات 12,600 دولار [S1].", src)
+    assert g["missing_numbers"] == ["12600"]
+    assert significant_numbers("عام ٢٠٢٤") == {"2024"}

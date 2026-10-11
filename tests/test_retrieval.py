@@ -36,3 +36,17 @@ def test_rrf_rewards_agreement():
     # an item ranked high in BOTH lists should win over one high in only one
     fused = reciprocal_rank_fusion([[5, 9], [5, 8]])
     assert fused[0] == 5
+
+
+def test_tokenize_maps_non_ascii_digits_to_ascii():
+    assert tokenize("عام ٢٠٢٤") == ["عام", "2024"]          # Arabic-Indic
+    assert tokenize("سال ۱۴۰۳") == ["سال", "1403"]          # Extended Arabic-Indic (Persian)
+    assert tokenize("२०२४") == ["2024"]                       # Devanagari
+    assert tokenize("２０２４年") == ["2024", "年"]           # fullwidth (NFKD)
+
+
+def test_bm25_finds_arabic_indic_year_from_ascii_query():
+    docs = ["تقرير الميزانية لعام ٢٠٢٤", "تقرير الميزانية لعام ٢٠٢٣"]
+    bm = BM25Okapi([tokenize(d) for d in docs])
+    s = bm.scores("2024")
+    assert s[0] > 0 and s[1] == 0

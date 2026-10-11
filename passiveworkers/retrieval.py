@@ -29,11 +29,18 @@ _KEEP_MARKS = frozenset("\u3099\u309a")   # kana voicing marks: が must not fol
 _TATWEEL = "\u0640"                        # Arabic elongation filler, not a letter
 
 
+def _fold_char(c: str) -> str:
+    """A non-ASCII decimal digit (Arabic-Indic ٠-٩, Persian ۰-۹, Devanagari…) becomes its ASCII
+    digit, so '٢٠٢٤' and '2024' are one token; NFKD alone leaves these digits untouched."""
+    return str(unicodedata.decimal(c)) if c.isdecimal() and not c.isascii() else c
+
+
 def _fold(text: str) -> str:
     """Casefold + compatibility-decompose, then drop combining marks (accents, Arabic harakat,
-    Hebrew niqqud) so 'café'/'cafe' and diacritized/undiacritized Arabic match; NFC recomposes."""
+    Hebrew niqqud) so 'café'/'cafe' and diacritized/undiacritized Arabic match, and map every
+    decimal digit to ASCII; NFC recomposes."""
     text = unicodedata.normalize("NFKD", text.casefold()).replace(_TATWEEL, "")
-    text = "".join(c for c in text
+    text = "".join(_fold_char(c) for c in text
                    if c in _KEEP_MARKS or not unicodedata.category(c).startswith("M"))
     return unicodedata.normalize("NFC", text)
 
