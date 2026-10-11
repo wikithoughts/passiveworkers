@@ -161,7 +161,8 @@ def test_configured_bind_host_is_allowed_but_wildcard_is_not(client, monkeypatch
     assert client.get("/reports", headers={"host": "localhost:8770"}).status_code == 200
 
 
-@pytest.mark.parametrize("origin, ok", [("http://127.0.0.1:8770", True), ("http://localhost:8770", True),
+# Host is 127.0.0.1:8770 (the client's base_url), so only that exact origin is same-origin.
+@pytest.mark.parametrize("origin, ok", [("http://127.0.0.1:8770", True), ("http://localhost:8770", False),
                                         ("http://evil.example", False), ("null", False),
                                         ("http://127.0.0.1.evil.example", False)])
 def test_cross_origin_requests_are_403(client, reports, monkeypatch, origin, ok):
@@ -170,6 +171,78 @@ def test_cross_origin_requests_are_403(client, reports, monkeypatch, origin, ok)
                         lambda *a, **k: (_ for _ in ()).throw(SystemExit("no ollama")))
     r = client.post("/research", json={"brief": "x"}, headers={"origin": origin})
     assert (r.status_code == 200) is ok and (r.status_code == 403) is (not ok)
+
+
+# --- review of #39: Origin must match scheme+host+port; strict Host; operator override ---
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1",
+                                    "https://127.0.0.1:8770", "http://127.0.0.1:8770/", "http://evil@127.0.0.1:8770",
+                                    "ftp://127.0.0.1:8770", "127.0.0.1:8770"])
+def test_other_local_origin_or_scheme_is_403(client, monkeypatch, origin):
+    # another app on loopback (a dev server on :3000) must not be able to POST to the desk
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    called = []
+    monkeypatch.setattr(serve, "run_research", lambda *a, **k: called.append(1))
+    hdr = {"host": "127.0.0.1:8770", "origin": origin}
+    assert client.post("/research", json={"brief": "x"}, headers=hdr).status_code == 403
+    assert client.post("/cancel/abc", headers=hdr).status_code == 403
+    assert not called
+
+
+@pytest.mark.parametrize("host, origin", [("127.0.0.1:8770", "http://127.0.0.1:8770"),
+                                          ("LOCALHOST:8770", "http://localhost:8770"),
+                                          ("[::1]:8770", "http://[::1]:8770"),
+                                          ("localhost", "http://localhost:80"),
+                                          ("localhost:9000", "http://localhost:9000")])   # docker -p 9000:8770
+def test_same_origin_post_passes(client, reports, monkeypatch, host, origin):
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    monkeypatch.setattr(serve, "run_research",
+                        lambda *a, **k: (_ for _ in ()).throw(SystemExit("no ollama")))
+    r = client.post("/research", json={"brief": "x"}, headers={"host": host, "origin": origin})
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize("host", ["evil@localhost", "evil@localhost:8770", "user:pw@127.0.0.1:8770",
+                                  "localhost:8770/x", "localhost :8770", "localhost:", "localhost:80:80"])
+def test_host_with_userinfo_or_junk_is_403(client, monkeypatch, host):
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    assert client.get("/reports", headers={"host": host}).status_code == 403
+
+
+def test_absent_host_header_is_403(monkeypatch):
+    import asyncio
+    monkeypatch.delenv("PW_SERVE_HOST", raising=False)
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        sent.append(msg)
+
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
+             "scheme": "http", "path": "/reports", "raw_path": b"/reports", "query_string": b"",
+             "root_path": "", "headers": [], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8770)}
+    asyncio.run(serve.app(scope, receive, send))
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 403
+
+
+def test_allowed_hosts_override_admits_lan_and_tailscale_names(client, reports, monkeypatch):
+    monkeypatch.setenv("PW_SERVE_HOST", "0.0.0.0")
+    monkeypatch.setenv("PW_SERVE_ALLOWED_HOSTS", " Desk.Tailnet.ts.net , 192.168.1.5,,[fd7a::1], 0.0.0.0, bad@x")
+    for host in ("desk.tailnet.ts.net", "DESK.tailnet.ts.net:8770", "192.168.1.5:8770", "[fd7a::1]:8770",
+                 "localhost:8770"):
+        assert client.get("/reports", headers={"host": host}).status_code == 200, host
+    for host in ("192.168.1.6:8770", "0.0.0.0:8770", "x", "evil.example"):
+        assert client.get("/reports", headers={"host": host}).status_code == 403, host
+    ok = {"host": "desk.tailnet.ts.net:8770", "origin": "http://desk.tailnet.ts.net:8770"}
+    monkeypatch.setattr(serve, "run_research",
+                        lambda *a, **k: (_ for _ in ()).throw(SystemExit("no ollama")))
+    assert client.post("/research", json={"brief": "x"}, headers=ok).status_code == 200
+    cross = {"host": "desk.tailnet.ts.net:8770", "origin": "http://192.168.1.5:8770"}
+    assert client.post("/research", json={"brief": "x"}, headers=cross).status_code == 403
+    monkeypatch.delenv("PW_SERVE_ALLOWED_HOSTS")                 # default unchanged: loopback only
+    assert client.get("/reports", headers={"host": "desk.tailnet.ts.net"}).status_code == 403
 
 
 def test_history_items_use_data_name_not_inline_onclick():

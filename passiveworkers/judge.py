@@ -391,9 +391,14 @@ class Judge:
         contributions: payload answers [{country, model, lens, text, research}].
         read: the deliberate() result (used as fallback + disagreement bullets).
         """
+        # country comes from a node's payload (untrusted), so it goes INSIDE the spotlight, on one
+        # short line: it can't forge a block header or put an instruction outside the delimiters
+        def country(c: dict) -> str:
+            return " ".join(strip_invisible(str(c.get("country") or "?")).split())[:40] or "?"
+
         drafts = "\n\n".join(
-            _data_block(f"Contribution from {c.get('country', '?')}", (c.get("text") or "")[:2500])
-            for c in contributions)
+            _data_block(f"Contribution {i}", f"Country: {country(c)}\n" + (c.get("text") or "")[:2500])
+            for i, c in enumerate(contributions, start=1))
         raw = self._generate(
             "You are the editor of a multi-country research report. Read the brief and the "
             "contributions, then reply STRICT JSON only, no prose:\n"
