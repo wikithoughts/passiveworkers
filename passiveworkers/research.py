@@ -144,11 +144,22 @@ def _guarded_get(url: str, timeout: float, deadline: float | None = None):
     raise ValueError("too many redirects")
 
 
+def _result_url(r: dict) -> str:
+    """A search result's href, or "" if it holds whitespace or an invisible/control character.
+    urlparse() ignores an embedded newline, U+2028 or U+200B (the hostname still parses), so an
+    href like "https://good.example/a\n[S9] Nature ..." would pass the host checks and forge a
+    source line; such a result is dropped rather than repaired."""
+    url = (r.get("href") or r.get("url") or "").strip()
+    if any(ch.isspace() or not ch.isprintable() for ch in url):
+        return ""
+    return url
+
+
 def _clean(results: list[dict]) -> str:
     from passiveworkers.sanitize import clean
     out, seen = [], set()
     for r in results:
-        url = (r.get("href") or r.get("url") or "").strip()
+        url = _result_url(r)
         host = (urlparse(url).hostname or "").lower()
         if not host or host in seen or not _host_is_public(host) or not _is_quality_host(host):
             continue
@@ -465,7 +476,7 @@ def search_structured(query: str, max_results: int = 5, engine: str = "web") -> 
 
     out, seen = [], set()
     for r in rows:
-        url = (r.get("href") or r.get("url") or "").strip()
+        url = _result_url(r)
         host = (urlparse(url).hostname or "").lower()
         if not host or host in seen or not _host_is_public(host) or not _is_quality_host(host):
             continue

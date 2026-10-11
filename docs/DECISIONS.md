@@ -1637,15 +1637,25 @@ hidden character inside the opener (`<!-`, U+200B, `-`) can no longer stop the c
 removed (that gap predates this change).
 
 **Why this is still safe:** each kept form is one fixed code point (or one of three fixed sequences)
-in a fixed context next to visible text. A run of emoji or Arabic letters can therefore still hide
-about one bit per position (join or no join). That is a low-bandwidth channel a model will not read
-back as text. It is not the ASCII payload TAG characters can carry. The emoji and Arabic-letter
-classes are explicit code-point ranges (Python `re` has no Unicode properties), so they are
-approximate. A character they miss loses its joiner (over-stripping). Where the emoji class is
-broader than true emoji (it takes the whole U+2600–U+27BF block), a joiner between two such symbols
-is kept. That only adds to the same one-bit channel.
+in a fixed context next to visible text, so it can never spell out text or form a delimiter or a
+`[S#]` marker. Its presence or absence is still a hidden channel, and a bigger one than first
+recorded. In a gap between two emoji, ZWJ and VS16 are independent (none, VS16, ZWJ, or both), which
+is 2 bits per gap. ZWNJ adds 1 bit per gap between Arabic letters, and an RGI flag about 1.6 bits.
+Without a limit, a 200-emoji line carried about 50 bytes. So a run (an unbroken stretch of emoji,
+Arabic letters and marks, and keycap parts; stripped invisibles do not break it) keeps at most 8
+kept forms (`_MAX_KEPT_PER_RUN`), and any after that are stripped. Real text needs at most 4 in one
+sequence (kiss, family). The cap bounds each run, not the whole text. Where the 8 forms sit in a long
+run still encodes more than 8 bits (roughly 8 × log2 of the run length), and many runs separated by
+spaces each get their own 8. That none of this amounts to a payload a model would read back as
+text is a judgement, not a proven bound. It is still not the ASCII payload TAG characters can carry.
+The emoji and Arabic-letter classes are explicit code-point ranges (Python `re` has no Unicode
+properties), so they are approximate. A character they miss loses its joiner (over-stripping). Where
+the emoji class is broader than true emoji (it takes the whole U+2600–U+27BF block and unassigned
+points in U+1F000–U+1FAFF), a joiner between two such symbols is kept. That only adds to the same
+capped channel.
 
 **Status:** Settled. `passiveworkers/sanitize.py` (`_KEEP`, `_strip`), used by `clean`,
 `strip_invisible` and `sanitize_brief`. Covered by `tests/test_sanitize.py`: ZWJ family, VS16
 emoji and keycap, England flag and Persian ZWNJ are preserved; a non-RGI tag payload, ZWJ between
-letters or inside a delimiter, and ZWNJ outside Arabic script are stripped.
+letters or inside a delimiter, and ZWNJ outside Arabic script are stripped; a run keeps at most 8
+kept forms.

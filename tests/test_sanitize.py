@@ -164,3 +164,29 @@ def test_search_structured_titles_cannot_forge_source_lines(monkeypatch, sep):
     for field in (title, snippet):
         assert len(field.splitlines()) == 1
         assert not re.search(r"^\[[SL]\d+\]", field, re.MULTILINE)
+
+
+ZWJ, VS16, ZWNJ, ZWSP = "‍", "️", "‌", "​"
+KISS = f"👩{ZWJ}❤{VS16}{ZWJ}💋{ZWJ}👨"       # 4 kept forms, the longest common real sequence
+
+
+@pytest.mark.parametrize("dirty, char", [
+    (ZWJ.join(["👨"] * 20), ZWJ),                      # 19 joins between 20 emoji
+    (f"❤{VS16}" * 12, VS16),                           # 12 present/absent VS16 bits
+    (ZWNJ.join(["ب"] * 20), ZWNJ),                     # 19 ZWNJ between Arabic letters
+    (ZWJ.join([f"👨{ZWSP}"] * 3) + ZWJ.join(["👩"] * 18), ZWJ),   # a stripped ZWSP doesn't reset the run
+    (KISS * 3, None),                                   # 12 kept forms in one run
+])
+def test_a_run_keeps_at_most_eight_joiners(dirty, char):
+    # D55: each kept joiner is a hidden present/absent bit; an unbounded run is an unbounded channel
+    out = clean(dirty)
+    kept = sum(out.count(c) for c in (ZWJ, VS16, ZWNJ)) if char is None else out.count(char)
+    assert kept == 8
+
+
+def test_run_cap_leaves_real_text_alone():
+    persian = f"می{ZWNJ}خواهم"
+    text = " ".join([KISS + KISS, f"👨{ZWJ}👩{ZWJ}👧{ZWJ}👦", "1" + VS16 + "⃣"] + [persian] * 12)
+    assert clean(text) == text
+    # each space-separated run gets its own budget
+    assert clean(" ".join([ZWJ.join(["👨"] * 9)] * 3)).count(ZWJ) == 24
