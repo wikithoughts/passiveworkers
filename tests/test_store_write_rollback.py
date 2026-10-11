@@ -246,3 +246,71 @@ def test_successful_settlement_still_charges_once(store):
     assert store.job_status(job_id) == "done"
     assert store.ledger.balance("alice") < before["alice"]
     assert store.ledger.conservation_ok() and _memory(store) == _persisted(store)
+
+
+# ------------------------------------------------------------ automated (council) job creation
+# create_job for an automated type opened the asker's account IN MEMORY, then inserted the job and
+# its answer tasks, then saved the ledger and committed — with no snapshot and no rollback. A failed
+# task INSERT left the already-executed `INSERT INTO jobs` in the open transaction: the next unrelated
+# commit persisted an orphan pending_answers job with no tasks, and a brand-new asker's account (with
+# its starter grant) stayed in memory although the DB never saw it.
+def _assert_automated_create_rolled_back(store, asker, before):
+    assert _memory(store) == before                                  # ledger equal to pre-call
+    # another user creates a job — this commit used to persist the orphan job row
+    assert store.create_job("charlie", "unrelated q", job_type="chat", minds=1)["status"] == \
+        "pending_answers"
+    assert _jobs_of(store, asker) == []                              # no orphan pending_answers job
+    assert store.conn.execute("SELECT COUNT(*) FROM jobs j LEFT JOIN tasks t ON t.job_id=j.job_id "
+                              "WHERE t.task_id IS NULL AND j.status='pending_answers'"
+                              ).fetchone()[0] == 0
+    assert store.ledger.conservation_ok() and store.ledger_integrity()["ok"]
+    assert _memory(store) == _persisted(store)
+
+
+@pytest.mark.parametrize("target", [
+    "INSERT ON tasks",    # the review probe: the job row is already written when the task fails
+    "INSERT ON jobs",     # the first write fails
+    "UPDATE ON ledger",   # the ledger save itself fails (after both inserts)
+])
+@pytest.mark.parametrize("job_type,items", [("chat", None), ("shard_map", ["a", "b"])])
+def test_failed_automated_create_leaves_no_orphan_job(store, target, job_type, items):
+    _reg(store, "op1")
+    store.ledger.open_account("alice")
+    store._save_ledger(); store.conn.commit()
+    before = _memory(store)
+    _fail_on(store, target)
+    with pytest.raises(sqlite3.IntegrityError):                      # exception type unchanged
+        store.create_job("alice", "my q", job_type=job_type, items=items, minds=1)
+    _heal(store)
+    _assert_automated_create_rolled_back(store, "alice", before)
+    # and Alice can still create the job once storage is healthy
+    assert store.create_job("alice", "my q", job_type=job_type, items=items,
+                            minds=1)["status"] == "pending_answers"
+    assert store.ledger_integrity()["ok"] and _memory(store) == _persisted(store)
+
+
+def test_failed_first_automated_create_drops_the_unpersisted_account(store):
+    # a brand-new asker: open_account (and its starter grant) runs in the same call; if the call
+    # fails, the ledger must not keep an account the DB never saw.
+    _reg(store, "op1")
+    before = _memory(store)
+    _fail_on(store, "INSERT ON tasks")
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_job("erin", "first ever q", job_type="chat", minds=1)
+    _heal(store)
+    assert "erin" not in store.ledger.accounts
+    _assert_automated_create_rolled_back(store, "erin", before)
+
+
+def test_failed_automated_create_commit_leaves_no_orphan_job(store):
+    _reg(store, "op1")
+    before = _memory(store)
+    real = store.conn
+    store.conn = _CommitFails(real)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            store.create_job("erin", "first ever q", job_type="chat", minds=1)
+    finally:
+        store.conn = real
+    assert "erin" not in store.ledger.accounts
+    _assert_automated_create_rolled_back(store, "erin", before)
