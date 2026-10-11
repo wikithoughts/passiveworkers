@@ -250,3 +250,16 @@ def test_history_items_use_data_name_not_inline_onclick():
     html = serve.SERVE_HTML
     assert "onclick=\"openReport" not in html
     assert 'data-name="' in html and "dataset.name" in html
+
+
+def test_ignored_allowed_hosts_entries_warn_once_each(client, monkeypatch, capsys):
+    # a typo in the override fails closed (403 "forbidden host"); the operator gets told why, once
+    monkeypatch.setattr(serve, "_warned_hosts", set())
+    monkeypatch.setenv("PW_SERVE_ALLOWED_HOSTS", "desk.ts.net, fd7a::1, *, 0.0.0.0, bad@x,, [fd7a::2]:8770")
+    for _ in range(3):
+        assert client.get("/reports", headers={"host": "desk.ts.net"}).status_code == 200
+        assert client.get("/reports", headers={"host": "[fd7a::1]"}).status_code == 403
+    err = capsys.readouterr().err
+    for bad in ("'fd7a::1'", "'*'", "'0.0.0.0'", "'bad@x'"):
+        assert err.count(f"PW_SERVE_ALLOWED_HOSTS entry {bad} ignored") == 1, bad
+    assert "desk.ts.net" not in err and "fd7a::2" not in err and err.count("ignored") == 4

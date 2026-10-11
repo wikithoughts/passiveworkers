@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import sys
 import threading
 import uuid
 
@@ -33,6 +34,7 @@ _MAX_JOBS = max(1, int(os.environ.get("PW_SERVE_MAX_JOBS", "2") or 2))   # concu
 _sem = threading.BoundedSemaphore(_MAX_JOBS)   # cap concurrency so two heavy runs don't thrash Ollama
 _JOB_HISTORY = 50         # cap the in-memory job map so a long-running desk doesn't leak
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_warned_hosts: set = set()   # ignored PW_SERVE_ALLOWED_HOSTS entries, each warned about once
 
 
 def _allowed_hosts() -> frozenset:
@@ -44,9 +46,15 @@ def _allowed_hosts() -> frozenset:
     if host and host not in ("0.0.0.0", "::"):
         extra.add(host)
     for entry in os.environ.get("PW_SERVE_ALLOWED_HOSTS", "").split(","):
-        parsed = _split_host(entry.strip().lower())
+        entry = entry.strip().lower()
+        parsed = _split_host(entry)
         if parsed and parsed[0] not in ("0.0.0.0", "::"):
             extra.add(parsed[0])
+        elif entry and entry not in _warned_hosts:
+            # fails closed (a 403 "forbidden host"), so say why once instead of leaving a silent typo
+            _warned_hosts.add(entry)
+            print(f"  warning: PW_SERVE_ALLOWED_HOSTS entry {entry!r} ignored: use a plain hostname or "
+                  "IP (IPv6 in [brackets]); wildcards are not allowed", file=sys.stderr, flush=True)
     return _LOOPBACK_HOSTS | extra
 
 
@@ -317,6 +325,7 @@ def main() -> None:
     import uvicorn
     host = os.environ.get("PW_SERVE_HOST", "127.0.0.1")  # 0.0.0.0 only inside containers
     port = int(os.environ.get("PW_SERVE_PORT", "8770") or 8770)
+    _allowed_hosts()   # warn about bad PW_SERVE_ALLOWED_HOSTS entries at startup, not on the first request
     print(f"🔬 Research desk → http://{host}:{port}  (Ctrl-C to stop)", flush=True)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
