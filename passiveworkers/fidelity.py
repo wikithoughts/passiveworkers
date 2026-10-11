@@ -19,7 +19,8 @@ fabricated", never as "proven true". A high score is necessary, not sufficient.
 
 No network, no Ollama, no new dependencies — it reuses passiveworkers.retrieval.tokenize so
 the scorer tokenizes like the retriever it is grading (plus one step: thousands separators inside
-numbers are joined first, so '12,500' and '12500' are the same fact).
+numbers are joined first, so '12,500' and '12500' are the same fact; the retriever maps
+Arabic-Indic and other non-ASCII digits to ASCII, so '١٢٬٥٠٠' is that fact too).
 """
 from __future__ import annotations
 
