@@ -20,8 +20,8 @@ Node isn't pip-installable, so it's a separate one-time step.
 
 1. `python -m py_compile $(git ls-files '*.py')` — everything compiles.
 2. `ruff check .` — lint gate (matches CI).
-3. `pytest tests/ -q` — the full test suite is green (~5s, 400+ tests, fully offline — CI's
-   headline step).
+3. `pytest tests/ -q` — the full test suite is green (fully offline — CI's headline step; CI
+   also enforces a 75% coverage floor with `--cov=passiveworkers --cov-fail-under=75`).
 4. `bash scripts/check_app_js.sh` — inline JS in served pages parses.
 5. `node scripts/fe_test.js` — the front-end harness passes.
 6. If you touched anything that handles web content: the sanitizer rules in
