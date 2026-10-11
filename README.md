@@ -12,8 +12,6 @@ single-player half, and it's the product — judge it on that. Opt-in, the same 
 is also a commons: idle computers doing research for each other, no token and no cloud
 in the middle ([why](docs/VISION.md)).
 
-<!-- TODO: hero GIF via vhs, see docs/REVIEW_2026-07.md R29 -->
-
 **Prerequisite:** Python 3.10+ and [Ollama](https://ollama.com/download) installed and
 running (it serves the models locally — nothing here calls a cloud API by default).
 

@@ -9,6 +9,28 @@ All notable changes to Passive Workers are documented here. The format follows
 [semantic versioning](https://semver.org/). See `docs/ROADMAP.md` for the full
 round-by-round (R#) history and `docs/DECISIONS.md` for the rationale behind each change.
 
+## [Unreleased]
+Not yet itemized here: the earlier post-0.5.0 merges #2–#28 (`git log v0.5.0..main`), including
+two user-visible ones — the `council`→`passiveworkers` / `pw`→`pworkers` rename (#18) and the
+OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROADMAP.md` Round 39.
+### Fixed
+- **Expired assisted offers can no longer be accepted or paid** — the reaper now expires the
+  offer's task row with the job, and escrow may not go negative (#29).
+- **Signup can't claim a reserved or already-owned handle** — `__*__` system handles and any
+  existing ledger account (node owners, escrow) are rejected, case- and whitespace-insensitively (#30).
+- **Web fetch hardening** — linear-time HTML stripping on hostile markup, one 30 s total
+  deadline across redirects and body read, and every response closed (#31).
+- **Ledger rollback on failed escrow persistence** — `deliver_assisted` and the reaper restore
+  the in-memory ledger when the SQL write fails; the coordinator's `Store.conservation_ok()` now
+  also checks escrow against outstanding holds (#32).
+- **Non-ASCII retrieval** — the BM25/fidelity tokenizer keeps Arabic, accented and CJK text
+  (diacritic-folded, CJK bigrams), and `12,500` matches `12500` in citation fidelity (#33).
+- **Artifacts and library** — chunk reassembly writes to a temp file and replaces atomically
+  (reassembled files are now `0600`), library re-index embeds before deleting old rows, and the
+  corpus cache is shared across `Library()` instances (#34).
+- **Assisted create and settlement roll back SQL and ledger together** on any failed write (#35).
+- **Automated `create_job` rolls back SQL and ledger together** on any failed write (#36).
+
 ## [0.5.0] — 2026-08-02
 Two rounds (37 and 38): a founder-review-driven pass across the whole product surface, then the
 two recommendations deferred from it. Two Workflow adversarial review passes before commit found

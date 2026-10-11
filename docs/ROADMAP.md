@@ -11,7 +11,7 @@
 ## M0 — Phase-0 spikes ✅
 De-risk the two pieces most likely to break.
 - ✅ **Spike 2** (worker/Ollama wrapper) — hardware profiling, job round-trip, CPU-ceiling pause gate. `spikes/spike2_worker/worker.py`.
-- ◻︎ **Spike 1** (verification comparator) — cheat-rejection validated on **one** machine (honest 0.9997 vs cheat 0.4366, threshold 0.82). **Still unverified:** honest *cross-hardware* divergence and *model-downgrade* detection (needs ≥3 heterogeneous machines — now unblocked by M2). `spikes/spike1_fuzzy_verify/verify.py`.
+- ✅ **Spike 1** (verification comparator) — cheat-rejection validated on **one** machine (honest 0.9997 vs cheat 0.4366, threshold 0.82). The open cross-hardware / model-downgrade question was answered by **M2 item 6** (`scripts/cross_hardware_verify.py`) — and the answer was negative: honest cross-hardware (floor 0.8473) and a model downgrade (ceiling 0.8495) converge, so no fixed fuzzy threshold separates them; verification pivoted to quality/judge-based (DECISIONS **D10**). `spikes/spike1_fuzzy_verify/verify.py`.
 
 ## M1 — Council MVP (local, in-process) ✅
 The whole idea at single-machine, multi-model scale.
@@ -221,9 +221,12 @@ named deferrals, and R38 (lens-axis) was closed in Round 39. `PW_ENROLL` default
 enrollment setting was deliberately left untouched — flipping a production coordinator's
 registration behavior is a real operational decision, not a docs-consistency fix.
 
-Next: see Round 38/39 above — R25/R26 shipped same-day, R38 closed in Round 39. Open: the
-founder's call on R36's package-name collision, and Round 39's newly-found pre-existing CI
-failure on `main`.
+Next: see Round 38/39 above — R25/R26 shipped same-day, R38 closed in Round 39. Both items
+this line used to list as open are closed (updated 2026-10-11): R36's package-name collision was
+resolved by the `council`→`passiveworkers` / `pw`→`pworkers` rename (`ed08a03`, #18, 2026-08-31;
+`pyproject.toml` `[project.scripts]`), and Round 39's pre-existing CI failure on `main` was fixed by
+`c17c3c8` (#16, see Round 39 above). Still open from this review: R29's README hero GIF
+(vhs-scripted, `docs/REVIEW_2026-07.md` R29) — ◻︎ planned, not started.
 
 ## R36 — Rerank + recursive research + hardening sweep (D52, 2026-07-10)
 Founder chose **"do them all"** across the four next-move candidates → a broad 0.4.0 round:
