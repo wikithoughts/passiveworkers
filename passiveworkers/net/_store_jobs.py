@@ -472,75 +472,88 @@ class _JobsMixin(_StoreProtocol):
         for _, owner, s, _rep in per_answer:
             score_by_owner[owner] = score_by_owner.get(owner, 0.0) + s
 
-        # FAIL-CLOSED: settle the ledger FIRST. Only on success do we write scores/rep/done.
+        # settle_job below moves credit IN MEMORY (asker debited, workers + judge paid, quality
+        # stats bumped); the job only becomes 'done' once those rows COMMIT. If any write or the
+        # commit fails, roll the ledger back with the SQL — else the asker stays charged for a job
+        # left 'judging' (later reaped as failed), and the next unrelated commit persists half a
+        # settlement (same shape as deliver_assisted / the reaper, #32).
+        snap = self.ledger.snapshot()
         try:
-            receipt = self.ledger.settle_job(
-                job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
-                worker_pool=job["pool"] if job["pool"] else CONFIG.worker_pool,
-                judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
-        except InsufficientCredit as exc:
-            self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
-                              (f"settlement failed: {exc}", job_id))
+            # FAIL-CLOSED: settle the ledger FIRST. Only on success do we write scores/rep/done.
+            try:
+                receipt = self.ledger.settle_job(
+                    job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
+                    worker_pool=job["pool"] if job["pool"] else CONFIG.worker_pool,
+                    judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
+            except InsufficientCredit as exc:
+                self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
+                                  (f"settlement failed: {exc}", job_id))
+                self._save_ledger()
+                self.conn.commit()
+                return
+
+            # sharded types (shard_map/download_extract/code_generation): the deliverable is the
+            # ASSEMBLED shards in input order (the judge only spot-checks quality); overwrite merged
+            # with the full results array (JSON).
+            if task_behavior(job["type"]).assemble == "shards":
+                allr = []
+                for a in answers:
+                    res = json.loads(a["result"]) if a["result"] else {}
+                    allr.extend(res.get("results") or [])
+
+                def _shard_i(r):   # coerce a malformed/foreign 'i' so the sort can't crash (review):
+                    try:           # TypeError(None)/ValueError("x"/nan)/OverflowError(inf) → 0
+                        return int(r.get("i", 0))
+                    except (TypeError, ValueError, OverflowError):
+                        return 0
+                allr.sort(key=_shard_i)
+                result = dict(result)
+                if job["as_file"]:
+                    # D38 multi-producer file reassembly: combine the producers' parts (in input order)
+                    # into ONE document, chunk it into the per-job content-addressed blob store, and
+                    # deliver a manifest the asker fetches+verifies as a single signed file (pworkers fetch).
+                    # Runs under complete_task's lock (an RLock, reentrant — see __init__); we insert blobs
+                    # directly to defer to settle's single commit, and enforce the per-job storage cap here
+                    # ourselves (put_blob's cap is otherwise bypassed — review D38).
+                    from passiveworkers.artifacts import chunk_bytes, wrap_artifact
+                    content = "\n\n".join(str(r.get("output", "")) for r in allr).encode("utf-8")
+                    try:
+                        manifest, blobs = chunk_bytes(content, f"{job_id[:8]}-deliverable.txt")
+                        used = self.conn.execute(
+                            "SELECT COALESCE(SUM(LENGTH(data)),0) s FROM blobs WHERE job_id=?",
+                            (job_id,)).fetchone()["s"]
+                        if used + sum(len(b) for b in blobs.values()) > 200 * 1024 * 1024:
+                            raise ValueError("per-job storage cap reached")
+                        for h, b in blobs.items():
+                            self.conn.execute(
+                                "INSERT OR IGNORE INTO blobs(hash,job_id,data,created) VALUES(?,?,?,?)",
+                                (h, job_id, b, _now()))
+                        result["merged"] = wrap_artifact(manifest)
+                    except Exception:
+                        result["merged"] = json.dumps(allr, ensure_ascii=False)   # fall back to JSON
+                else:
+                    result["merged"] = json.dumps(allr, ensure_ascii=False)
+
+            for task_id, owner, s, rep in per_answer:
+                self.conn.execute("UPDATE tasks SET score=? WHERE task_id=?", (s, task_id))
+                if rep:
+                    acct = self.ledger.accounts.get(owner)
+                    if acct:
+                        acct.quality_sum = round(acct.quality_sum + s, 4)
+                        acct.quality_n += 1
+            council = result.get("council") if isinstance(result.get("council"), dict) else None
+            self.conn.execute(
+                "UPDATE jobs SET status='done', merged=?, receipt=?, council=? WHERE job_id=?",
+                (result.get("merged", ""), json.dumps(receipt.__dict__),
+                 json.dumps(council) if council else None, job_id))
             self._save_ledger()
             self.conn.commit()
-            return
-
-        # sharded types (shard_map/download_extract/code_generation): the deliverable is the
-        # ASSEMBLED shards in input order (the judge only spot-checks quality); overwrite merged
-        # with the full results array (JSON).
-        if task_behavior(job["type"]).assemble == "shards":
-            allr = []
-            for a in answers:
-                res = json.loads(a["result"]) if a["result"] else {}
-                allr.extend(res.get("results") or [])
-
-            def _shard_i(r):   # coerce a malformed/foreign 'i' so the sort can't crash (review):
-                try:           # TypeError(None)/ValueError("x"/nan)/OverflowError(inf) → 0
-                    return int(r.get("i", 0))
-                except (TypeError, ValueError, OverflowError):
-                    return 0
-            allr.sort(key=_shard_i)
-            result = dict(result)
-            if job["as_file"]:
-                # D38 multi-producer file reassembly: combine the producers' parts (in input order)
-                # into ONE document, chunk it into the per-job content-addressed blob store, and
-                # deliver a manifest the asker fetches+verifies as a single signed file (pworkers fetch).
-                # Runs under complete_task's lock (an RLock, reentrant — see __init__); we insert blobs
-                # directly to defer to settle's single commit, and enforce the per-job storage cap here
-                # ourselves (put_blob's cap is otherwise bypassed — review D38).
-                from passiveworkers.artifacts import chunk_bytes, wrap_artifact
-                content = "\n\n".join(str(r.get("output", "")) for r in allr).encode("utf-8")
-                try:
-                    manifest, blobs = chunk_bytes(content, f"{job_id[:8]}-deliverable.txt")
-                    used = self.conn.execute(
-                        "SELECT COALESCE(SUM(LENGTH(data)),0) s FROM blobs WHERE job_id=?",
-                        (job_id,)).fetchone()["s"]
-                    if used + sum(len(b) for b in blobs.values()) > 200 * 1024 * 1024:
-                        raise ValueError("per-job storage cap reached")
-                    for h, b in blobs.items():
-                        self.conn.execute(
-                            "INSERT OR IGNORE INTO blobs(hash,job_id,data,created) VALUES(?,?,?,?)",
-                            (h, job_id, b, _now()))
-                    result["merged"] = wrap_artifact(manifest)
-                except Exception:
-                    result["merged"] = json.dumps(allr, ensure_ascii=False)   # fall back to JSON
-            else:
-                result["merged"] = json.dumps(allr, ensure_ascii=False)
-
-        for task_id, owner, s, rep in per_answer:
-            self.conn.execute("UPDATE tasks SET score=? WHERE task_id=?", (s, task_id))
-            if rep:
-                acct = self.ledger.accounts.get(owner)
-                if acct:
-                    acct.quality_sum = round(acct.quality_sum + s, 4)
-                    acct.quality_n += 1
-        council = result.get("council") if isinstance(result.get("council"), dict) else None
-        self.conn.execute(
-            "UPDATE jobs SET status='done', merged=?, receipt=?, council=? WHERE job_id=?",
-            (result.get("merged", ""), json.dumps(receipt.__dict__),
-             json.dumps(council) if council else None, job_id))
-        self._save_ledger()
-        self.conn.commit()
+        except Exception:
+            try:
+                self.conn.rollback()
+            finally:
+                self.ledger.restore(snap)
+            raise
         # stage chaining (D35): now that this job is settled+committed, spawn its `then` follow-on
         # (no-op unless one was declared). After the commit so the parent is durable first.
         self._maybe_chain(job_id, job["asker"], result.get("merged", ""))
