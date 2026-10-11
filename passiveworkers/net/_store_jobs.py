@@ -208,48 +208,61 @@ class _JobsMixin(_StoreProtocol):
                         shards[w["node_id"]].append({"i": pos, "item": clean[pos]})
                         pos += 1
 
-            self.ledger.open_account(asker)
-            cost = self.ledger.quote(pool, CONFIG.judge_fee)
-            if not self.ledger.can_afford(asker, cost):
-                self.conn.execute(
-                    "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
-                    " VALUES(?,?,?,?,?,?,?,?,?)",
-                    (job_id, asker, question, "failed", _now(), None, None,
-                     "insufficient credit — help on a job first", None))
-                self._save_ledger()
-                self.conn.commit()
-                return {"job_id": job_id, "status": "failed",
-                        "error": "insufficient credit — help on a job first"}
+            # open_account below creates the asker's account (and its starter grant) IN MEMORY; the
+            # job only exists once its job + task rows COMMIT. If any write or the commit fails, roll
+            # the SQL back AND restore the ledger (#32/#35's pattern) — else the already-executed jobs
+            # INSERT stays in the open transaction and the next unrelated commit persists an orphan
+            # pending_answers job with no tasks, and the in-memory account diverges from the DB.
+            snap = self.ledger.snapshot()
+            try:
+                self.ledger.open_account(asker)
+                cost = self.ledger.quote(pool, CONFIG.judge_fee)
+                if not self.ledger.can_afford(asker, cost):
+                    self.conn.execute(
+                        "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
+                        " VALUES(?,?,?,?,?,?,?,?,?)",
+                        (job_id, asker, question, "failed", _now(), None, None,
+                         "insufficient credit — help on a job first", None))
+                    self._save_ledger()
+                    self.conn.commit()
+                    return {"job_id": job_id, "status": "failed",
+                            "error": "insufficient credit — help on a job first"}
 
-            # stage chaining (D35/D39): persist a `then` PIPELINE (one stage, or a list of stages of
-            # any type) so that when THIS job completes, _maybe_chain materializes the next stage
-            # seeded with the deliverable and passes the rest of the chain down. Re-sanitized here.
-            then_spec = _norm_then(then)
-            self.conn.execute(
-                "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
-                "pool,type,then_spec,as_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, asker, question, "pending_answers", _now(), None, None, None, None,
-                 pool, job_type, then_spec, 1 if (as_file and task_behavior(job_type).sharded) else 0))
-            beh = task_behavior(job_type)
-            for n in workers:
-                payload: dict[str, Any] = {"question": question, "job_type": job_type}
-                if beh.sharded:
-                    payload["shard"] = shards.get(n["node_id"], [])
-                    # Type drives fetching, not the asker (review): download_extract ALWAYS fetches
-                    # (beh.fetch); shard_map fetches only if the asker opted in (allow_user_fetch);
-                    # code_generation NEVER fetches — its items are specs, not URLs (D15), so a
-                    # user-supplied fetch=True can't turn it into a fetcher/proxy.
-                    payload["fetch"] = bool(beh.fetch or (fetch and beh.allow_user_fetch))
+                # stage chaining (D35/D39): persist a `then` PIPELINE (one stage, or a list of stages of
+                # any type) so that when THIS job completes, _maybe_chain materializes the next stage
+                # seeded with the deliverable and passes the rest of the chain down. Re-sanitized here.
+                then_spec = _norm_then(then)
                 self.conn.execute(
-                    "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
-                    "owner,lens,country,model,created,score,claimed_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (str(uuid.uuid4()), job_id, "answer", n["node_id"], "queued",
-                     json.dumps(payload), None,
-                     n["node_id"], n["owner"],
-                     n["lens"], n["country"], n["answer_model"], _now(), None, None))
-            self._save_ledger()   # persist the new asker account before acknowledging
-            self.conn.commit()
+                    "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
+                    "pool,type,then_spec,as_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (job_id, asker, question, "pending_answers", _now(), None, None, None, None,
+                     pool, job_type, then_spec, 1 if (as_file and task_behavior(job_type).sharded) else 0))
+                beh = task_behavior(job_type)
+                for n in workers:
+                    payload: dict[str, Any] = {"question": question, "job_type": job_type}
+                    if beh.sharded:
+                        payload["shard"] = shards.get(n["node_id"], [])
+                        # Type drives fetching, not the asker (review): download_extract ALWAYS fetches
+                        # (beh.fetch); shard_map fetches only if the asker opted in (allow_user_fetch);
+                        # code_generation NEVER fetches — its items are specs, not URLs (D15), so a
+                        # user-supplied fetch=True can't turn it into a fetcher/proxy.
+                        payload["fetch"] = bool(beh.fetch or (fetch and beh.allow_user_fetch))
+                    self.conn.execute(
+                        "INSERT INTO tasks(task_id,job_id,type,node_id,status,payload,result,worker_id,"
+                        "owner,lens,country,model,created,score,claimed_at) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (str(uuid.uuid4()), job_id, "answer", n["node_id"], "queued",
+                         json.dumps(payload), None,
+                         n["node_id"], n["owner"],
+                         n["lens"], n["country"], n["answer_model"], _now(), None, None))
+                self._save_ledger()   # persist the new asker account before acknowledging
+                self.conn.commit()
+            except Exception:
+                try:
+                    self.conn.rollback()
+                finally:
+                    self.ledger.restore(snap)
+                raise
             return {"job_id": job_id, "status": "pending_answers",
                     "assigned": [n["node_id"] for n in workers]}
 
