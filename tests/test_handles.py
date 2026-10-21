@@ -139,3 +139,17 @@ def test_http_signup_reserved_or_taken_is_409(client):
         assert r.status_code == 409, h
         assert "user_secret" not in r.text
     assert client.post("/users", json={"handle": "alice"}).status_code == 200
+
+
+def test_http_admin_token_register_as_reserved_owner_is_403(client):
+    # PR #30 follow-up (b): the shared-token path returned HTTP 200 with an error body here, while
+    # the enrolled path already raised 403; a client checking only the status saw success.
+    for owner in ("__escrow__", " __Escrow__ "):
+        r = client.post("/nodes/register", json={"owner": owner, "answer_model": "m"},
+                        headers={"X-PW-Token": "admintok"})
+        assert r.status_code == 403, owner
+        assert r.json() == {"detail": "owner name is reserved"}
+        assert "node_secret" not in r.text
+    ok = client.post("/nodes/register", json={"owner": "op", "answer_model": "m"},
+                     headers={"X-PW-Token": "admintok"})
+    assert ok.status_code == 200 and ok.json().get("node_id")
