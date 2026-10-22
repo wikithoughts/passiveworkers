@@ -21,8 +21,11 @@ Job lifecycle:
 
 from __future__ import annotations
 
+import atexit
 import sqlite3
 import threading
+import time
+import weakref
 
 from passiveworkers.ledger import ESCROW_ID
 from passiveworkers.net._store_assisted import _AssistedMixin
@@ -35,6 +38,31 @@ from passiveworkers.net.config import CONFIG
 # _hash is re-exported (`from passiveworkers.net._store_base import _hash as _hash`) so
 # `from passiveworkers.net.store import _hash` — used directly by tests/test_security_privacy.py —
 # keeps working unchanged now that the helper itself lives in _store_base.py.
+
+# Every live Store, so its daemon reaper can be stopped and joined at interpreter exit. A reaper
+# still printing (its failed-pass log line) when the interpreter finalizes holds stdout's buffer
+# lock, and CPython aborts with "Fatal Python error: _enter_buffered_busy" (the same hazard #48
+# fixed for the pw-baseline thread). Weak, so a stopped Store can still be collected. Kept across
+# importlib.reload() (tests reload this module constantly): a fresh set would orphan every Store
+# made before the reload, and the hook below is registered once and reads the set at exit.
+_LIVE_STORES: weakref.WeakSet = globals().get("_LIVE_STORES", weakref.WeakSet())
+_REAPER_EXIT_JOIN_S = 5.0
+
+
+def _stop_reapers_at_exit() -> None:
+    """Stop every reaper, then join them all under ONE shared deadline (a reaper stuck in a pass
+    can delay exit by at most _REAPER_EXIT_JOIN_S, never wedge it)."""
+    stores = list(_LIVE_STORES)
+    for s in stores:
+        s._stop.set()
+    deadline = time.monotonic() + _REAPER_EXIT_JOIN_S
+    for s in stores:
+        s._reaper.join(max(0.0, deadline - time.monotonic()))
+
+
+if not globals().get("_EXIT_HOOK_REGISTERED"):
+    atexit.register(_stop_reapers_at_exit)
+    _EXIT_HOOK_REGISTERED = True
 
 
 class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
@@ -59,6 +87,7 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
         self._stop = threading.Event()
         self._reaper = threading.Thread(target=self._reap_loop, daemon=True, name="pw-reaper")
         self._reaper.start()
+        _LIVE_STORES.add(self)
 
     # ------------------------------------------------------------------ integrity
     def ledger_integrity(self) -> dict:
