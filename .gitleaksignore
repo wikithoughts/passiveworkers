@@ -1,0 +1,10 @@
+# Reviewed gitleaks findings in passiveworkers main history (2026-10-21, gitleaks 8.30.1, generated
+# fleet-security workflow). Exact commit:file:rule:line fingerprints only, so other lines,
+# commits and detectors stay scanned. None of these is a credential.
+
+# Test fixtures: a fake Tavily key and placeholder base64 trust keys.
+496390656dd5e2ee8670ca60967e17144a521eb5:tests/test_operator_client.py:generic-api-key:101
+4def8acec72f052e2cc7e125f9a342def01165f9:tests/test_config.py:generic-api-key:29
+4def8acec72f052e2cc7e125f9a342def01165f9:tests/test_config.py:generic-api-key:56
+f197aafb78324c3caf0b6c081f3a650c7a2f78e8:tests/test_trust.py:generic-api-key:18
+f197aafb78324c3caf0b6c081f3a650c7a2f78e8:tests/test_trust.py:generic-api-key:19

@@ -335,7 +335,10 @@ def register(body: RegisterBody, request: Request, x_pw_token: str | None = Head
             raise HTTPException(status_code=403, detail=res["error"])
         return res
     _auth(x_pw_token)
-    return store.register_node(body.model_dump(), ip=ip, geo_country=geo)   # {node_id, node_secret}
+    res = store.register_node(body.model_dump(), ip=ip, geo_country=geo)   # {node_id, node_secret}
+    if res.get("error"):   # e.g. a reserved `__*__` owner: same 403 as the enrolled path, never a 200
+        raise HTTPException(status_code=403, detail=res["error"])
+    return res
 
 
 @app.post("/nodes/heartbeat")
