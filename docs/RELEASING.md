@@ -4,11 +4,13 @@
 `passiveworkers` **0.1.0 through 0.4.0 are live** on https://pypi.org/project/passiveworkers/, each
 git-tagged (`v0.1.0`…`v0.4.0`). **0.4.0** (R36/D52) is a broad round: web-evidence **rerank** +
 **adaptive/recursive** research depth, plus a hardening sweep (the escrow-refund atomicity fix, one shared
-UI theme in `passiveworkers/net/ui_common.py`, scoped advisory `pyright`, and tests for the uncovered web-UI /
+UI theme in `passiveworkers/net/ui_common.py`, scoped `pyright`, and tests for the uncovered web-UI /
 legacy-`Council` surfaces). Published from commit `555b27c`, verified (PyPI JSON API 200 + a clean-venv
 `pip install passiveworkers==0.4.0` → `pworkers version` 0.4.0), tagged `v0.4.0`, and adversarially reviewed
 before commit (2 real issues caught + fixed). **The next release MUST bump the version** — `0.4.0` is now
-burned on PyPI.
+burned on PyPI. The `types` job shipped in 0.4.0 as advisory. It is a blocking gate now: `pyright`
+(`basic`, `passiveworkers/net`, `[tool.pyright]`) fails `types` and the required `ci-ok`
+(`.github/workflows/ci.yml`).
 
 _Prior: **0.3.0** (2026-07-10, commit `c2921f2`, R35/D51) — inference-time citation-fidelity self-repair
 in `pworkers research` + a free local currency baseline (`--baseline local`) with a re-verified/expanded bank._

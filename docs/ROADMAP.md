@@ -237,10 +237,11 @@ Founder chose **"do them all"** across the four next-move candidates → a broad
   source caps + stop-when-saturated), so hard briefs go deeper and easy ones stop early.
 - **Hardening** — fixed the escrow-refund swallow (atomic `Ledger.refund` + reaper retry, no stranded
   hold); consolidated the 3 web UIs' drifted CSS/footer/Leaflet/status-colors into `ui_common`
-  (Playwright-verified); added scoped advisory `pyright` (council/net) + tests for the uncovered web-UI
-  routes and legacy `Council`.
+  (Playwright-verified); added scoped `pyright` (council/net, advisory in this round) + tests for the
+  uncovered web-UI routes and legacy `Council`. That `types` job is a blocking gate now: a pyright
+  error fails `types` and the required `ci-ok` (`.github/workflows/ci.yml`, `[tool.pyright]`).
 - Adversarial review caught 2 real issues (an unguarded substitution-test class, a crash-on-blank-env
-  regression) — both fixed + regression-tested. 412 tests, ruff, JS, pyright-advisory green. **0.4.0.**
+  regression) — both fixed + regression-tested. 412 tests, ruff, JS, pyright green. **0.4.0.**
 
 ## R35 — Quality + proof: citation-fidelity self-repair + a free currency baseline (D51, 2026-07-10)
 Two pure-local upgrades (no paid spend, no new operators), the founder's "both quality + proof" choice:

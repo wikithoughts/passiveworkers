@@ -14,6 +14,14 @@ Not yet itemized here: the earlier post-0.5.0 merges #2–#28 (`git log v0.5.0..
 two user-visible ones — the `council`→`passiveworkers` / `pw`→`pworkers` rename (#18) and the
 OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROADMAP.md` Round 39.
 ### Fixed
+- **`POST /jobs` and `POST /tasks/{id}/result` are no longer the 4 MiB body ceiling.** Each is
+  capped at the payload the store already keeps (a 200×2,000-character item list, repeated on up
+  to 8 `then` stages, for `/jobs`; 200 result rows, each item escaped as `\uXXXX` plus 8 KiB of
+  escaped output, for `/result`), and an over-count body is rejected even when it is still small
+  (job stage and requires counts after the user secret; result counts after the node secret).
+  The 0.4.0 note below records
+  `pyright` when the CI `types` job was still advisory. That job is a blocking gate now: `pyright`
+  (`basic`, `passiveworkers/net`) fails `types` and therefore the required `ci-ok`.
 - **Expired assisted offers can no longer be accepted or paid** — the reaper now expires the
   offer's task row with the job, and escrow may not go negative (#29).
 - **Signup can't claim a reserved or already-owned handle** — `__*__` system handles and any
@@ -107,9 +115,10 @@ bigger-model evidence pass. Everything is pure local code; adversarially reviewe
   palette, footer, Leaflet/CARTO map bootstrap, and status colors — ending the drift between the research
   desk, marketplace, and operator dashboard (three different `--bg`/`--card` values, a `--muted`/`--mut`
   name split, and a divergent map attribution). All three surfaces browser-verified to render coherently.
-- **Scoped type-checking.** A `[tool.pyright]` config (`basic`, `council/net` only) + a non-blocking
-  advisory CI `types` job. Fixed the genuine annotation issues it surfaced (`Store.__init__` path,
-  `create_job` `then` accepting a pipeline list, a heterogeneous profile dict).
+- **Scoped type-checking.** A `[tool.pyright]` config (`basic`, `council/net` only) + a CI `types`
+  job, advisory in this release. Fixed the genuine annotation issues it surfaced (`Store.__init__`
+  path, `create_job` `then` accepting a pipeline list, a heterogeneous profile dict). The job is a
+  blocking gate now; see Unreleased.
 - Tests for the previously-uncovered web-UI routes (`GET /`, `/dashboard`) and the legacy in-process
   `Council` orchestrator; the shared reranker and the adaptive-depth budgets are unit-pinned.
 

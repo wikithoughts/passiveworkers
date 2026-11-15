@@ -1320,8 +1320,10 @@ failed → asker's hold stranded): the reaper now leaves the offer open to retry
 the asker account BEFORE moving credit (atomic — a missing account can't decrement escrow and burn credit).
 (2) The three web UIs' drifted CSS palettes / footer / Leaflet bootstrap / status colors were consolidated
 into `council/net/ui_common.py` (the R34-deferred cleanup, now safe post-release; all three
-Playwright-verified to render coherently). (3) Scoped, advisory type-checking (`pyright basic` on
-`council/net`, non-blocking CI) — fixed the genuine annotations it surfaced. Plus tests for the previously
+Playwright-verified to render coherently). (3) Scoped type-checking (`pyright basic` on
+`council/net`) — fixed the genuine annotations it surfaced. The CI `types` job shipped in this round
+as advisory. It is a blocking gate now: a pyright error fails `types` and the required `ci-ok`
+(`.github/workflows/ci.yml`, `[tool.pyright]` in `pyproject.toml`). Plus tests for the previously
 uncovered web-UI routes + the legacy `Council` orchestrator.
 
 **The adversarial review earned its keep again** (2 verified findings): the web-UI substitution test guarded
@@ -1334,7 +1336,8 @@ tree before committing. **Measured (gemma3:12b/4b, --depth standard):** the rera
 magnitude at a 3-brief rig, the same lesson R35 taught); and with all levers on the free currency gap held
 (static ≈tie +0.25, recent +3.0) — no regression. The levers are safe by construction, so the case rests on
 the mechanism + the unit-pinned permutation/budget guarantees, not a headline number (BENEFIT.md R36
-appendix). 412 tests, ruff, JS checks, pyright-advisory green. **Shipped as 0.4.0.**
+appendix). 412 tests, ruff, JS checks, pyright green. **Shipped as 0.4.0.** The `types` job in that
+run was advisory; it blocks `ci-ok` now, as noted above.
 See [[passiveworkers-adversarial-review-catches-real-bugs]].
 
 ## D51 — Quality + proof: citation-fidelity self-repair + a free currency baseline (R35, 2026-07-10)

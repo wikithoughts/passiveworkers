@@ -25,11 +25,15 @@ Endpoints:
 
 Request bodies are capped per route BEFORE any parsing or auth: a larger declared Content-Length,
 or a chunked body that streams past the cap, gets a 413 (F11 review). PW_MAX_BODY_BYTES (default
-4 MiB) is the ceiling for every route and the cap for the free-form bodies (node /result dicts,
-/jobs). Routes with a documented smaller bound get that instead: /deliver ≤ _DELIVER_BODY_CAP (a
-200k-char deliverable, JSON-escaped), blob uploads ≤ _BLOB_BODY_CAP (one 512 KiB chunk + slack),
-and the small field-capped bodies (/users, heartbeat, progress, enroll, …) ≤ 64 KiB. The route is
+4 MiB) is the ceiling for every route. Routes with a documented smaller bound get that instead:
+/jobs ≤ _JOBS_BODY_CAP (one 200×2000-char item list, the same list on each of 8 `then` stages,
+plus 64 KiB of JSON framing), node /result ≤ _RESULT_BODY_CAP (200 rows: each item JSON-escaped
+the way `requests` posts it, plus 8 KiB of escaped output, plus 64 KiB), /deliver ≤ _DELIVER_BODY_CAP (a 200k-char deliverable, JSON-escaped),
+blob uploads ≤ _BLOB_BODY_CAP (one 512 KiB chunk + slack), and the small field-capped bodies
+(/users, heartbeat, progress, enroll, …) ≤ 64 KiB. A lower ceiling lowers every cap. The route is
 matched on the app-relative path (root_path and trailing slashes stripped), as Starlette routes it.
+/jobs and /result also reject over-count bodies that are still under the byte cap (too many items,
+stages, requires keys, result rows, scores, or council points).
 
 Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app
 """
@@ -91,14 +95,44 @@ _BLOB_CAP = 512 * 1024   # max bytes for one content-addressed chunk
 # route cap only adds slack: put_blob's exact _BLOB_CAP check ("chunk too large") decides at the edge.
 _BLOB_BODY_CAP = _BLOB_CAP + 16 * 1024
 
+# /jobs and /result used to share the 4 MiB ceiling (B-341). Their useful payloads are already
+# bounded by the store: create_job / _norm_then keep at most 200 items of 2000 characters, and a
+# `then` pipeline is at most _MAX_CHAIN_STAGES (8). The /jobs byte cap is those characters plus
+# 64 KiB of JSON framing. The /result byte cap is the same rows after requests escapes each
+# character as \uXXXX, plus escaped output, plus 64 KiB — the constants below. Both sit under
+# the ceiling, so padding is a 413 before auth. They are not the ~256 KiB figure from the
+# backlog note: one full item list alone is 400,000 bytes, and a pipeline may repeat that list
+# on every stage. A fully JSON-escaped astral payload can still exceed the cap; the store would
+# have clipped that text to 2000 characters anyway.
+_JOBS_ITEMS_MAX = 200
+_JOBS_ITEM_CHARS = 2000
+_JOBS_STAGES_MAX = 8                 # passiveworkers.net._store_base._MAX_CHAIN_STAGES
+_REQUIRES_KEYS_MAX = 16              # model, min_ram_gb, min_reputation, plus slack
+_JOBS_BODY_CAP = (1 + _JOBS_STAGES_MAX) * _JOBS_ITEMS_MAX * _JOBS_ITEM_CHARS + 64 * 1024
+# One shard can be the whole item list, and the worker posts it with requests (`json=`), which
+# escapes non-ASCII as \uXXXX (6 bytes). A full shard of 200 × 2,000 non-ASCII characters is
+# 2.4 MiB before outputs — under the old ceiling, and over a cap that counted one byte per
+# character. Astral characters escape to 12 bytes; a full shard of those already exceeded the
+# 4 MiB ceiling, so this cap does not try to fit them. Output room is 8 KiB of escaped bytes
+# per row (batch generation asks for 220 tokens).
+_RESULT_ROWS_MAX = _JOBS_ITEMS_MAX
+_RESULT_JSON_ESCAPE = 6
+_RESULT_OUTPUT_JSON = 8 * 1024
+_RESULT_BODY_CAP = (_RESULT_ROWS_MAX * (_JOBS_ITEM_CHARS * _RESULT_JSON_ESCAPE + _RESULT_OUTPUT_JSON)
+                    + 64 * 1024)
+_RESULT_MAX_KEYS = 32
+_RESULT_MAX_SCORES = 64
+_RESULT_MAX_COUNCIL = 128            # deliberate() slices consensus/disagreements to 6; unique is not sliced
+
 # POST routes whose body has a documented bound below the ceiling. Non-POST requests carry no body
-# (64 KiB); unlisted POSTs — /result's free-form dict, /jobs — get the ceiling. A new POST route
-# with a small body belongs here.
+# (64 KiB); an unlisted POST gets the ceiling. A new POST route with a small body belongs here.
 _ROUTE_CAPS = (
     (re.compile(r"/tasks/[^/]+/deliver"), _DELIVER_BODY_CAP),
+    (re.compile(r"/tasks/[^/]+/result"), _RESULT_BODY_CAP),
     (re.compile(r"/jobs/[^/]+/blobs/[^/]+"), _BLOB_BODY_CAP),
     (re.compile(r"/tasks/[^/]+/(?:progress|accept)"), _SMALL_BODY_CAP),
     (re.compile(r"/jobs/[^/]+/(?:feedback|rate)"), _SMALL_BODY_CAP),
+    (re.compile(r"/jobs"), _JOBS_BODY_CAP),
     (re.compile(r"/(?:users|nodes/register|nodes/heartbeat|admin/enroll)"), _SMALL_BODY_CAP),
 )
 
@@ -286,7 +320,7 @@ class JobBody(BaseModel):
     question: str = Field(..., max_length=4000)
     minds: int | None = Field(default=None, ge=1, le=16)   # responder dial (clamped to online)
     type: str | None = Field(default=None, max_length=32)  # job type (see GET /job-types)
-    items: list[str] | None = Field(default=None, max_length=200)  # shard_map: the work items
+    items: list[str] | None = Field(default=None, max_length=_JOBS_ITEMS_MAX)  # shard_map: the work items
     requires: dict | None = None    # capability gate, e.g. {"model": "qwen3:14b", "min_ram_gb": 16}
     fetch: bool = False             # shard_map: items are PUBLIC URLs to fetch+process (D15 rules)
     context: str = Field(default="", max_length=4000)   # assisted: bounded context for the operator
@@ -294,6 +328,34 @@ class JobBody(BaseModel):
     split: list[float] | None = Field(default=None, max_length=16)  # shard_map: explicit per-worker weights (else capacity-weighted, D32)
     then: dict | list | None = None  # stage chaining (D35/D39): a stage dict, or a LIST of stages, run as a pipeline on completion
     as_file: bool = False           # D38: deliver the assembled sharded output as one downloadable file
+
+
+def _check_job_counts(body: JobBody) -> None:
+    """Byte cap is not enough: 9 empty `then` stages are tiny and used to be sliced in the store.
+    Runs after the user secret is checked. The 200-item limit stays on the field, so pydantic
+    still answers that one with 422."""
+    if isinstance(body.requires, dict) and len(body.requires) > _REQUIRES_KEYS_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"requires has more than {_REQUIRES_KEYS_MAX} keys")
+    stages = body.then
+    if isinstance(stages, dict):
+        stages = [stages]
+    if not isinstance(stages, list):
+        return
+    if isinstance(body.then, list) and len(stages) > _JOBS_STAGES_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"then has more than {_JOBS_STAGES_MAX} stages")
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        items = stage.get("items")
+        if isinstance(items, list) and len(items) > _JOBS_ITEMS_MAX:
+            raise HTTPException(status_code=400,
+                                detail=f"a then stage has more than {_JOBS_ITEMS_MAX} items")
+        requires = stage.get("requires")
+        if isinstance(requires, dict) and len(requires) > _REQUIRES_KEYS_MAX:
+            raise HTTPException(status_code=400,
+                                detail=f"a then stage requires has more than {_REQUIRES_KEYS_MAX} keys")
 
 
 class FeedbackBody(BaseModel):
@@ -370,10 +432,31 @@ def next_task(x_pw_token: str | None = Header(default=None),
     return task
 
 
+def _check_result_counts(result: dict) -> None:
+    """The byte cap bounds memory. These bound cardinality: a shard is at most _RESULT_ROWS_MAX
+    rows, a score map is one entry per worker, and the council read is a short list of points.
+    A body of empty rows stays small and would otherwise be stored whole."""
+    if len(result) > _RESULT_MAX_KEYS:
+        raise HTTPException(status_code=400, detail="too many result fields")
+    rows = result.get("results")
+    if isinstance(rows, list) and len(rows) > _RESULT_ROWS_MAX:
+        raise HTTPException(status_code=400, detail="too many result rows")
+    scores = result.get("scores")
+    if isinstance(scores, (dict, list)) and len(scores) > _RESULT_MAX_SCORES:
+        raise HTTPException(status_code=400, detail="too many scores")
+    council = result.get("council")
+    if isinstance(council, dict):
+        for key in ("consensus", "disagreements", "unique"):
+            points = council.get(key)
+            if isinstance(points, list) and len(points) > _RESULT_MAX_COUNCIL:
+                raise HTTPException(status_code=400, detail="too many council points")
+
+
 @app.post("/tasks/{task_id}/result")
 def task_result(task_id: str, result: dict, x_pw_token: str | None = Header(default=None),
                 x_node_secret: str | None = Header(default=None)):
     node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
+    _check_result_counts(result)
     accepted = store.complete_task(task_id, result, node_id=node_id)
     if not accepted:
         raise HTTPException(status_code=409, detail="task not yours, unknown, or already done")
@@ -608,6 +691,7 @@ def job_types():
 @app.post("/jobs")
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
+    _check_job_counts(body)
     _ratelimit(f"job:{handle}", "PW_RL_JOBS", "120")   # per-asker job-creation cap (D36)
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,

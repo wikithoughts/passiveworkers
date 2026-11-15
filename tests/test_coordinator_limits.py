@@ -279,19 +279,34 @@ def test_small_route_cap_also_applies_to_a_chunked_body(client):
     assert r.status_code == 413
 
 
-def test_free_form_routes_keep_the_ceiling(client):
-    """/result's dict and /jobs have no documented smaller bound, so a 1 MiB body still reaches
-    the endpoint (its auth check / body validation) under the default 4 MiB ceiling."""
-    body = _padded_json(b'{"text": "x"', 1024 * 1024)
+def test_jobs_and_result_are_capped_below_the_ceiling(capp, client):
+    """B-341: /jobs and /result are not the 4 MiB ceiling. A body between the route cap and the
+    ceiling is 413 before auth; a body under the route cap still reaches the endpoint."""
+    ceiling = 4 * 1024 * 1024
+    assert capp._JOBS_BODY_CAP < ceiling
+    assert capp._RESULT_BODY_CAP < ceiling
+    assert capp._JOBS_BODY_CAP == (1 + capp._JOBS_STAGES_MAX) * capp._JOBS_ITEMS_MAX * capp._JOBS_ITEM_CHARS + 64 * 1024
+    assert capp._RESULT_BODY_CAP == capp._RESULT_ROWS_MAX * (
+        capp._JOBS_ITEM_CHARS * capp._RESULT_JSON_ESCAPE + capp._RESULT_OUTPUT_JSON) + 64 * 1024
+    # a full shard of 200 × 2,000 non-ASCII characters, JSON-escaped (\uXXXX), still fits
+    assert 200 * 2000 * capp._RESULT_JSON_ESCAPE < capp._RESULT_BODY_CAP
     hdr = {"content-type": "application/json", "X-Node-Secret": "nope", "X-User-Secret": "nope"}
-    assert client.post("/tasks/t1/result", content=body, headers=hdr).status_code == 401
-    assert client.post("/jobs", content=body, headers=hdr).status_code == 422   # no "question"
+    assert client.post("/jobs", content=_padded_json(b'{"question": "q"', capp._JOBS_BODY_CAP + 1),
+                       headers=hdr).status_code == 413
+    assert client.post("/tasks/t1/result",
+                       content=_padded_json(b'{"text": "x"', capp._RESULT_BODY_CAP + 1),
+                       headers=hdr).status_code == 413
+    assert client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', 64 * 1024),
+                       headers=hdr).status_code == 401
+    assert client.post("/jobs", content=_padded_json(b'{"question": "q"', 64 * 1024),
+                       headers=hdr).status_code == 401          # parsed, then the bad user secret
 
 
 def test_body_cap_for_routes_and_the_ceiling(capp, monkeypatch):
     small, ceiling = 64 * 1024, 4 * 1024 * 1024
     assert capp._body_cap_for("POST", "/tasks/t1/deliver") == capp._DELIVER_BODY_CAP
-    assert capp._body_cap_for("POST", "/tasks/t1/result") == ceiling
+    assert capp._body_cap_for("POST", "/tasks/t1/result") == capp._RESULT_BODY_CAP
+    assert capp._body_cap_for("POST", "/jobs") == capp._JOBS_BODY_CAP
     assert capp._body_cap_for("POST", "/jobs/j1/blobs/abc") == capp._BLOB_BODY_CAP
     assert capp._BLOB_BODY_CAP == capp._BLOB_CAP + 16 * 1024    # derived from the handler's cap
     assert capp._body_cap_for("POST", "/users") == small
@@ -299,6 +314,8 @@ def test_body_cap_for_routes_and_the_ceiling(capp, monkeypatch):
     assert capp._body_cap_for("POST", "/tasks/a/b/deliver") == ceiling   # not the deliver route
     monkeypatch.setenv("PW_MAX_BODY_BYTES", "4096")     # an operator's lower ceiling wins everywhere
     assert capp._body_cap_for("POST", "/tasks/t1/deliver") == 4096
+    assert capp._body_cap_for("POST", "/tasks/t1/result") == 4096
+    assert capp._body_cap_for("POST", "/jobs") == 4096
     assert capp._body_cap_for("POST", "/users") == 4096
 
 
@@ -351,34 +368,75 @@ def test_small_route_body_exactly_at_the_cap_passes_and_one_byte_more_is_413(cli
     assert r.json()["detail"] == "request body too large"
 
 
-def test_result_body_exactly_at_the_ceiling_passes_and_one_byte_more_is_413(capp, client,
-                                                                            monkeypatch):
+def test_result_body_exactly_at_the_cap_passes_and_one_byte_more_is_413(capp, client, monkeypatch):
     calls = _spy_complete(capp, monkeypatch)
     hdr = {"content-type": "application/json", "X-Node-Secret": _node_secret(client)}
-    ceiling = 4 * 1024 * 1024
-    r = client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', ceiling), headers=hdr)
+    cap = capp._RESULT_BODY_CAP
+    r = client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', cap), headers=hdr)
     assert r.status_code == 200, r.text
     assert len(calls) == 1
-    r = client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', ceiling + 1),
-                    headers=hdr)
+    r = client.post("/tasks/t1/result", content=_padded_json(b'{"text": "x"', cap + 1), headers=hdr)
     assert r.status_code == 413
     assert len(calls) == 1                       # the endpoint never ran
 
 
-def test_jobs_body_exactly_at_the_ceiling_passes_and_one_byte_more_is_413(capp, client,
-                                                                          monkeypatch):
+def test_jobs_body_exactly_at_the_cap_passes_and_one_byte_more_is_413(capp, client, monkeypatch):
     calls = []
     monkeypatch.setattr(capp.store, "create_job",
                         lambda *a, **k: calls.append(a) or {"job_id": "j1", "status": "queued"})
     usec = client.post("/users", json={"handle": "alice"}).json()["user_secret"]
     hdr = {"content-type": "application/json", "X-User-Secret": usec}
-    ceiling = 4 * 1024 * 1024
-    r = client.post("/jobs", content=_padded_json(b'{"question": "q"', ceiling), headers=hdr)
+    cap = capp._JOBS_BODY_CAP
+    r = client.post("/jobs", content=_padded_json(b'{"question": "q"', cap), headers=hdr)
     assert r.status_code == 200, r.text
     assert len(calls) == 1
-    r = client.post("/jobs", content=_padded_json(b'{"question": "q"', ceiling + 1), headers=hdr)
+    r = client.post("/jobs", content=_padded_json(b'{"question": "q"', cap + 1), headers=hdr)
     assert r.status_code == 413
     assert len(calls) == 1
+
+
+def test_jobs_count_caps_reject_over_count_bodies_that_are_still_small(client):
+    usec = client.post("/users", json={"handle": "alice"}).json()["user_secret"]
+    hdr = {"X-User-Secret": usec}
+    assert client.post("/jobs", json={"question": "q", "items": ["x"] * 200}, headers=hdr).status_code == 200
+    over_items = client.post("/jobs", json={"question": "q", "items": ["x"] * 201}, headers=hdr)
+    assert over_items.status_code == 422
+    assert client.post("/jobs", json={"question": "q", "then": [{"question": "n"}] * 8},
+                       headers=hdr).status_code == 200
+    anon = {"X-User-Secret": "nope"}
+    assert client.post("/jobs", json={"question": "q", "then": [{"question": "n"}] * 9},
+                       headers=anon).status_code == 401
+    over_stages = client.post("/jobs", json={"question": "q", "then": [{"question": "n"}] * 9},
+                              headers=hdr)
+    assert over_stages.status_code == 400
+    assert over_stages.json()["detail"] == "then has more than 8 stages"
+    over_then_items = client.post(
+        "/jobs", json={"question": "q", "then": {"question": "n", "items": ["x"] * 201}}, headers=hdr)
+    assert over_then_items.status_code == 400
+    assert over_then_items.json()["detail"] == "a then stage has more than 200 items"
+    keys = {f"k{i}": i for i in range(17)}
+    over_requires = client.post("/jobs", json={"question": "q", "requires": keys}, headers=hdr)
+    assert over_requires.status_code == 400
+    assert over_requires.json()["detail"] == "requires has more than 16 keys"
+
+
+def test_result_count_caps_reject_over_count_bodies_before_the_store(capp, client, monkeypatch):
+    calls = _spy_complete(capp, monkeypatch)
+    hdr = {"X-Node-Secret": _node_secret(client)}
+    ok = client.post("/tasks/t1/result", json={"results": [{}] * 200, "text": "ok"}, headers=hdr)
+    assert ok.status_code == 200, ok.text
+    assert len(calls) == 1
+    rows = client.post("/tasks/t1/result", json={"results": [{}] * 201}, headers=hdr)
+    assert rows.status_code == 400 and rows.json()["detail"] == "too many result rows"
+    scores = client.post("/tasks/t1/result", json={"scores": {str(i): 1 for i in range(65)}}, headers=hdr)
+    assert scores.status_code == 400 and scores.json()["detail"] == "too many scores"
+    council = client.post("/tasks/t1/result",
+                          json={"council": {"unique": [{"point": "p"}] * 129}}, headers=hdr)
+    assert council.status_code == 400 and council.json()["detail"] == "too many council points"
+    fields = {f"k{i}": 1 for i in range(33)}
+    many = client.post("/tasks/t1/result", json=fields, headers=hdr)
+    assert many.status_code == 400 and many.json()["detail"] == "too many result fields"
+    assert len(calls) == 1                       # none of the over-count bodies were stored
 
 
 def test_blob_route_cap_is_the_chunk_cap_plus_slack_not_the_ceiling(capp, client, monkeypatch):
@@ -441,5 +499,7 @@ def test_root_path_prefix_gets_the_route_cap(capp):
     small, ceiling = cap, 4 * 1024 * 1024
     assert capp._body_cap_for("POST", "/pw/users", "/pw") == small
     assert capp._body_cap_for("POST", "/users", "/pw") == small        # server left path unprefixed
+    assert capp._body_cap_for("POST", "/pw/jobs", "/pw") == capp._JOBS_BODY_CAP
+    assert capp._body_cap_for("POST", "/pw/tasks/t1/result", "/pw") == capp._RESULT_BODY_CAP
     assert capp._body_cap_for("POST", "/pw", "/pw") == ceiling
     assert capp._body_cap_for("POST", "/pwx/users", "/pw") == ceiling  # not a whole-segment prefix
