@@ -97,11 +97,13 @@ _BLOB_BODY_CAP = _BLOB_CAP + 16 * 1024
 
 # /jobs and /result used to share the 4 MiB ceiling (B-341). Their useful payloads are already
 # bounded by the store: create_job / _norm_then keep at most 200 items of 2000 characters, and a
-# `then` pipeline is at most _MAX_CHAIN_STAGES (8). The byte caps are those maxima plus 64 KiB of
-# JSON framing — below the ceiling, so padding is a 413 before auth. They are not the ~256 KiB
-# figure from the backlog note: one full item list alone is 400,000 bytes, and a pipeline may
-# repeat that list on every stage. A fully JSON-escaped astral payload can still exceed the cap;
-# the store would have clipped that text to 2000 characters anyway.
+# `then` pipeline is at most _MAX_CHAIN_STAGES (8). The /jobs byte cap is those characters plus
+# 64 KiB of JSON framing. The /result byte cap is the same rows after requests escapes each
+# character as \uXXXX, plus escaped output, plus 64 KiB — the constants below. Both sit under
+# the ceiling, so padding is a 413 before auth. They are not the ~256 KiB figure from the
+# backlog note: one full item list alone is 400,000 bytes, and a pipeline may repeat that list
+# on every stage. A fully JSON-escaped astral payload can still exceed the cap; the store would
+# have clipped that text to 2000 characters anyway.
 _JOBS_ITEMS_MAX = 200
 _JOBS_ITEM_CHARS = 2000
 _JOBS_STAGES_MAX = 8                 # passiveworkers.net._store_base._MAX_CHAIN_STAGES
