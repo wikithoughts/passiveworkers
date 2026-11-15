@@ -286,7 +286,10 @@ def test_jobs_and_result_are_capped_below_the_ceiling(capp, client):
     assert capp._JOBS_BODY_CAP < ceiling
     assert capp._RESULT_BODY_CAP < ceiling
     assert capp._JOBS_BODY_CAP == (1 + capp._JOBS_STAGES_MAX) * capp._JOBS_ITEMS_MAX * capp._JOBS_ITEM_CHARS + 64 * 1024
-    assert capp._RESULT_BODY_CAP == capp._RESULT_ROWS_MAX * (capp._JOBS_ITEM_CHARS + capp._RESULT_OUTPUT_CHARS) + 64 * 1024
+    assert capp._RESULT_BODY_CAP == capp._RESULT_ROWS_MAX * (
+        capp._JOBS_ITEM_CHARS * capp._RESULT_JSON_ESCAPE + capp._RESULT_OUTPUT_JSON) + 64 * 1024
+    # a full shard of 200 × 2,000 non-ASCII characters, JSON-escaped (\uXXXX), still fits
+    assert 200 * 2000 * capp._RESULT_JSON_ESCAPE < capp._RESULT_BODY_CAP
     hdr = {"content-type": "application/json", "X-Node-Secret": "nope", "X-User-Secret": "nope"}
     assert client.post("/jobs", content=_padded_json(b'{"question": "q"', capp._JOBS_BODY_CAP + 1),
                        headers=hdr).status_code == 413
@@ -400,18 +403,21 @@ def test_jobs_count_caps_reject_over_count_bodies_that_are_still_small(client):
     assert over_items.status_code == 422
     assert client.post("/jobs", json={"question": "q", "then": [{"question": "n"}] * 8},
                        headers=hdr).status_code == 200
+    anon = {"X-User-Secret": "nope"}
+    assert client.post("/jobs", json={"question": "q", "then": [{"question": "n"}] * 9},
+                       headers=anon).status_code == 401
     over_stages = client.post("/jobs", json={"question": "q", "then": [{"question": "n"}] * 9},
                               headers=hdr)
-    assert over_stages.status_code == 422
-    assert "8 stages" in over_stages.text
+    assert over_stages.status_code == 400
+    assert over_stages.json()["detail"] == "then has more than 8 stages"
     over_then_items = client.post(
         "/jobs", json={"question": "q", "then": {"question": "n", "items": ["x"] * 201}}, headers=hdr)
-    assert over_then_items.status_code == 422
-    assert "200 items" in over_then_items.text
+    assert over_then_items.status_code == 400
+    assert over_then_items.json()["detail"] == "a then stage has more than 200 items"
     keys = {f"k{i}": i for i in range(17)}
     over_requires = client.post("/jobs", json={"question": "q", "requires": keys}, headers=hdr)
-    assert over_requires.status_code == 422
-    assert "16 keys" in over_requires.text
+    assert over_requires.status_code == 400
+    assert over_requires.json()["detail"] == "requires has more than 16 keys"
 
 
 def test_result_count_caps_reject_over_count_bodies_before_the_store(capp, client, monkeypatch):
@@ -425,7 +431,7 @@ def test_result_count_caps_reject_over_count_bodies_before_the_store(capp, clien
     scores = client.post("/tasks/t1/result", json={"scores": {str(i): 1 for i in range(65)}}, headers=hdr)
     assert scores.status_code == 400 and scores.json()["detail"] == "too many scores"
     council = client.post("/tasks/t1/result",
-                          json={"council": {"consensus": ["p"] * 33}}, headers=hdr)
+                          json={"council": {"unique": [{"point": "p"}] * 129}}, headers=hdr)
     assert council.status_code == 400 and council.json()["detail"] == "too many council points"
     fields = {f"k{i}": 1 for i in range(33)}
     many = client.post("/tasks/t1/result", json=fields, headers=hdr)

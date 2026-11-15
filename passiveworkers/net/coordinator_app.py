@@ -27,8 +27,8 @@ Request bodies are capped per route BEFORE any parsing or auth: a larger declare
 or a chunked body that streams past the cap, gets a 413 (F11 review). PW_MAX_BODY_BYTES (default
 4 MiB) is the ceiling for every route. Routes with a documented smaller bound get that instead:
 /jobs ≤ _JOBS_BODY_CAP (one 200×2000-char item list, the same list on each of 8 `then` stages,
-plus 64 KiB of JSON framing), node /result ≤ _RESULT_BODY_CAP (200 rows of an echoed item plus
-4 KiB of output, plus 64 KiB), /deliver ≤ _DELIVER_BODY_CAP (a 200k-char deliverable, JSON-escaped),
+plus 64 KiB of JSON framing), node /result ≤ _RESULT_BODY_CAP (200 rows: each item JSON-escaped
+the way `requests` posts it, plus 8 KiB of escaped output, plus 64 KiB), /deliver ≤ _DELIVER_BODY_CAP (a 200k-char deliverable, JSON-escaped),
 blob uploads ≤ _BLOB_BODY_CAP (one 512 KiB chunk + slack), and the small field-capped bodies
 (/users, heartbeat, progress, enroll, …) ≤ 64 KiB. A lower ceiling lowers every cap. The route is
 matched on the app-relative path (root_path and trailing slashes stripped), as Starlette routes it.
@@ -48,7 +48,7 @@ import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from passiveworkers.net import geoip
 from passiveworkers.net.app import APP_HTML
@@ -107,14 +107,20 @@ _JOBS_ITEM_CHARS = 2000
 _JOBS_STAGES_MAX = 8                 # passiveworkers.net._store_base._MAX_CHAIN_STAGES
 _REQUIRES_KEYS_MAX = 16              # model, min_ram_gb, min_reputation, plus slack
 _JOBS_BODY_CAP = (1 + _JOBS_STAGES_MAX) * _JOBS_ITEMS_MAX * _JOBS_ITEM_CHARS + 64 * 1024
-# One shard can be the whole item list. Each row echoes the item and a short model output
-# (batch generation asks for 220 tokens; 4 KiB is the room allowed per row).
+# One shard can be the whole item list, and the worker posts it with requests (`json=`), which
+# escapes non-ASCII as \uXXXX (6 bytes). A full shard of 200 × 2,000 non-ASCII characters is
+# 2.4 MiB before outputs — under the old ceiling, and over a cap that counted one byte per
+# character. Astral characters escape to 12 bytes; a full shard of those already exceeded the
+# 4 MiB ceiling, so this cap does not try to fit them. Output room is 8 KiB of escaped bytes
+# per row (batch generation asks for 220 tokens).
 _RESULT_ROWS_MAX = _JOBS_ITEMS_MAX
-_RESULT_OUTPUT_CHARS = 4 * 1024
-_RESULT_BODY_CAP = _RESULT_ROWS_MAX * (_JOBS_ITEM_CHARS + _RESULT_OUTPUT_CHARS) + 64 * 1024
+_RESULT_JSON_ESCAPE = 6
+_RESULT_OUTPUT_JSON = 8 * 1024
+_RESULT_BODY_CAP = (_RESULT_ROWS_MAX * (_JOBS_ITEM_CHARS * _RESULT_JSON_ESCAPE + _RESULT_OUTPUT_JSON)
+                    + 64 * 1024)
 _RESULT_MAX_KEYS = 32
 _RESULT_MAX_SCORES = 64
-_RESULT_MAX_COUNCIL = 32
+_RESULT_MAX_COUNCIL = 128            # deliberate() slices consensus/disagreements to 6; unique is not sliced
 
 # POST routes whose body has a documented bound below the ceiling. Non-POST requests carry no body
 # (64 KiB); an unlisted POST gets the ceiling. A new POST route with a small body belongs here.
@@ -321,28 +327,33 @@ class JobBody(BaseModel):
     then: dict | list | None = None  # stage chaining (D35/D39): a stage dict, or a LIST of stages, run as a pipeline on completion
     as_file: bool = False           # D38: deliver the assembled sharded output as one downloadable file
 
-    @model_validator(mode="after")
-    def _count_caps(self) -> JobBody:
-        """Byte cap is not enough: 201 empty items, or 9 empty `then` stages, are tiny and used
-        to be accepted (the store sliced them later). Reject the over-count here."""
-        if isinstance(self.requires, dict) and len(self.requires) > _REQUIRES_KEYS_MAX:
-            raise ValueError(f"requires has more than {_REQUIRES_KEYS_MAX} keys")
-        stages = self.then
-        if isinstance(stages, dict):
-            stages = [stages]
-        if isinstance(stages, list):
-            if isinstance(self.then, list) and len(stages) > _JOBS_STAGES_MAX:
-                raise ValueError(f"then has more than {_JOBS_STAGES_MAX} stages")
-            for stage in stages:
-                if not isinstance(stage, dict):
-                    continue
-                items = stage.get("items")
-                if isinstance(items, list) and len(items) > _JOBS_ITEMS_MAX:
-                    raise ValueError(f"a then stage has more than {_JOBS_ITEMS_MAX} items")
-                requires = stage.get("requires")
-                if isinstance(requires, dict) and len(requires) > _REQUIRES_KEYS_MAX:
-                    raise ValueError(f"a then stage requires has more than {_REQUIRES_KEYS_MAX} keys")
-        return self
+
+def _check_job_counts(body: JobBody) -> None:
+    """Byte cap is not enough: 9 empty `then` stages are tiny and used to be sliced in the store.
+    Runs after the user secret is checked. The 200-item limit stays on the field, so pydantic
+    still answers that one with 422."""
+    if isinstance(body.requires, dict) and len(body.requires) > _REQUIRES_KEYS_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"requires has more than {_REQUIRES_KEYS_MAX} keys")
+    stages = body.then
+    if isinstance(stages, dict):
+        stages = [stages]
+    if not isinstance(stages, list):
+        return
+    if isinstance(body.then, list) and len(stages) > _JOBS_STAGES_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"then has more than {_JOBS_STAGES_MAX} stages")
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        items = stage.get("items")
+        if isinstance(items, list) and len(items) > _JOBS_ITEMS_MAX:
+            raise HTTPException(status_code=400,
+                                detail=f"a then stage has more than {_JOBS_ITEMS_MAX} items")
+        requires = stage.get("requires")
+        if isinstance(requires, dict) and len(requires) > _REQUIRES_KEYS_MAX:
+            raise HTTPException(status_code=400,
+                                detail=f"a then stage requires has more than {_REQUIRES_KEYS_MAX} keys")
 
 
 class FeedbackBody(BaseModel):
@@ -678,6 +689,7 @@ def job_types():
 @app.post("/jobs")
 def submit_job(body: JobBody, x_user_secret: str | None = Header(default=None)):
     handle = _user_auth(x_user_secret)
+    _check_job_counts(body)
     _ratelimit(f"job:{handle}", "PW_RL_JOBS", "120")   # per-asker job-creation cap (D36)
     out = store.create_job(handle, body.question, minds=body.minds,
                            job_type=body.type or "chat", items=body.items,

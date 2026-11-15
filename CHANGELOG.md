@@ -16,8 +16,10 @@ OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROAD
 ### Fixed
 - **`POST /jobs` and `POST /tasks/{id}/result` are no longer the 4 MiB body ceiling.** Each is
   capped at the payload the store already keeps (a 200×2,000-character item list, repeated on up
-  to 8 `then` stages, for `/jobs`; 200 result rows with 4 KiB of output each for `/result`), and
-  an over-count body is rejected even when it is still small. The 0.4.0 note below records
+  to 8 `then` stages, for `/jobs`; 200 result rows, each item escaped as `\uXXXX` plus 8 KiB of
+  escaped output, for `/result`), and an over-count body is rejected even when it is still small
+  (job stage and requires counts after the user secret; result counts after the node secret).
+  The 0.4.0 note below records
   `pyright` when the CI `types` job was still advisory. That job is a blocking gate now: `pyright`
   (`basic`, `passiveworkers/net`) fails `types` and therefore the required `ci-ok`.
 - **Expired assisted offers can no longer be accepted or paid** — the reaper now expires the

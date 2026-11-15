@@ -217,11 +217,13 @@ Two coordinator limits a self-hoster can tune:
   route's cap gets a 413 before auth or parsing. `POST /jobs` is capped below that
   ceiling at one 200-item list (2,000 characters each, the size the store keeps), the
   same list on each of up to 8 `then` stages, plus 64 KiB of JSON framing.
-  `POST /tasks/{id}/result` is capped at 200 rows of an echoed item plus 4 KiB of
-  output, plus 64 KiB of framing. Those two routes also reject an over-count body
-  that is still small: more than 200 items, 8 `then` stages, or 16 `requires` keys
-  on `/jobs`; more than 200 result rows, 64 scores, 32 council points, or 32 result
-  fields on `/result`. Blob uploads are capped at 528 KiB: one 512 KiB chunk plus
+  `POST /tasks/{id}/result` is capped at 200 rows. Each row allows a 2,000-character
+  item escaped the way a worker posts it (`\uXXXX`, six bytes per non-ASCII character)
+  plus 8 KiB of escaped output, and the route adds 64 KiB of framing. Those two routes
+  also reject an over-count body that is still small: more than 200 items (422 from
+  the field limit), or, after the user secret is accepted, more than 8 `then` stages
+  or 16 `requires` keys on `/jobs`; more than 200 result rows, 64 scores, 128 council
+  points, or 32 result fields on `/result`. Blob uploads are capped at 528 KiB: one 512 KiB chunk plus
   16 KiB of slack. `/tasks/{id}/deliver` is capped at 2,416,384 bytes, which fits a
   200k-char deliverable even when it is fully JSON-escaped. Every other route is
   capped at 64 KiB. A lower ceiling lowers all of these caps. The cap is chosen from
