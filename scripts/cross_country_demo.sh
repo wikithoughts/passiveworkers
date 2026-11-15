@@ -15,7 +15,7 @@ pids=(); tunnel=""
 cleanup(){ for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; [ -n "$tunnel" ] && kill "$tunnel" 2>/dev/null || true; }
 trap cleanup EXIT
 
-SSHK="${PW_SSH_KEY:-$HOME/.ssh/hetzner_ssh}"
+SSHK="${PW_SSH_KEY:?set PW_SSH_KEY to the SSH private key file for PW_VPS_HOST}"
 echo "→ opening SSH tunnel  Mac:${PW_PORT} → ${PW_VPS_HOST}:127.0.0.1:${PW_PORT}"
 ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes -o IdentityAgent=none -o IdentitiesOnly=yes \
   -i "$SSHK" -L "${PW_PORT}:127.0.0.1:${PW_PORT}" "$PW_VPS_HOST" & tunnel=$!

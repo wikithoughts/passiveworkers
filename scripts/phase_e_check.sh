@@ -8,7 +8,7 @@ source .venv/bin/activate
 # shellcheck disable=SC1091
 source .vps.env
 URL="http://127.0.0.1:${PW_PORT}"
-SSHK="${PW_SSH_KEY:-$HOME/.ssh/hetzner_ssh}"
+SSHK="${PW_SSH_KEY:?set PW_SSH_KEY to the SSH private key file for PW_VPS_HOST}"
 export PW_TOKEN PW_COORDINATOR="$URL" PW_POLL=2
 mkdir -p /tmp/pw
 pids=(); tunnel=""

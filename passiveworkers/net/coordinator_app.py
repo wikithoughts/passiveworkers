@@ -44,6 +44,7 @@ import ipaddress
 import os
 import re
 import secrets
+import sys
 import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -68,12 +69,40 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+_WEAK_TOKEN_MIN_LEN = 24   # `openssl rand -hex 24` (the SELF_HOST.md recipe) is 48 characters
+
+
+def _weak_token_reason(token: str) -> str | None:
+    """Why `token` is too weak to guard the admin routes, or None if it is acceptable."""
+    if not token:
+        return "empty"
+    if token == "dev-token":
+        return "the default 'dev-token'"
+    if len(token) < _WEAK_TOKEN_MIN_LEN:
+        return f"shorter than {_WEAK_TOKEN_MIN_LEN} characters"
+    return None
+
+
 def _startup_guard() -> None:
-    """Refuse to expose the coordinator publicly with a default/empty token."""
+    """Refuse to expose the coordinator publicly with a default/empty token, and warn when a weak
+    token is used on loopback: the documented topology is loopback behind a tunnel or reverse
+    proxy, which makes the loopback bind public in practice (review M1)."""
+    weak = _weak_token_reason(CONFIG.token)
+    if weak is None:
+        return
     if not _is_loopback(CONFIG.host) and CONFIG.token in ("", "dev-token"):
         raise RuntimeError(
             f"refusing to bind {CONFIG.host} with a weak PW_TOKEN. Set a strong PW_TOKEN, "
             "or bind 127.0.0.1 and front it with a tunnel/reverse proxy.")
+    if CONFIG.token == "":
+        print("[coordinator] WARNING: PW_TOKEN is empty. Every admin route (/admin/enroll, ...) "
+              "is refused until you set one; node and user routes are unaffected.",
+              file=sys.stderr, flush=True)
+    else:
+        print(f"[coordinator] WARNING: PW_TOKEN is {weak}. Loopback is not private when a tunnel "
+              "or reverse proxy fronts this coordinator (the documented setup): anyone who can "
+              "reach it can guess the admin token and mint enrollment grants. Set a strong "
+              "PW_TOKEN, e.g. `openssl rand -hex 24`.", file=sys.stderr, flush=True)
 
 
 _startup_guard()
@@ -275,6 +304,11 @@ def _enroll_enabled() -> bool:
 def _auth(token: str | None) -> None:
     # constant-time compare on BYTES: compare_digest raises TypeError on a non-ASCII str, which would
     # turn a bad token into a 500 instead of a clean 401 (D48 review). Fails closed on any mismatch.
+    # An EMPTY configured token must never authenticate: a missing header is read as "" and would
+    # match it, so `PW_TOKEN=` (an unset shell variable, a blank .env line) opened every admin
+    # route to anonymous callers (review M1).
+    if not CONFIG.token:
+        raise HTTPException(status_code=401, detail="admin token is not configured on this coordinator")
     if not secrets.compare_digest((token or "").encode("utf-8", "replace"),
                                   (CONFIG.token or "").encode("utf-8", "replace")):
         raise HTTPException(status_code=401, detail="bad or missing X-PW-Token")

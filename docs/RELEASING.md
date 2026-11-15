@@ -21,7 +21,7 @@ reliability, `pworkers status`/`--json`/`--html`, marketplace account recovery, 
 test coverage, the `pworkers rate` fix)._
 
 Token: 1Password item
-**"PyPI API for Claude"** (field `credential`), read into a subshell env at upload time — never written
+**your PyPI token item** (field `credential`), read into a subshell env at upload time — never written
 to `~/.pypirc` or any file.
 
 > **Published versions are burned.** A version number on PyPI can never be reused, even after a yank.
@@ -43,7 +43,7 @@ to `~/.pypirc` or any file.
 6. Upload (token never persisted):
    ```bash
    TWINE_USERNAME=__token__ \
-   TWINE_PASSWORD="$(op item get 'PyPI API for Claude' --fields credential --reveal)" \
+   TWINE_PASSWORD="$(op item get '<your PyPI token item>' --fields credential --reveal)" \
    twine upload --non-interactive dist/*
    ```
 7. Verify: `curl -s -o /dev/null -w '%{http_code}' https://pypi.org/pypi/passiveworkers/<ver>/json`

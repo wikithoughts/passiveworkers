@@ -43,12 +43,16 @@ def test_doctored_manifest_rejected(tmp_path):
     assert not A.verify_manifest(man)
 
 
-def test_path_traversal_name_neutralized(tmp_path):
+def test_path_traversal_name_refused(tmp_path):
+    """A manifest name with a path separator is refused outright (it used to be cut down to its
+    basename): the other party picks this string, so nothing is written for it."""
     src = _make(tmp_path, 100_000)
     man, blobs = A.chunk_file(str(src))
     man["name"] = "../../etc/evil"
-    out = pathlib.Path(A.reassemble(man, lambda h: blobs.get(h), str(tmp_path / "safe")))
-    assert out.name == "evil" and str(out).startswith(str((tmp_path / "safe").resolve()))
+    with pytest.raises(ValueError, match="unsafe deliverable name"):
+        A.reassemble(man, lambda h: blobs.get(h), str(tmp_path / "safe"))
+    assert not (tmp_path / "etc").exists()
+    assert list((tmp_path / "safe").iterdir()) == []
 
 
 def test_oversize_file_rejected(tmp_path, monkeypatch):
@@ -127,9 +131,11 @@ def test_failed_reassembly_keeps_an_existing_file(tmp_path, monkeypatch):
         A.reassemble(man, lambda h: None if h == man["chunks"][1] else blobs.get(h), str(out))
     assert (out / "deliv.txt").read_bytes() == b"earlier good copy"
     assert [p.name for p in out.iterdir()] == ["deliv.txt"]
-    # and a good reassembly then replaces it atomically
-    assert A.reassemble(man, lambda h: blobs.get(h), str(out)).read_bytes() == b"aaaabbbbcccc"
-    assert [p.name for p in out.iterdir()] == ["deliv.txt"]
+    # and a good reassembly then lands NEXT TO it (review M2: never overwrite an existing file)
+    done = A.reassemble(man, lambda h: blobs.get(h), str(out))
+    assert done.name == "deliv (1).txt" and done.read_bytes() == b"aaaabbbbcccc"
+    assert (out / "deliv.txt").read_bytes() == b"earlier good copy"
+    assert sorted(p.name for p in out.iterdir()) == ["deliv (1).txt", "deliv.txt"]
 
 
 def test_running_cap_stops_at_declared_size(tmp_path, monkeypatch):

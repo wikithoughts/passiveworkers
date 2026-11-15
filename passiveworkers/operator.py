@@ -325,8 +325,15 @@ def fetch(job_id: str, out_dir: str) -> int:
     def _chunk(h):
         r = requests.get(f"{base}/jobs/{job_id}/blob/{h}", headers=uh, timeout=60)
         return r.content if r.ok else None
-    dest = A.reassemble(manifest, _chunk, out_dir, decrypt=decrypt)
+    try:
+        dest = A.reassemble(manifest, _chunk, out_dir, decrypt=decrypt)
+    except ValueError as e:
+        print(f"✗ refusing to write the deliverable: {e}")
+        return 1
     print(f"✓ verified + reassembled → {dest}")
+    wanted = str(manifest.get("name") or "")
+    if wanted and pathlib.Path(dest).name != wanted:
+        print(f"  (an existing file named {wanted!r} was left untouched)")
     return 0
 
 
