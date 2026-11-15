@@ -135,11 +135,50 @@ def verify_manifest(manifest: dict) -> bool:
     return manifest.get("root") == manifest_root(chunks)
 
 
+_MAX_NAME_BYTES = 200   # leaves room for ".<name>.<random>.part" and " (n)" inside a 255-byte limit
+
+
+def _safe_name(raw) -> str:
+    """The deliverable's file name, taken from a manifest the OTHER party controls. Refuses (never
+    silently rewrites) anything that could address a different file than a plain new one in the
+    output directory: path separators, dotfiles (.zshrc, .gitconfig, .env, ...), "." / "..",
+    control characters, and over-long names. An absent or blank name falls back to deliverable.bin."""
+    name = str(raw if raw is not None else "")
+    if not name.strip():
+        return "deliverable.bin"
+    if "/" in name or "\\" in name:
+        raise ValueError("unsafe deliverable name: path separators are not allowed")
+    if name.startswith(".") or name != name.strip():
+        raise ValueError("unsafe deliverable name: hidden files and padded names are not allowed")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ValueError("unsafe deliverable name: control characters are not allowed")
+    if len(name.encode("utf-8", "replace")) > _MAX_NAME_BYTES:
+        raise ValueError("unsafe deliverable name: too long")
+    return name
+
+
+def _claim_unused_name(out: pathlib.Path, name: str) -> pathlib.Path:
+    """Atomically reserve a destination that does not exist yet (O_CREAT|O_EXCL, which also refuses
+    a dangling or live symlink): `name`, else `stem (1).ext`, `stem (2).ext`, ... An existing file is
+    never replaced. The empty placeholder is overwritten by the caller's os.replace."""
+    stem, ext = os.path.splitext(name)
+    for n in range(0, 10_000):
+        cand = out / (name if n == 0 else f"{stem} ({n}){ext}")
+        try:
+            os.close(os.open(cand, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        except FileExistsError:
+            continue
+        return cand
+    raise ValueError("no free file name in the output directory")
+
+
 def reassemble(manifest: dict, fetch_chunk, out_dir: str, decrypt=None) -> pathlib.Path:
     """Fetch each chunk via fetch_chunk(hash)->bytes, VERIFY each against its hash, and write
     the file into out_dir only if everything checks out. fetch_chunk failures or any hash
-    mismatch raise — a corrupted/swapped chunk never reaches disk. Path-safe: the manifest
-    name is reduced to a basename inside out_dir. If the manifest is `encrypted`, `decrypt`
+    mismatch raise — a corrupted/swapped chunk never reaches disk. Path-safe: a manifest name with
+    a path separator, a leading dot or a control character is REFUSED (the manifest comes from the
+    other party), and an existing file is NEVER overwritten: the result is written to
+    `name (1).ext`, `name (2).ext`, ... instead. If the manifest is `encrypted`, `decrypt`
     (bytes->bytes) is applied AFTER the ciphertext hash is verified.
     Chunks stream into a hidden temp `.part` file beside the destination, capped as they arrive
     at the manifest's declared size (and MAX_FILE_BYTES); only a complete, verified file is
@@ -153,11 +192,7 @@ def reassemble(manifest: dict, fetch_chunk, out_dir: str, decrypt=None) -> pathl
                          f"{MAX_FILE_BYTES // 1_000_000} MB)")
     out = pathlib.Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
-    name = pathlib.Path(str(manifest.get("name", ""))).name or "deliverable.bin"  # strip traversal
-    dest = (out / name).resolve()
-    # segment-aware containment (not a bare startswith, which sibling-prefixes could fool)
-    if dest != out and out not in dest.parents:
-        raise ValueError("unsafe output path")
+    name = _safe_name(manifest.get("name"))
     total = 0
     encrypted = bool(manifest.get("encrypted"))
     fd, tmp = tempfile.mkstemp(dir=out, prefix=f".{name}.", suffix=".part")
@@ -179,7 +214,12 @@ def reassemble(manifest: dict, fetch_chunk, out_dir: str, decrypt=None) -> pathl
                 f.write(data)
         if total != manifest["size"]:
             raise ValueError("reassembled size mismatch")
-        os.replace(part, dest)
+        dest = _claim_unused_name(out, name)
+        try:
+            os.replace(part, dest)     # replaces only the empty placeholder we just created
+        except BaseException:
+            dest.unlink(missing_ok=True)
+            raise
     finally:
         part.unlink(missing_ok=True)   # no-op after a successful replace
     return dest

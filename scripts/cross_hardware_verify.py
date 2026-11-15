@@ -29,9 +29,9 @@ import numpy as np
 import requests
 
 OLLAMA = "http://localhost:11434"
-VPS_HOST = "wikiclaw-1"
-# Agent-independent SSH (the 1Password SSH agent can re-lock); use the key file directly.
-SSH_KEY = os.environ.get("PW_SSH_KEY", os.path.expanduser("~/.ssh/hetzner_ssh"))
+VPS_HOST = os.environ.get("PW_VPS_HOST") or sys.exit("set PW_VPS_HOST to your SSH alias/host")
+# Agent-independent SSH (an SSH agent can re-lock); use the key file directly.
+SSH_KEY = os.environ.get("PW_SSH_KEY") or sys.exit("set PW_SSH_KEY to the SSH private key file")
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "IdentityAgent=none",
             "-o", "IdentitiesOnly=yes", "-i", SSH_KEY]
 COMMON_MODEL = "gemma3:12b"     # on both Mac and VPS

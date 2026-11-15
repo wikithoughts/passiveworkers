@@ -1,8 +1,10 @@
 """Generate UI screenshots of the three Passive Workers surfaces (desktop + mobile) with Playwright.
 Not part of the package. Requires local servers: pworkers serve (:8770) + coordinator on the demo DB (:8801).
-Run: python docs/preview/make_screens.py
+Run: PW_SHOT_HANDLE=... PW_SHOT_SECRET=... python docs/preview/make_screens.py
 """
+import os
 import pathlib
+import sys
 
 from playwright.sync_api import sync_playwright
 
@@ -12,7 +14,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 SERVE = "http://127.0.0.1:8770"
 COORD = "http://127.0.0.1:8801"
 REPORT = "2026-06-14-what-is-the-current-us-federal-funds-rate-target-range-and-a.md"
-HANDLE, SECRET = "founder3", "IkFRRapS7rreNaRadVCOTe-OnAi1m0UJ"
+# Credentials of a demo-DB account on the local coordinator that the marketplace screenshots sign in
+# as. Never commit real values: export PW_SHOT_HANDLE and PW_SHOT_SECRET before running.
+HANDLE = os.environ.get("PW_SHOT_HANDLE", "")
+SECRET = os.environ.get("PW_SHOT_SECRET", "")
+if not (HANDLE and SECRET):
+    sys.exit("set PW_SHOT_HANDLE and PW_SHOT_SECRET (a demo-DB account on the local coordinator) "
+             "before running this script")
 
 DEVICES = {"desktop": {"width": 1280, "height": 900}, "mobile": {"width": 375, "height": 812}}
 

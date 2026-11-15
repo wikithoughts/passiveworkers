@@ -28,7 +28,10 @@ pip install -e '.[all]'
 export PW_TOKEN=$(openssl rand -hex 24)   # this is your ADMIN token — keep it secret
 ```
 `PW_TOKEN` gates every write endpoint on the coordinator, including minting enrollment
-tokens for others. Losing it means regenerating and re-inviting everyone.
+tokens for others. Losing it means regenerating and re-inviting everyone. An empty or unset
+`PW_TOKEN` disables the admin routes (they answer 401), and the coordinator warns at startup about a
+token that is empty, `dev-token` or shorter than 24 characters, even on loopback: a tunnel or reverse
+proxy makes loopback public.
 
 ## 2. Run it — loopback first
 

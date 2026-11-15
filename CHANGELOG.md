@@ -14,6 +14,19 @@ Not yet itemized here: the earlier post-0.5.0 merges #2–#28 (`git log v0.5.0..
 two user-visible ones — the `council`→`passiveworkers` / `pw`→`pworkers` rename (#18) and the
 OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROADMAP.md` Round 39.
 ### Fixed
+- **An empty `PW_TOKEN` no longer authenticates the admin routes** (`/admin/enroll`, node
+  registration): a missing `X-PW-Token` header was read as `""` and matched an empty configured
+  token, so a blank `PW_TOKEN=` on the documented loopback-behind-a-tunnel setup let anyone mint
+  enrollment grants. The coordinator now answers 401 until a token is set, and the startup guard
+  warns (it still refuses a public bind) when the token is empty, `dev-token`, or under 24
+  characters, even on loopback.
+- **`pworkers fetch` never overwrites an existing file.** The deliverable's name comes from a
+  manifest the other party writes, so a name like `.zshrc` could replace the asker's own file.
+  Names with a path separator, a leading dot, a control character or over 200 bytes are now
+  refused, and a name that is already taken is saved as `name (1).ext`, `name (2).ext`, ...
+- `docs/preview/make_screens.py` reads its demo handle and secret from `PW_SHOT_HANDLE` and
+  `PW_SHOT_SECRET` instead of carrying them in the file; the helper scripts under `scripts/` no
+  longer default to a private host name or SSH key file.
 - **`POST /jobs` and `POST /tasks/{id}/result` are no longer the 4 MiB body ceiling.** Each is
   capped at the payload the store already keeps (a 200×2,000-character item list, repeated on up
   to 8 `then` stages, for `/jobs`; 200 result rows, each item escaped as `\uXXXX` plus 8 KiB of
