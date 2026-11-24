@@ -222,21 +222,39 @@ def test_concurrent_rotations_converge_on_one_token(tmp_path, monkeypatch):
     assert p.read_text().strip() == got[0] and stat.S_IMODE(p.stat().st_mode) == 0o600
 
 
-def test_filesystem_that_ignores_chmod_keeps_the_token_with_a_warning(tmp_path, monkeypatch):
-    """vfat/SMB/some docker volumes always report loose bits: rotating on every restart would break
-    every client, so when fchmod(0600) does not take, keep the token and say so."""
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o644])
+def test_unenforced_loose_token_file_is_refused_by_default(tmp_path, monkeypatch, mode):
+    """fchmod(0600) did not take: on NFS root-squash/FUSE/bind mounts the loose mode is real, so
+    others can read the token. Refuse (name the path and the fix) unless the operator opts in."""
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    monkeypatch.delenv("PW_ALLOW_LOOSE_TOKEN_FILE", raising=False)
+    at.resolve(None)
+    p = tmp_path / "admin_token"
+    os.chmod(p, mode)
+    monkeypatch.setattr(os, "fchmod", lambda fd, mode: None)      # the filesystem ignores it
+    with pytest.raises(RuntimeError, match="PW_TOKEN") as e:
+        at.resolve(None)
+    assert str(p) in str(e.value) and "PW_ALLOW_LOOSE_TOKEN_FILE=1" in str(e.value)
+    monkeypatch.setenv("PW_ALLOW_LOOSE_TOKEN_FILE", "0")           # only "1" opts in
+    with pytest.raises(RuntimeError, match="PW_TOKEN"):
+        at.resolve(None)
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o644])
+def test_unenforced_loose_token_file_is_kept_only_with_explicit_opt_in(tmp_path, monkeypatch, mode):
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
     first = at.resolve(None)
-    p = tmp_path / "admin_token"
-    os.chmod(p, 0o644)
-    monkeypatch.setattr(os, "fchmod", lambda fd, mode: None)      # the filesystem ignores it
-    again = at.resolve(None)
-    assert again == first                                          # not rotated
+    os.chmod(tmp_path / "admin_token", mode)
+    monkeypatch.setattr(os, "fchmod", lambda fd, mode: None)
+    monkeypatch.setenv("PW_ALLOW_LOOSE_TOKEN_FILE", "1")
+    assert at.resolve(None) == first                               # not rotated, stable across restarts
     note = at.startup_note()
     assert "filesystem does not enforce permissions; token not rotated" in note
+    assert "READABLE BY OTHER USERS" in note and str(tmp_path / "admin_token") in note
     assert first not in note
-    assert at.resolve(None) == first                               # and stays stable across restarts
+    assert at.resolve(None) == first
 
 
 @pytest.mark.parametrize("junk", ["", "short", "has space in it but is long enough 0123456789\nx"])
@@ -357,12 +375,13 @@ def test_token_value_never_appears_in_any_output_or_message(tmp_path, monkeypatc
 
 def test_no_chmod_filesystem_with_other_writable_token_file_is_refused(tmp_path, monkeypatch):
     """If the mode cannot be fixed AND others may write the file, a planted token cannot be ruled out:
-    refuse (set PW_TOKEN) instead of adopting. Read-only-for-others (0644) is still kept."""
+    refuse (set PW_TOKEN) instead of adopting, even with PW_ALLOW_LOOSE_TOKEN_FILE=1."""
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
     at.resolve(None)
     p = tmp_path / "admin_token"
     monkeypatch.setattr(os, "fchmod", lambda fd, mode: None)
+    monkeypatch.setenv("PW_ALLOW_LOOSE_TOKEN_FILE", "1")           # the opt-in never covers other-writable
     for mode in (0o666, 0o662, 0o620):
         os.chmod(p, mode)
         with pytest.raises(RuntimeError, match="PW_TOKEN"):

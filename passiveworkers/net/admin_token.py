@@ -243,8 +243,17 @@ def _load_or_create_locked(path: pathlib.Path, locked: bool) -> str:
                     f"{path} is writable by other users and this filesystem does not enforce permissions, "
                     "so its token cannot be trusted. Move PW_HOME to a POSIX filesystem or set a strong "
                     "PW_TOKEN.")
-            _WARNINGS.append("filesystem does not enforce permissions; token not rotated "
-                             f"(keep {path} on a filesystem that does, or set PW_TOKEN)")
+            if os.environ.get("PW_ALLOW_LOOSE_TOKEN_FILE") != "1":
+                # On NFS root-squash, FUSE or bind mounts the loose mode is REAL: other users or
+                # containers sharing the volume can read the admin token. Fail closed.
+                raise RuntimeError(
+                    f"{path} has mode {mode:04o} and this filesystem does not enforce permissions, so "
+                    "other users of the volume may be able to read the admin token. Set a strong "
+                    "PW_TOKEN (e.g. `openssl rand -hex 24`), move PW_HOME to a POSIX filesystem, or, "
+                    "if the volume is private to you, set PW_ALLOW_LOOSE_TOKEN_FILE=1 to keep it.")
+            _WARNINGS.append("filesystem does not enforce permissions; token not rotated, and the token "
+                             f"file {path} is READABLE BY OTHER USERS (mode {mode:04o}); set PW_TOKEN or "
+                             "move PW_HOME to a POSIX filesystem")
             if _valid(existing):
                 _EVENT = (Event.ADOPTED, 0, False)
                 return existing

@@ -41,10 +41,14 @@ Safety rules for that file (the coordinator enforces them at startup):
 - A token file with any group/other permission bit is treated as compromised and **rotated**, not
   adopted (the startup line says `rotated (was mode 0xxx)`; update clients with the new token).
   Exception: on a filesystem that ignores `chmod` (vfat, some SMB shares or Docker volumes) the bits
-  can never be cleared, so the coordinator warns "filesystem does not enforce permissions; token not
-  rotated" and keeps the token, unless others can also *write* the file (a planted token cannot be
-  ruled out), in which case it refuses to start. Put `PW_HOME` on a real POSIX filesystem to get the
-  protection. Waiting for the lock is bounded (30 s), after which startup fails instead of hanging.
+  can never be cleared; there the mode may be real (NFS root-squash, FUSE, bind mounts: other users
+  or containers sharing the volume can read the token), so the coordinator **refuses to start** and
+  asks you to set `PW_TOKEN` explicitly. If the volume really is private to you, set
+  `PW_ALLOW_LOOSE_TOKEN_FILE=1` to keep the token: it is then not rotated and the startup line says
+  the file is readable by others. The opt-in never covers a file others can *write* (a planted token
+  cannot be ruled out); that always refuses. On permission-ignoring mounts (SMB/CIFS/vfat) the mode
+  checks are only heuristic, so set `PW_TOKEN` explicitly there, or put `PW_HOME` on a real POSIX
+  filesystem. Waiting for the lock is bounded (30 s), after which startup fails instead of hanging.
 - `PW_HOME` must be owned by the coordinator's user and not world-writable. A group-writable `PW_HOME`
   (mode 0775, the Debian/Ubuntu default umask) is accepted only when the group is your own private
   group, with a warning (`chmod g-w` silences it); any other group-writable or foreign-owned directory

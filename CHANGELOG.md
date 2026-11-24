@@ -23,8 +23,9 @@ OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROAD
   The token file is rotated (never adopted) if it has any group/other permission bit, and the
   coordinator refuses a `PW_HOME` that is not ours or is group/world-writable. A non-loopback bind
   now refuses any weak `PW_TOKEN` (empty, shorter than 24 characters), not just empty/`dev-token`.
-  Token generation/rotation is serialised with an `flock`; a filesystem that ignores `chmod` keeps
-  the token with a warning instead of rotating on every restart; a 0775 `PW_HOME` whose group is
+  Token generation/rotation is serialised with an `flock`; on a filesystem that ignores `chmod` a
+  loose token file is refused (set `PW_TOKEN`) unless `PW_ALLOW_LOOSE_TOKEN_FILE=1` keeps it with a
+  "readable by others" warning, instead of rotating on every restart; a 0775 `PW_HOME` whose group is
   your private group is accepted with a warning (world-writable or foreign-owned is still refused).
 - **`pworkers fetch` refuses auto-loaded and executable file names (PW-5).** Beyond dotfiles, a
   delivered file may no longer be named `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `conftest.py`,
