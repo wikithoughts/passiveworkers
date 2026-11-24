@@ -50,6 +50,7 @@ import threading
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from passiveworkers.net import geoip
 from passiveworkers.net.app import APP_HTML
@@ -266,7 +267,15 @@ def _client_key(request: Request) -> str:
     that's usually loopback → effectively a conservative GLOBAL cap, which is spoof-proof). Only when
     PW_TRUST_XFF is set — i.e. the operator runs a trusted reverse proxy that sets AND sanitizes
     X-Forwarded-For — do we key on the first XFF hop for per-client granularity. Trusting XFF blindly
-    would let an attacker rotate the header to mint unlimited keys and bypass the limit entirely."""
+    would let an attacker rotate the header to mint unlimited keys and bypass the limit entirely.
+
+    Safer per-client keying behind a tunnel/proxy on a KNOWN address: set PW_TRUSTED_PROXIES to a
+    comma-separated list of proxy IPs/CIDRs (e.g. ``127.0.0.1,::1``). XFF is then honoured only when
+    the socket peer is one of those, and the client is the right-most hop that is NOT a trusted proxy
+    (a client-forged leftmost entry is ignored)."""
+    fwd = _trusted_proxy_client(request)
+    if fwd:
+        return fwd[:64]
     if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
         xff = request.headers.get("x-forwarded-for", "")
         if xff:
@@ -274,10 +283,46 @@ def _client_key(request: Request) -> str:
     return (request.client.host if request.client else "?")[:64]
 
 
+def _trusted_proxy_client(request: Request) -> str:
+    """The client address per PW_TRUSTED_PROXIES (see _client_key), or "" when unset / the peer is not
+    a trusted proxy / there is no usable XFF — callers then fall back to the socket peer."""
+    raw = os.environ.get("PW_TRUSTED_PROXIES", "").strip()
+    peer = request.client.host if request.client else ""
+    if not raw or not peer:
+        return ""
+    nets = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            continue
+
+    def trusted(addr: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False
+        return any(ip in n for n in nets)
+
+    if not trusted(peer):
+        return ""
+    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    for hop in reversed(hops):
+        if not trusted(hop):
+            return hop
+    return ""
+
+
 def _client_ip(request: Request) -> str:
     """The client IP for geo-verification (D43) — same PW_TRUST_XFF spoof-resistance as _client_key
     (socket peer by default; first XFF hop only behind a trusted proxy), but a clean, untruncated IP.
     Trusting XFF blindly would let a client spoof their geo, so it stays behind the same gate."""
+    fwd = _trusted_proxy_client(request)
+    if fwd:
+        return fwd
     if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
         xff = request.headers.get("x-forwarded-for", "")
         if xff:
@@ -557,8 +602,8 @@ async def put_blob(job_id: str, blob_hash: str, request: Request,
                    x_pw_token: str | None = Header(default=None),
                    x_node_secret: str | None = Header(default=None)):
     """Operator uploads a content-addressed chunk for a job it has claimed (D22)."""
-    node_id = _node_auth(x_node_secret)   # node_secret alone authenticates the node (D42 fix)
-    if store.assisted_claimant(job_id) != node_id:
+    node_id = await run_in_threadpool(_node_auth, x_node_secret)   # DB lookup off the event loop
+    if await run_in_threadpool(store.assisted_claimant, job_id) != node_id:
         raise HTTPException(status_code=403, detail="not the claiming operator for this job")
     # Stream the body with a HARD cap and abort early, so a chunked / no-Content-Length upload can't
     # buffer unbounded memory before the size check (the old Content-Length guard was advisory —
@@ -569,7 +614,8 @@ async def put_blob(job_id: str, blob_hash: str, request: Request,
         if len(buf) + len(chunk) > _BLOB_CAP:
             raise HTTPException(status_code=413, detail="chunk too large")
         buf.extend(chunk)
-    out = store.put_blob(job_id, blob_hash, bytes(buf))
+    # store.put_blob does a blocking SQLite write: run it on a worker thread, not the event loop.
+    out = await run_in_threadpool(store.put_blob, job_id, blob_hash, bytes(buf))
     if not out.get("ok"):
         raise HTTPException(status_code=400, detail=out.get("error", "rejected"))
     return out

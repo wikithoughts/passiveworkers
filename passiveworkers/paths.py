@@ -37,11 +37,29 @@ def coordinator_entries(state: dict) -> dict:
     return {k: v for k, v in state.items() if k not in _RESERVED_KEYS and isinstance(v, dict)}
 
 
-def write_private_json(path: pathlib.Path, state: dict) -> None:
-    """Owner-only (0600) JSON write, no world-readable window before chmod."""
+def write_private_json(path: pathlib.Path, state: dict, *, sort_keys: bool = False) -> None:
+    """Owner-only (0600) JSON write: atomic, and safe over an existing loose-permission file.
+
+    Written to a fresh 0600 temp file in the same directory (``mkstemp`` creates it 0600, so there
+    is no world-readable window), fsynced, then ``os.replace``d over the target. A crash mid-write
+    leaves the old file intact, and because the target is replaced rather than truncated, a
+    pre-existing 0644 file cannot keep its loose mode.
+    """
     import json
+    import tempfile
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:      # fdopen owns fd; closed on exit even if json.dump raises
-        json.dump(state, f, indent=2)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:      # fdopen owns fd; closed on exit even if json.dump raises
+            json.dump(state, f, indent=2, sort_keys=sort_keys)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

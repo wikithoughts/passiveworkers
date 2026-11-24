@@ -6,8 +6,8 @@ work for other people's computers (and theirs for yours) and earns non-transfera
 Research is the first job type the network runs; more are on the roadmap. This page is for people
 who want to plug a machine in.
 
-> Status: **early access.** The coordinator is invite-only today — there is no open public
-> endpoint yet. You join a specific coordinator with a URL + token the maintainer gives you.
+> Status: **early access.** There is no open public endpoint and no maintainer-run coordinator
+> today. You join a specific coordinator with a URL + token its operator gives you — or run your own.
 > The software is young but the trust machinery below is built and tested.
 
 ## What your machine actually does
@@ -121,6 +121,5 @@ Want to run your own coordinator instead of joining someone else's? See
 [docs/network/SELF_HOST.md](network/SELF_HOST.md). Want to *ask* the network for work
 rather than contribute compute? See [docs/network/ASKING.md](network/ASKING.md).
 
-Want a coordinator URL + token from the maintainer instead of self-hosting? Use the
-[join-the-network waitlist](https://github.com/wikithoughts/passiveworkers/issues/new?template=join-the-network.yml).
-Other questions → open an issue.
+There is currently no waitlist or maintainer-run coordinator to request a token from — the
+earlier one has been retired. Questions → open an issue.

@@ -196,12 +196,12 @@ both real right now:
 
 1. **Self-host a cell.** No invite needed — run your own coordinator and bring your
    own operators. [docs/network/SELF_HOST.md](docs/network/SELF_HOST.md).
-2. **Join an existing coordinator.** The maintainer's own coordinator is invite-only
-   while it hardens — [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md) to
-   contribute a machine, [docs/network/ASKING.md](docs/network/ASKING.md) to submit
-   work to one (`pworkers ask`). No invite yet? Use the
-   [join-the-network waitlist](https://github.com/wikithoughts/passiveworkers/issues/new?template=join-the-network.yml)
-   — every request gets a reply.
+2. **Join someone else's coordinator.** If a cell operator gives you a coordinator URL
+   and an invite/enrollment token, [docs/CONTRIBUTE_COMPUTE.md](docs/CONTRIBUTE_COMPUTE.md)
+   covers contributing a machine and [docs/network/ASKING.md](docs/network/ASKING.md)
+   submitting work to one (`pworkers ask`). **There is no maintainer-run public
+   coordinator and no waitlist right now** — the earlier one has been retired, so
+   door 1 (run your own cell) is the way in today.
 
 Two invariants hold regardless of which door: **you choose the kinds of work your
 machine accepts when you join** (research, judging, batch, assisted) — every task it

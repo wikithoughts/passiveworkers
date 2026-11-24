@@ -109,9 +109,12 @@ This table is excerpted in [README.md](README.md); this file is the source of tr
 
 - **Preferred:** [GitHub Private Vulnerability Reporting](https://github.com/wikithoughts/passiveworkers/security/advisories/new)
   — enabled (Round 38). This is a real, monitored channel: reports go straight to the
-  maintainer's GitHub notifications, privately, with no personal email or identity
-  required — this satisfies the "anonymous maintainer asking strangers to run a network
-  agent" trust tension (`docs/REVIEW_2026-07.md` F21) without de-anonymizing anyone.
+  maintainer's GitHub notifications, privately, with no email address required from you. The
+  maintainer is **not anonymous**: the project is published under the `wikithoughts` GitHub
+  account, and the git history is signed with and attributed to the maintainer's real name
+  (the PyPI author field is the project name, "Passive Workers"). Private Vulnerability
+  Reporting is the contact channel for the "stranger asked to run a network agent" trust
+  tension (`docs/REVIEW_2026-07.md` F21), not a way to stay unidentifiable.
 - **Email:** not configured, and not required — GitHub Private Vulnerability Reporting
   above is the real channel.
 - **Acknowledgment SLA:** target 72 hours.

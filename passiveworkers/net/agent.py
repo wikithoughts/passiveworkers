@@ -36,6 +36,7 @@ import requests
 
 from passiveworkers.judge import Judge
 from passiveworkers.net.config import task_behavior
+from passiveworkers.paths import write_private_json
 from passiveworkers.sanitize import sanitize_brief
 from passiveworkers.worker import Answer, PerspectiveWorker
 
@@ -124,6 +125,9 @@ class Agent:
             headers = {**headers, "X-Enroll-Token": self.enroll_token}
         r = requests.post(f"{self.base}/nodes/register", json=body, headers=headers, timeout=15)
         r.raise_for_status()
+        if self.enroll_token:    # single-use and now redeemed: don't keep a live credential around
+            self.enroll_token = ""
+            os.environ.pop("PW_ENROLL_TOKEN", None)
         data = r.json()
         self.node_id = data["node_id"]
         assert self.node_id is not None
@@ -310,29 +314,10 @@ def _load_join() -> dict:
 
 
 def _save_join(state: dict) -> None:
-    """Persist join.json owner-only FROM CREATION — the node secret is a bearer credential
-    (mirrors passiveworkers.crypto.load_or_create; no world-readable window before chmod)."""
-    p = _join_state_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    blob = json.dumps(state, indent=2).encode()
-    try:
-        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(blob)
-        os.chmod(p, 0o600)
-    except Exception:
-        # Fallback (platforms without os.open mode support): still avoid a world-readable window
-        # by forcing a restrictive umask around the create — write_text() alone would land 0o644
-        # before chmod, briefly exposing the node secret (review).
-        old = os.umask(0o077)
-        try:
-            p.write_text(json.dumps(state, indent=2))
-        finally:
-            os.umask(old)
-        try:
-            os.chmod(p, 0o600)
-        except Exception:
-            pass
+    """Persist join.json owner-only, atomically — the node secret is a bearer credential. Delegates to
+    ``paths.write_private_json`` (0600 temp file + ``os.replace``): no world-readable window, and a
+    pre-existing loose-permission file is replaced rather than kept."""
+    write_private_json(_join_state_path(), state)
 
 
 def _installed_models(base_url: str) -> set[str] | None:
@@ -345,6 +330,17 @@ def _installed_models(base_url: str) -> set[str] | None:
         return {m["name"] for m in r.json().get("models", [])}
     except Exception:
         return None
+
+
+def _is_cleartext_remote(url: str) -> bool:
+    """True for an ``http://`` coordinator URL whose host is not loopback (credentials would travel
+    unencrypted)."""
+    from urllib.parse import urlparse
+    u = urlparse(url)
+    if u.scheme != "http":
+        return False
+    host = (u.hostname or "").lower()
+    return host not in ("localhost", "127.0.0.1", "::1")
 
 
 def _parse_join_args(rest: list) -> tuple[list, dict]:
@@ -377,7 +373,9 @@ def join(argv: list) -> int:
     seeds the env the agent reads, and starts the worker loop. Backward-compatible with the env flow."""
     pos, flags = _parse_join_args(argv[1:] if argv else [])
     url = pos[0].rstrip("/") if pos else ""
-    token = pos[1] if len(pos) > 1 else ""
+    # A token on argv is visible in `ps` and shell history; PW_ENROLL_TOKEN in the environment is the
+    # safer way to pass it, so accept it when no positional token is given.
+    token = pos[1] if len(pos) > 1 else os.environ.get("PW_ENROLL_TOKEN", "")
 
     state = _load_join()
     if not url:                                   # resume: fall back to the last coordinator joined
@@ -385,6 +383,10 @@ def join(argv: list) -> int:
         if not url:
             raise SystemExit("usage: pworkers join <coordinator-url> <enrollment-token>   (first time)\n"
                              "       pworkers join | pworkers work                              (resume)")
+
+    if token and _is_cleartext_remote(url):
+        print(f"  ⚠ {url} is plain http:// to a non-local host — the enrollment token and node "
+              "secret would cross the network unencrypted. Prefer an https:// URL (or a tunnel/VPN).")
 
     cfg = dict(state.get(url, {}))                # existing cached config for this coordinator, if any
     cfg["owner"] = flags.get("owner", cfg.get("owner") or socket.gethostname())

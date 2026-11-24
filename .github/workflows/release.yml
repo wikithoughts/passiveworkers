@@ -9,25 +9,88 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false   # never cancel a publish in flight
 
+# Read-only by default; the two jobs that need more (publish: OIDC, github-release: contents write)
+# grant it at job level.
+permissions:
+  contents: read
+
 jobs:
+  verify-tag:
+    # A tag is a one-shot, publish-triggering action: refuse one that isn't on `main` or whose
+    # version doesn't match pyproject.toml (PyPI versions are burned — a mismatch can't be undone).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # need main's history for the ancestry check
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Tag commit must be reachable from origin/main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::tag $GITHUB_REF_NAME ($GITHUB_SHA) is not on main — refusing to publish"; exit 1; }
+      - name: Tag must match the pyproject.toml version
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib
+          ver = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{ver}":
+              sys.exit(f"::error::tag {tag} does not match pyproject version {ver} (expected v{ver})")
+          print(f"tag {tag} matches version {ver}")
+          PY
+
   test:
-    # a lightweight safety gate before anything gets published — the tag should already be off a
-    # green `main`, but a tag is a one-shot action, so re-verify rather than trust that.
+    # The same gates `ci-ok` enforces on a PR (lint, pyright, coverage-gated tests, inline-JS guard,
+    # core-only install) — a release must not clear a weaker bar than a merge. Python 3.12 only; the
+    # full 3.10–3.14 matrix already ran on the merge commit.
+    needs: verify-tag
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
       - name: Install (all extras + dev tools)
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[all,dev]'
-      - name: Unit tests
-        run: pytest tests/ -q
+          pip install -e '.[all,dev]' pyright
+      - name: Lint
+        run: ruff check .
+      - name: Pyright (basic, passiveworkers/net)
+        run: pyright
+      - name: Compile
+        run: python -m compileall passiveworkers scripts
+      - name: Unit tests + coverage (whole project)
+        run: pytest tests/ -q --cov=passiveworkers --cov-report=term-missing --cov-fail-under=75
+      - name: Coverage floor — user-facing modules
+        run: pytest tests/ -q --cov=passiveworkers.doctor --cov=passiveworkers.net.agent --cov=passiveworkers.operator --cov=passiveworkers.mcp_server --cov-report=term-missing --cov-fail-under=75
+      - name: Inline-JS guard + front-end harness
+        run: bash scripts/check_app_js.sh && node scripts/fe_test.js
+
+  core-install:
+    needs: verify-tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install core only (no extras) and run the core-safe tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest
+          pworkers --help
+          pworkers version
+          pytest tests/test_cli.py tests/test_export.py tests/test_sanitize.py tests/test_citations.py -q
 
   build:
-    needs: test
+    needs: [test, core-install]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -171,6 +171,13 @@ so docs-only PRs still report a passing `ci-ok` and are never blocked. Do not ad
 `paths-ignore` back to the `pull_request` trigger, and add any new CI job to `ci-ok`'s
 `needs` (and gate it on `changes`).
 
+**Repo-shipped agent hook:** `.claude/settings.json` registers one `SessionStart` hook,
+`.claude/hooks/session-start-fetch.sh`. It runs automatically when a Claude Code session opens
+here, so review it like any code that executes on checkout: it only does a best-effort, 10s-capped
+`git fetch --prune` plus read-only ahead/behind counts, never touches the working tree, and always
+exits 0. Keep it that way — any new hook or `settings.json` change needs the same scrutiny and an
+entry in this section.
+
 No repo-specific shipper skill exists for passiveworkers — use the fleet-wide `/ship`
 skill (branch → commit → PR → squash-merge, guarded-repo aware).
 
