@@ -14,6 +14,7 @@ AuthN/Z:
 Endpoints:
   POST /nodes/register     {name,country,owner,answer_model,lens,can_judge,judge_model,profile}
                                                        → {node_id, node_secret}   (secret shown once)
+  POST /nodes/claim-user   (X-Node-Secret) one-time owner claim of node-earned credit (PW-2, D56)
   POST /nodes/heartbeat    {load}                      [X-Node-Secret]
   GET  /tasks/next                                     [X-Node-Secret]  → task or 204
   POST /tasks/{task_id}/result   {…result…}            [X-Node-Secret]
@@ -163,7 +164,7 @@ _ROUTE_CAPS = (
     (re.compile(r"/tasks/[^/]+/(?:progress|accept)"), _SMALL_BODY_CAP),
     (re.compile(r"/jobs/[^/]+/(?:feedback|rate)"), _SMALL_BODY_CAP),
     (re.compile(r"/jobs"), _JOBS_BODY_CAP),
-    (re.compile(r"/(?:users|nodes/register|nodes/heartbeat|admin/enroll)"), _SMALL_BODY_CAP),
+    (re.compile(r"/(?:users|nodes/register|nodes/claim-user|nodes/heartbeat|admin/enroll)"), _SMALL_BODY_CAP),
 )
 
 
@@ -485,6 +486,25 @@ def register(body: RegisterBody, request: Request, x_pw_token: str | None = Head
     res = store.register_node(body.model_dump(), ip=ip, geo_country=geo)   # {node_id, node_secret}
     if res.get("error"):   # e.g. a reserved `__*__` owner: same 403 as the enrolled path, never a 200
         raise HTTPException(status_code=403, detail=res["error"])
+    return res
+
+
+@app.post("/nodes/claim-user")
+def claim_user(request: Request, x_node_secret: str | None = Header(default=None)):
+    """PW-2 (D56): one-time claim of a node owner's earned credit — mints the owner handle's user
+    secret (shown once). Node-secret authenticated; allowed only for an unclaimed handle with no users
+    row, or one the node's enrollment bound; refused (409) once claimed."""
+    node_id = _node_auth(x_node_secret)
+    _ratelimit(f"claim:{_client_key(request)}", "PW_RL_CLAIM", "10")
+    res = store.claim_owner(node_id, enroll_required=_enroll_enabled())
+    if res.get("error"):
+        print(f"[coordinator] owner-claim refused node={node_id}: {res['error']}", flush=True)
+        raise HTTPException(status_code=res.get("status", 403), detail=res["error"])
+    if res.get("mode") == "rotate":   # no secrets in the log line (D56 PW-2)
+        print(f"[coordinator] WARN owner-claim mode='rotate': replaced the existing user secret of "
+              f"handle={res['handle']!r} via enrollment-bound node={node_id}", flush=True)
+    print(f"[coordinator] owner-claim OK node={node_id} handle={res['handle']!r} "
+          f"balance={res['balance']}", flush=True)
     return res
 
 
