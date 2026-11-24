@@ -154,11 +154,17 @@ class _LedgerMixin(_StoreProtocol):
                 # checked BEFORE any redeem → no token burn; a node must never earn into a system
                 # account such as the assisted escrow
                 return {"error": "owner name is reserved"}
+            enroll_owner = ""
             if enroll_token is not None:
                 red = self._redeem_enrollment_locked(enroll_token, enroll_kind)
                 if not red.get("ok"):
                     return {"error": red.get("error", "valid enrollment token required")}
                 grant_amount = red.get("grant")
+                # PW-2 (D56): the token binds the owner only if the admin named it and it IS this owner
+                # exact comparison; claim_owner compares enroll_owner to the exact ledger key too
+                tok_owner = red.get("owner") or ""
+                if tok_owner.strip() and tok_owner == owner:
+                    enroll_owner = owner
             revert = self._open_account_reversible(owner, grant_amount)
             try:
                 node_id = str(uuid.uuid4())
@@ -166,14 +172,14 @@ class _LedgerMixin(_StoreProtocol):
                 self.conn.execute(
                     "INSERT INTO nodes(node_id, name, country, owner, answer_model, lens, can_judge, "
                     "judge_model, profile, last_seen, load, status, ip, secret_hash, machine_id, "
-                    "geo_country) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "geo_country, enroll_owner) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         node_id, _clip(body.get("name", "node")), _clip(body.get("country", "?")),
                         owner, _clip(body.get("answer_model", "")),
                         _clip(body.get("lens", "neutral")), int(bool(body.get("can_judge", False))),
                         _clip(body.get("judge_model", "")), json.dumps(body.get("profile", {})),
                         _now(), 0.0, "online", ip, _hash(secret), _clip(body.get("machine_id", "?")),
-                        _clip((geo_country or "").upper()),
+                        _clip((geo_country or "").upper()), enroll_owner,
                     ),
                 )
                 self._save_ledger()
@@ -214,6 +220,77 @@ class _LedgerMixin(_StoreProtocol):
     def get_node(self, node_id: str) -> Optional[sqlite3.Row]:
         with self.lock:
             return self.conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
+
+    # ------------------------------------------------------------------ owner claim (PW-2, D56)
+    def claim_owner(self, node_id: str, enroll_required: bool = False) -> dict:
+        """One-time claim of a node owner's earned credit: gives the owner handle a user secret so the
+        balance (already held under that handle) becomes spendable. Allowed ONLY when (a) the handle has
+        no `users` row and enrollment is not required, or (b) the node's owner was bound by its
+        enrollment token (token owner == node owner). Exactly once per handle (casefold), ever. A bound
+        claim on an existing users row rotates that row's secret (the enrollment, not the squatter,
+        vouches for the handle). Returns {handle, user_secret, ...balance} or {"error", "status"}."""
+        with self.lock:
+            node = self.conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
+            if not node:
+                return {"error": "unknown node", "status": 401}
+            handle = node["owner"] or ""        # the EXACT ledger key register_node opened (review)
+            key = handle.strip().casefold()
+            if (not handle.strip() or _is_reserved_handle(handle)
+                    or handle not in self.ledger.accounts):
+                return {"error": "nothing to claim", "status": 409}
+            if self.conn.execute("SELECT 1 FROM owner_claims WHERE handle_key=?", (key,)).fetchone():
+                return {"error": "already claimed", "status": 409}
+            bound = bool(node["enroll_owner"]) and node["enroll_owner"] == handle
+            # every users row that is this handle up to case/whitespace (Python casefold, not ASCII-only
+            # COLLATE NOCASE), matching _handle_in_use_locked's notion of "the same name"
+            same = [r["handle"] for r in self.conn.execute("SELECT handle FROM users")
+                    if r["handle"].strip().casefold() == key]
+            if same and not (bound and same == [handle]):
+                return {"error": "handle is already a user", "status": 403}
+            urow = {"handle": handle} if same else None
+            if not bound:
+                if enroll_required:
+                    return {"error": "owner not bound by enrollment", "status": 403}
+                # unbound owner is only a self-declared string: only the handle's FIRST node may claim,
+                # so a later node can't take over an owner's earnings by re-declaring the name (review)
+                first = self.conn.execute(
+                    "SELECT node_id FROM nodes WHERE owner=? ORDER BY rowid LIMIT 1",
+                    (handle,)).fetchone()
+                if not first or first["node_id"] != node_id:
+                    return {"error": "only the first node of this owner may claim", "status": 403}
+                # an enrollment-bound node of this handle is the stronger proof: it alone may claim
+                if self.conn.execute("SELECT 1 FROM nodes WHERE owner=? AND enroll_owner=owner",
+                                     (handle,)).fetchone():
+                    return {"error": "owner is bound by another node's enrollment", "status": 403}
+                # an admin-minted node token naming this handle that is still redeemable: its holder
+                # (the real owner) may not have registered yet, so an unbound claim must not win
+                for t in self.conn.execute(
+                        "SELECT owner FROM enroll_tokens WHERE uses < max_uses "
+                        "AND kind IN ('any','node')"):
+                    if (t["owner"] or "").strip().casefold() == key:
+                        return {"error": "an enrollment token for this owner is pending",
+                                "status": 403}
+                # a case/whitespace variant that also holds credit makes the name ambiguous
+                if any(k != handle and k.strip().casefold() == key for k in self.ledger.accounts):
+                    return {"error": "ambiguous handle (case variant exists)", "status": 403}
+            secret = _secrets.token_hex(24)
+            try:
+                if urow is None:
+                    self.conn.execute("INSERT INTO users(handle, secret_hash, created) VALUES(?,?,?)",
+                                      (handle, _hash(secret), _now()))
+                else:
+                    self.conn.execute("UPDATE users SET secret_hash=? WHERE handle=?",
+                                      (_hash(secret), handle))
+                bal = round(self.ledger.accounts[handle].balance, 1)
+                self.conn.execute("INSERT INTO owner_claims VALUES(?,?,?,?,?,?)",
+                                  (key, handle, node_id, _now(), bal,
+                                   "rotate" if urow is not None else "create"))
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            return {"handle": handle, "user_secret": secret, **self.user_balance(handle),
+                    "mode": "rotate" if urow is not None else "create"}
 
     # ------------------------------------------------------------------ users (askers)
     def register_user(self, handle: str, grant_amount: float | None = None,

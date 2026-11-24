@@ -206,6 +206,13 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
             self.conn.execute("ALTER TABLE nodes ADD COLUMN ok_count INTEGER DEFAULT 0")
         if "fail_count" not in ncols:
             self.conn.execute("ALTER TABLE nodes ADD COLUMN fail_count INTEGER DEFAULT 0")
+        # PW-2 (D56): the enrollment-bound owner a node registered under (set only when an enrollment
+        # token whose owner equals the node's owner was redeemed) + the one-claim-per-handle audit table.
+        if "enroll_owner" not in ncols:
+            self.conn.execute("ALTER TABLE nodes ADD COLUMN enroll_owner TEXT")
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS owner_claims(handle_key TEXT PRIMARY KEY, handle TEXT, "
+            "node_id TEXT, claimed REAL, balance REAL, mode TEXT)")
         # F13 review: the hot lookups (secret auth on every heartbeat/poll, a job's tasks on every
         # job_view, a node's queue, an asker's jobs, the reaper's status scans) were full-table scans
         # under the global lock. IF NOT EXISTS → idempotent on every open, existing DBs included.

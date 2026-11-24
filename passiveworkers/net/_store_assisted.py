@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import math
+import unicodedata
 import uuid
 from typing import Optional
 
@@ -27,6 +28,31 @@ from passiveworkers.ledger import InsufficientCredit
 from passiveworkers.net._store_base import _StoreProtocol, _clip, _now
 from passiveworkers.net.config import JOB_TYPES, pool_for
 from passiveworkers.sanitize import sanitize_brief
+
+
+# Invisible-or-empty-looking characters that are not whitespace/control/format by Unicode category.
+_BLANK_LOOKALIKES = frozenset("⠀ㅤᅟᅠﾠ")
+# Cn (unassigned) is deliberately NOT blank: it depends on the interpreter's Unicode tables, so a
+# real newer emoji would be rejected on an older Python.
+_BLANK_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Co", "Cs"})
+# invisible combining/selector characters (variation selectors, CGJ, Khmer inherent vowels, Mongolian FVS)
+_BLANK_LOOKALIKES = _BLANK_LOOKALIKES | frozenset(
+    [chr(c) for c in range(0xFE00, 0xFE10)] + ["͏", "឴", "឵"]
+    + [chr(c) for c in range(0x180B, 0x1810)])
+_FILLER_ONLY = frozenset({".", "-", "_"})
+_EMPTY_ERROR = "empty deliverable — nothing to pay for; deliver real content"
+
+
+def _is_blank(text: str) -> bool:
+    """True for an empty / whitespace-only deliverable (D56 / PW-4). This is a HEURISTIC, not a
+    quality gate: anyone can type 'asdf'. It only closes the cheap "looks empty" cases: whitespace,
+    control and invisible format chars (ZWSP, BOM: a plain `.strip()` misses them), unassigned /
+    private / surrogate code points, a few blank-glyph characters (braille blank, Hangul fillers),
+    and a lone '.', '-' or '_' once blanks are removed. Real short text ('a', '..', '0') passes."""
+    visible = "".join(ch for ch in (text or "")
+                      if not (ch.isspace() or ch in _BLANK_LOOKALIKES
+                              or unicodedata.category(ch) in _BLANK_CATEGORIES))
+    return visible == "" or visible in _FILLER_ONLY
 
 
 class _AssistedMixin(_StoreProtocol):
@@ -239,12 +265,36 @@ class _AssistedMixin(_StoreProtocol):
             if job is None or job["status"] != "assisting":
                 return {"ok": False,
                         "error": f"offer no longer open for delivery ({job and job['status']})"}
+            # D56 (PW-4): an empty / whitespace-only deliverable earns nothing. Reject BEFORE any
+            # ledger movement; the task stays claimed so the operator can retry, or the reaper
+            # refunds the asker's hold on expiry. Placed after the ownership/status checks so it
+            # never masks those errors.
+            if _is_blank(deliverable):
+                return {"ok": False, "error": _EMPTY_ERROR}
             # if it's a file artifact, refuse to pay unless every chunk was actually uploaded
             from passiveworkers.artifacts import read_artifact, verify_manifest
             manifest = read_artifact(deliverable)
             if manifest is not None:
+                # a zero-chunk manifest is an empty file — the same "paid for nothing" case as an
+                # empty text deliverable (verify_manifest allows it and blobs_present([]) is vacuous).
+                if isinstance(manifest.get("chunks"), list) and not manifest["chunks"]:
+                    return {"ok": False, "error": _EMPTY_ERROR}
                 if not verify_manifest(manifest) or not self.blobs_present(t["job_id"], manifest["chunks"]):
                     return {"ok": False, "error": "file incomplete — upload all chunks before delivering"}
+                # The declared size must be backed by real stored bytes: no zero-length chunk
+                # (sha256(b"") uploads fine), size > 0, and the stored bytes match the manifest.
+                # An encrypted manifest declares the PLAINTEXT size while the blobs are ciphertext
+                # (longer), so there the stored total must be >= the declared size.
+                lens = self.blob_lengths(t["job_id"], manifest["chunks"])
+                if manifest["size"] <= 0 or min(lens) <= 0:
+                    return {"ok": False, "error": _EMPTY_ERROR}
+                stored = sum(lens)
+                size_ok = stored >= manifest["size"] if manifest.get("encrypted") is True \
+                    else stored == manifest["size"]
+                if not size_ok:
+                    return {"ok": False,
+                            "error": f"file size mismatch — manifest declares {manifest['size']} "
+                                     f"bytes but {stored} were uploaded"}
             result = {"text": deliverable}
             if signature and signer_pub:   # D23: operator's signature over the deliverable
                 result["signature"] = signature[:200]
@@ -312,6 +362,16 @@ class _AssistedMixin(_StoreProtocol):
             ok = self.conn.execute("SELECT 1 FROM blobs WHERE hash=? AND job_id=?",
                                    (blob_hash, job_id)).fetchone() is not None
             return {"ok": ok, "hash": blob_hash} if ok else {"ok": False, "error": "not stored"}
+
+    def blob_lengths(self, job_id: str, hashes: list) -> list:
+        """Stored byte length of each hash (in order, repeats kept) for this job; 0 if missing."""
+        with self.lock:
+            out = []
+            for h in hashes:
+                row = self.conn.execute("SELECT LENGTH(data) n FROM blobs WHERE hash=? AND job_id=?",
+                                        (h, job_id)).fetchone()
+                out.append(int(row["n"]) if row and row["n"] else 0)
+            return out
 
     def blobs_present(self, job_id: str, hashes: list) -> bool:
         """True iff every hash is stored for this job (used to gate payment on full upload)."""
