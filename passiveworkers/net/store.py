@@ -102,11 +102,15 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
             # D56: council/batch jobs also hold their cost (worker pool + judge fee) from creation
             # until settlement or refund; `held` is the exact amount still in escrow for the job.
             owed = round(owed + sum(round(r["held"] or 0.0, 4) for r in self.conn.execute(
-                "SELECT held FROM jobs WHERE held > 0")), 4)
+                "SELECT held FROM jobs WHERE held > 0 AND status IN ('pending_answers','judging')")), 4)
+            # a closed job must never still carry a hold: that credit is stranded in escrow
+            stranded = self.conn.execute(
+                "SELECT COUNT(*) c FROM jobs WHERE held > 0 AND status NOT IN ('pending_answers','judging')"
+            ).fetchone()["c"]
             escrow = self.ledger.accounts.get(ESCROW_ID)
             held = escrow.balance if escrow else 0.0
             conserved = self.ledger.conservation_ok()
-            return {"ok": conserved and abs(held - owed) < 1e-6, "ledger_conserved": conserved,
+            return {"ok": conserved and abs(held - owed) < 1e-6 and not stranded, "ledger_conserved": conserved,
                     "escrow": held, "outstanding_holds": owed}
 
     def conservation_ok(self) -> bool:

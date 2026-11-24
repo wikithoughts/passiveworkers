@@ -388,7 +388,9 @@ class _JobsMixin(_StoreProtocol):
         # flipping it to 'judging' would let it settle and charge after being reported failed.
         if not job or job["status"] != "pending_answers":
             return
-        judges = self.online_nodes(judge_only=True)
+        # D56: the judge task carries every answer's text, so the ASKER's own nodes must never judge:
+        # they could read the paid work and then let the task stall to a full refund.
+        judges = [n for n in self.online_nodes(judge_only=True) if n["owner"] != job["asker"]]
         if not judges:
             snap = self.ledger.snapshot()
             try:
@@ -517,7 +519,7 @@ class _JobsMixin(_StoreProtocol):
         try:
             # FAIL-CLOSED: settle the ledger FIRST. Only on success do we write scores/rep/done.
             held = round(job["held"] or 0.0, 4)
-            pool = job["pool"] if job["pool"] else CONFIG.worker_pool
+            pool = (job["pool"] or 0.0) if held > 0 else (job["pool"] or CONFIG.worker_pool)
             try:
                 if held > 0:
                     # D56: pay out of the escrow taken at creation — the exact amount held, so a
@@ -531,6 +533,13 @@ class _JobsMixin(_StoreProtocol):
                         job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
                         worker_pool=pool, judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
             except InsufficientCredit as exc:
+                if held > 0:
+                    # escrow can't cover a hold it took = a ledger desync. Failing the job here would
+                    # strand the asker's hold (never refunded); leave it open so the reaper's refund
+                    # path retries once the ledger is repaired, and say so loudly.
+                    print(f"[settle] job {job_id}: escrow short of its hold ({exc}); left open",
+                          flush=True)
+                    return
                 self.conn.execute(
                     "UPDATE jobs SET status='failed', error=? WHERE job_id=?",
                     (f"settlement failed: {exc}", job_id))
@@ -618,7 +627,9 @@ class _JobsMixin(_StoreProtocol):
         if held > 0:
             try:
                 self.ledger.refund(job["asker"], held)
-            except Exception:
+            except Exception as exc:
+                print(f"[refund] job {job['job_id']}: hold refund failed ({exc}); left open to retry",
+                      flush=True)
                 return False
         self.conn.execute("UPDATE jobs SET status='failed', error=?, held=0 WHERE job_id=?",
                           (error, job["job_id"]))
@@ -641,7 +652,8 @@ class _JobsMixin(_StoreProtocol):
         if task["type"] == "judge":
             answer_owners = {r["owner"] for r in self.conn.execute(
                 "SELECT owner FROM tasks WHERE job_id=? AND type='answer'", (job_id,))}
-            cands = [n for n in self.online_nodes(judge_only=True) if n["node_id"] != task["node_id"]]
+            cands = [n for n in self.online_nodes(judge_only=True)
+                     if n["node_id"] != task["node_id"] and n["owner"] != job["asker"]]
             external = [n for n in cands
                         if n["owner"] not in answer_owners and n["node_id"] not in assigned]
             pool_c = external or [n for n in cands if n["node_id"] not in assigned] or cands

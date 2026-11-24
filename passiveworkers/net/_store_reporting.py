@@ -76,7 +76,8 @@ class _ReportingMixin(_StoreProtocol):
                             # Ed25519 signature on `assisted` deliverables (D23, the `sig` field).
                             "digest": res.get("_digest"),
                             "is_baseline": False})
-            baseline = json.loads(job["baseline"]) if job["baseline"] else None
+            # the single-model baseline is an answer too: serve it only once settled (D56)
+            baseline = json.loads(job["baseline"]) if (job["baseline"] and settled) else None
             done = [x for x in ans if x["status"] == "done" and x["score"] is not None]
             if done and not baseline:   # fallback only: best single COUNCIL answer as baseline
                 max(done, key=lambda x: x["score"])["is_baseline"] = True

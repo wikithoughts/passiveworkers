@@ -232,6 +232,70 @@ def test_legacy_unheld_job_settles_by_old_path(store):
     assert store.job_status(other["job_id"]) == "pending_answers"
 
 
+def test_askers_own_judge_node_is_never_given_the_answers(store):
+    # review finding 1: an asker who runs the only judge node could read the paid answers via
+    # /tasks/next, stall, and take the expiry refund.
+    _reg(store, "op1")
+    _reg(store, "alice", judge=True)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    _answer_all(store, j["job_id"], "PAID WORK TEXT")
+    assert store.conn.execute("SELECT 1 FROM tasks WHERE job_id=? AND type='judge'",
+                              (j["job_id"],)).fetchone() is None
+    assert store.job_status(j["job_id"]) == "failed"
+    assert store.ledger.balance("alice") == 100.0 and store.ledger_integrity()["ok"]
+
+
+def test_baseline_not_served_before_settlement(store):
+    # review finding 2: the single-model baseline is an answer; a refunded job must not serve it.
+    _setup(store)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    store.set_baseline(j["job_id"], {"text": "BASELINE ANSWER"})
+    assert store.job_view(j["job_id"])["baseline"] is None
+    _answer_all(store, j["job_id"])
+    assert _judge(store, j["job_id"])
+    assert "BASELINE ANSWER" in repr(store.job_view(j["job_id"])["baseline"])
+
+
+def test_short_escrow_at_settlement_leaves_job_open_and_refundable(store):
+    # review finding 3: a refused settlement must not strand the hold on a closed job.
+    _setup(store)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    held = store.ledger.balance(ESCROW)
+    _answer_all(store, j["job_id"])
+    store.ledger.accounts[ESCROW].balance = held - 1.0      # simulate a desync
+    assert _judge(store, j["job_id"])
+    assert store.job_status(j["job_id"]) == "judging"       # not failed with the hold stranded
+    store.ledger.accounts[ESCROW].balance = held            # ledger repaired
+    store.conn.execute("UPDATE jobs SET created=created-10000000 WHERE job_id=?", (j["job_id"],))
+    store.conn.commit()
+    store._reap_once()
+    assert store.job_status(j["job_id"]) == "failed"
+    assert store.ledger.balance("alice") == 100.0 and store.ledger_integrity()["ok"]
+
+
+def test_integrity_flags_a_hold_stranded_on_a_closed_job(store):
+    _setup(store)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    store.conn.execute("UPDATE jobs SET status='failed' WHERE job_id=?", (j["job_id"],))
+    store.conn.commit()
+    assert not store.ledger_integrity()["ok"]
+
+
+def test_zero_pool_job_never_charges_the_judge(store):
+    # review finding 4: a stored pool of 0 was treated as missing, making judge_fee negative.
+    _setup(store)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    held = store.ledger.balance(ESCROW)
+    store.conn.execute("UPDATE jobs SET pool=0 WHERE job_id=?", (j["job_id"],))
+    store.conn.commit()
+    _answer_all(store, j["job_id"])
+    assert _judge(store, j["job_id"])
+    assert store.job_status(j["job_id"]) == "done"
+    assert store.ledger.balance("judgeop") == pytest.approx(100 + held)   # whole hold is the judge fee
+    assert store.ledger.balance("op1") == 100.0
+    assert store.ledger_integrity()["ok"]
+
+
 def test_settle_from_escrow_refuses_when_escrow_short_and_mutates_nothing():
     import passiveworkers.ledger as L
     led = L.Ledger()
