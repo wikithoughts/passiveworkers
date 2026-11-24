@@ -39,6 +39,10 @@ _BLANK_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Co", "Cs"})
 _BLANK_LOOKALIKES = _BLANK_LOOKALIKES | frozenset(
     [chr(c) for c in range(0xFE00, 0xFE10)] + ["͏", "឴", "឵"]
     + [chr(c) for c in range(0x180B, 0x1810)])
+# the BMP's permanent noncharacters (U+FFFE, U+FFFF, U+FDD0-U+FDEF): Cn, but guaranteed never to be
+# assigned in any Unicode version, so unlike the rest of Cn this is interpreter-table independent
+_BLANK_LOOKALIKES = _BLANK_LOOKALIKES | frozenset(
+    ["￾", "￿"] + [chr(c) for c in range(0xFDD0, 0xFDF0)])
 _FILLER_ONLY = frozenset({".", "-", "_"})
 _EMPTY_ERROR = "empty deliverable — nothing to pay for; deliver real content"
 
