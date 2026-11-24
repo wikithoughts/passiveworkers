@@ -254,7 +254,7 @@ class _LedgerMixin(_StoreProtocol):
                 for t in self.conn.execute(
                         "SELECT owner FROM enroll_tokens WHERE uses < max_uses "
                         "AND kind IN ('any','node')"):
-                    if (t["owner"] or "").strip() == handle.strip():
+                    if (t["owner"] or "").strip().casefold() == key:
                         return {"error": "an enrollment token for this owner is pending",
                                 "status": 403}
                 # a case/whitespace variant that also holds credit makes the name ambiguous

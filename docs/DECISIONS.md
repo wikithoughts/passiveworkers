@@ -1814,8 +1814,10 @@ the audit record (node, balance, mode `create` or `rotate`).
   handle has no `users` row: node owner is a self-declared string, so otherwise any enrolled node could
   claim a stranger's earnings. Legacy nodes (no `enroll_owner`) therefore cannot claim in enrolled mode.
 - **Residuals, accepted.**
-  - *Lost claim response is permanent* (the secret is shown once). Ops runbook: stop nothing, take a DB
-    backup, then `DELETE FROM owner_claims WHERE handle_key = lower-cased handle;` and, for a row whose
+  - *Lost claim response is permanent* (the secret is shown once). Ops runbook: take a DB
+    backup, `SELECT handle_key, handle, mode FROM owner_claims WHERE handle = '<handle>';` (the key is
+    `strip().casefold()` of the handle, so delete by the `handle_key` shown), then
+    `DELETE FROM owner_claims WHERE handle_key = '<that key>';` and, for a row whose
     `mode` was `create`, also `DELETE FROM users WHERE handle = '<handle>';` (never for `rotate`; there
     the previous secret is already gone, so only re-claim after deleting the claim row). The owner then
     claims again with a node secret.

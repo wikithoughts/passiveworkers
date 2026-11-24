@@ -191,6 +191,22 @@ def test_unbound_claim_refused_while_a_token_for_the_owner_is_pending(env):
     assert _claim(c, _node(c, "erin")).status_code == 200
 
 
+def test_pending_token_blocks_case_variant_and_any_kind_but_not_once_exhausted(env):
+    c, _, _ = env
+    tok = c.post("/admin/enroll", json={"owner": "Alice", "kind": "any", "grant": 0},
+                 headers=TOK).json()["enroll_token"]
+    assert _claim(c, _node(c, "alice")).status_code == 403      # casefold variant of the token owner
+    assert _claim(c, _node(c, " ALICE")).status_code == 403
+    # once the token is consumed (by anyone) nothing is pending any more
+    import passiveworkers.net.coordinator_app as capp
+    assert capp.store.redeem_enrollment(tok, kind="user")["ok"]
+    assert _claim(c, _node(c, "zed")).status_code == 200
+    tok2 = c.post("/admin/enroll", json={"owner": "Bea", "kind": "node", "grant": 0},
+                  headers=TOK).json()["enroll_token"]
+    assert capp.store.redeem_enrollment(tok2, kind="node")["ok"]
+    assert _claim(c, _node(c, "bea")).status_code == 200        # exhausted: no longer 'pending'
+
+
 def test_token_owner_must_match_node_owner_exactly_to_bind(enrolled):
     c, _, _ = enrolled
     sec = _node(c, "alice ", headers={}, extra={"X-Enroll-Token": _token(c, "alice")})
