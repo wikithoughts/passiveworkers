@@ -389,6 +389,11 @@ def join(argv: list) -> int:
     _cached = state.get(url, {})
     if not token and not (_cached.get("node_id") and _cached.get("node_secret")):
         token = os.environ.get("PW_ENROLL_TOKEN", "")
+    if not token:
+        # Resume (cached identity) or no token at all: scrub any stale PW_ENROLL_TOKEN BEFORE Agent() is
+        # built — Agent.__init__ reads it itself, and a later re-register (e.g. after a coordinator
+        # restart) would otherwise send the spent token as X-Enroll-Token.
+        os.environ.pop("PW_ENROLL_TOKEN", None)
 
     if token and _is_cleartext_remote(url):
         print(f"  ⚠ {url} is plain http:// to a non-local host — the enrollment token and node "

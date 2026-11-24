@@ -166,7 +166,9 @@ def test_join_resume_ignores_stale_env_token(tmp_path, monkeypatch):
     with pytest.raises(_Stop):
         A.join(["join"])
     assert seen["node_id"] == "n1"           # cached identity reused, no re-register
-    assert os.environ.get("PW_ENROLL_TOKEN") == "spent" or seen["token"] in ("", "spent")
+    # the stale env token must not reach the Agent: a later re-register would send it and be rejected
+    assert seen["token"] == ""
+    assert "PW_ENROLL_TOKEN" not in os.environ
 
 
 # ---------------------------------------------------------------- L7: PW_TRUSTED_PROXIES
