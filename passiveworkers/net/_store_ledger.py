@@ -219,19 +219,34 @@ class _LedgerMixin(_StoreProtocol):
             node = self.conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
             if not node:
                 return {"error": "unknown node", "status": 401}
-            handle = (node["owner"] or "").strip()
-            key = handle.casefold()
-            if not handle or _is_reserved_handle(handle) or handle not in self.ledger.accounts:
+            handle = node["owner"] or ""        # the EXACT ledger key register_node opened (review)
+            key = handle.strip().casefold()
+            if (not handle.strip() or _is_reserved_handle(handle)
+                    or handle not in self.ledger.accounts):
                 return {"error": "nothing to claim", "status": 409}
             if self.conn.execute("SELECT 1 FROM owner_claims WHERE handle_key=?", (key,)).fetchone():
                 return {"error": "already claimed", "status": 409}
-            bound = (node["enroll_owner"] or "").strip() == handle
-            urow = self.conn.execute("SELECT handle FROM users WHERE handle=? COLLATE NOCASE",
-                                     (handle,)).fetchone()
-            if urow is None and enroll_required and not bound:
-                return {"error": "owner not bound by enrollment", "status": 403}
-            if urow is not None and not (bound and urow["handle"] == handle):
+            bound = bool(node["enroll_owner"]) and node["enroll_owner"] == handle
+            # every users row that is this handle up to case/whitespace (Python casefold, not ASCII-only
+            # COLLATE NOCASE), matching _handle_in_use_locked's notion of "the same name"
+            same = [r["handle"] for r in self.conn.execute("SELECT handle FROM users")
+                    if r["handle"].strip().casefold() == key]
+            if same and not (bound and same == [handle]):
                 return {"error": "handle is already a user", "status": 403}
+            urow = {"handle": handle} if same else None
+            if not bound:
+                if enroll_required:
+                    return {"error": "owner not bound by enrollment", "status": 403}
+                # unbound owner is only a self-declared string: only the handle's FIRST node may claim,
+                # so a later node can't take over an owner's earnings by re-declaring the name (review)
+                first = self.conn.execute(
+                    "SELECT node_id FROM nodes WHERE owner=? ORDER BY rowid LIMIT 1",
+                    (handle,)).fetchone()
+                if not first or first["node_id"] != node_id:
+                    return {"error": "only the first node of this owner may claim", "status": 403}
+                # a case/whitespace variant that also holds credit makes the name ambiguous
+                if any(k != handle and k.strip().casefold() == key for k in self.ledger.accounts):
+                    return {"error": "ambiguous handle (case variant exists)", "status": 403}
             secret = _secrets.token_hex(24)
             try:
                 if urow is None:

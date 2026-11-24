@@ -180,3 +180,60 @@ def test_claim_persists_across_restart(env):
     import passiveworkers.net.store as st
     s2 = st.Store()
     assert s2.claim_owner(s2.node_for_secret(sec))["error"] == "already claimed"
+
+
+# ------------------------------------------------------------------ review follow-ups
+def test_only_first_node_of_an_owner_may_claim(env):
+    c, _, _ = env
+    s1 = _node(c, "alice")      # the owner's own node, registered first
+    s2 = _node(c, "alice")      # a later node re-declaring the name
+    assert _claim(c, s2).status_code == 403
+    assert _claim(c, s1).status_code == 200
+
+
+def test_padded_owner_claims_its_exact_ledger_key(env):
+    c, capp, _ = env
+    sec = _node(c, "Pat ")
+    _earn(capp, "Pat ", 3)
+    r = _claim(c, sec)
+    assert r.status_code == 200 and r.json()["balance"] == 103.0
+    me = c.get("/me", headers={"X-User-Secret": r.json()["user_secret"]}).json()
+    assert me["balance"] == 103.0
+
+
+def test_padded_owner_cannot_claim_a_stripped_users_account(env):
+    c, _, _ = env
+    u = c.post("/users", json={"handle": "Pat"}).json()
+    assert _claim(c, _node(c, "Pat ")).status_code == 403
+    assert c.get("/me", headers={"X-User-Secret": u["user_secret"]}).status_code == 200
+
+
+def test_ambiguous_case_variants_are_both_refused(env):
+    c, _, _ = env
+    sb = _node(c, "Bob")
+    sl = _node(c, "bob")
+    assert _claim(c, sl).status_code == 403     # a variant can't win the name...
+    assert _claim(c, sb).status_code == 403     # ...and nobody gains a user credential either
+    assert c.post("/users", json={"handle": "bob"}).status_code == 409
+
+
+def test_failed_write_leaves_no_user_or_claim(env, monkeypatch):
+    c, capp, _ = env
+    sec = _node(c, "alice")
+    nid = capp.store.node_for_secret(sec)
+    real = capp.store.conn
+
+    class Boom:
+        def __getattr__(self, n):
+            return getattr(real, n)
+
+        def execute(self, sql, *a):
+            if sql.startswith("INSERT INTO owner_claims"):
+                raise RuntimeError("boom")
+            return real.execute(sql, *a)
+    monkeypatch.setattr(capp.store, "conn", Boom())
+    with pytest.raises(RuntimeError):
+        capp.store.claim_owner(nid)
+    monkeypatch.setattr(capp.store, "conn", real)
+    assert real.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    assert _claim(c, sec).status_code == 200      # not burned

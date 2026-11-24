@@ -13,8 +13,8 @@ AuthN/Z:
 
 Endpoints:
   POST /nodes/register     {name,country,owner,answer_model,lens,can_judge,judge_model,profile}
-  POST /nodes/claim-user   (X-Node-Secret) one-time owner claim of node-earned credit (PW-2, D56)
                                                        → {node_id, node_secret}   (secret shown once)
+  POST /nodes/claim-user   (X-Node-Secret) one-time owner claim of node-earned credit (PW-2, D56)
   POST /nodes/heartbeat    {load}                      [X-Node-Secret]
   GET  /tasks/next                                     [X-Node-Secret]  → task or 204
   POST /tasks/{task_id}/result   {…result…}            [X-Node-Secret]
