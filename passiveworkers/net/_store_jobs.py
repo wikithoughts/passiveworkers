@@ -460,6 +460,13 @@ class _JobsMixin(_StoreProtocol):
         answers = list(self.conn.execute(
             "SELECT * FROM tasks WHERE job_id=? AND type='answer'", (job_id,)))
         raw_scores = result.get("scores", {}) if isinstance(result.get("scores"), dict) else {}
+        if judge_owner == job["asker"]:
+            # The asker's own node judged (the D56 fallback when no other judge exists). It must not
+            # steer the payout: its scores could zero every other worker and return the whole pool to
+            # the asker's own answer. Ignore them — every answer then gets the neutral default.
+            print(f"[judge] job {job_id}: judged by the asker's own node; its scores are ignored "
+                  "(neutral split)", flush=True)
+            raw_scores = {}
         self_judged = any(a["owner"] == judge_owner for a in answers)
 
         # Compute sanitized per-answer scores (empty/errored answer → 0, no reputation).
@@ -733,13 +740,18 @@ class _JobsMixin(_StoreProtocol):
             snap = self.ledger.snapshot()
             try:
                 self._reap_pass()
-                self._escrow_alarm()   # loud log line while escrow disagrees with the jobs table
             except Exception:
                 try:
                     self.conn.rollback()
                 finally:
                     self.ledger.restore(snap)
                 raise
+            # AFTER the pass committed, outside the rollback scope: a failure here must never restore
+            # a pre-refund ledger over refunds that are already saved.
+            try:
+                self._escrow_alarm()   # loud log line while escrow disagrees with the jobs table
+            except Exception as exc:
+                print(f"[ALARM] escrow integrity check itself failed: {exc}", flush=True)
 
     def _reap_pass(self) -> None:
         with self.lock:   # re-entrant; _reap_once owns the rollback on failure

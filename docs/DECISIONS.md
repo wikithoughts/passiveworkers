@@ -1844,7 +1844,12 @@ Decided while reviewing the PW-1 implementation; they refine the PW-1 decision a
 - **Known limit, accepted: open mode cannot stop self-judging under another owner name.** A node's
   `owner` is a self-declared string unless enrollment binds it, so in open mode an asker can
   register a judge under a second handle, read the answers, stall, and take the expiry refund.
-  `PW_ENROLL` closes this (owners are bound by the enrollment token). No code change.
+  `PW_ENROLL` closes the second-handle route (owners are bound by the enrollment token). No code
+  change. The own-judge fallback above leaves one residue even under `PW_ENROLL`: when no other
+  judge is online, the asker's own judge node receives the answers and could stall to a refund.
+  This is accepted for the same reason (lone-operator support). To keep the fallback from being
+  profitable, an asker-judged job ignores the judge's scores (neutral split), so the asker cannot
+  steer the pool to their own answer.
 - **Answers stay hidden until the job is `done` (decided deviation from D56 PW-1).** D56 said to
   hide answers only for jobs whose settlement failed. `job_view` instead hides every answer's
   text, the merged deliverable and the baseline until settlement, because failed and expired jobs

@@ -261,6 +261,41 @@ def test_askers_own_judge_is_the_fallback_when_no_other_judge_exists(store, caps
     assert store.job_status(j["job_id"]) == "done" and store.ledger_integrity()["ok"]
 
 
+def test_asker_judging_own_job_cannot_steer_the_payout(store):
+    # round-3 review H1: with the own-judge fallback, an asker whose node also answered could score
+    # every other worker 0 and take the whole pool back. The asker's scores must be ignored.
+    n1 = _reg(store, "op1")
+    n2 = _reg(store, "op2")
+    na = _reg(store, "alice", judge=True)
+    j = store.create_job("alice", "q", job_type="chat", minds=3)
+    _answer_all(store, j["job_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'",
+                            (j["job_id"],)).fetchone()
+    assert jt["owner"] == "alice"
+    assert store.complete_task(jt["task_id"], {"scores": {n1: 0, n2: 0, na: 10}}, node_id=na)
+    assert store.job_status(j["job_id"]) == "done"
+    assert store.ledger.balance("op1") > 100.0 and store.ledger.balance("op2") > 100.0
+    assert store.ledger_integrity()["ok"] and store.ledger.conservation_ok()
+
+
+def test_alarm_failure_after_reaper_commit_does_not_roll_back_refunds(store, monkeypatch):
+    # round-3 review M1: _escrow_alarm used to run inside the reaper's rollback scope.
+    _setup(store)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    _expire_job(store, j["job_id"])
+    monkeypatch.setattr(store, "_escrow_alarm", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    store._reap_once()
+    assert store.job_status(j["job_id"]) == "failed"
+    assert store.ledger.balance("alice") == 100.0 and store.ledger.balance(ESCROW) == 0.0
+    assert store.ledger._holds == {}
+
+
+def test_zero_amount_holds_leave_no_bucket(store):
+    store.ledger.open_account("z", grant_amount=5.0)
+    store.ledger.hold("z", 0.0, "jobz")
+    assert "jobz" not in store.ledger._holds
+
+
 def test_failover_prefers_other_owner_then_falls_back_to_askers_own(store, capsys):
     _reg(store, "op1")
     jn = _reg(store, "judgeop", judge=True)

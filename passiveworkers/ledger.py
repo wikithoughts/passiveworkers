@@ -224,7 +224,7 @@ class Ledger:
         a.balance = round(a.balance - amount, 4)
         a.lifetime_spent = round(a.lifetime_spent + amount, 4)
         self._escrow().balance = round(self._escrow().balance + amount, 4)
-        if job_id is not None:
+        if job_id is not None and amount > 0:
             self._holds[job_id] = round(self._holds.get(job_id, 0.0) + amount, 4)
 
     def _draw_hold(self, job_id: str | None, amount: float) -> None:
