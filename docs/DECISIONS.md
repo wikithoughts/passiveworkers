@@ -1665,3 +1665,122 @@ capped channel.
 emoji and keycap, England flag and Persian ZWNJ are preserved; a non-RGI tag payload, ZWJ between
 letters or inside a delimiter, and ZWNJ outside Arabic script are stripped; a run keeps at most 8
 kept forms.
+
+## D56 — Credit-ledger semantics: hold at creation, node-earned credit, empty delivery, dev token (PW-1116, 2026-11-24)
+**Status:** PROPOSED — owner decision needed. This entry records current behaviour and options only;
+no ledger or auth code changes with it. The ledger can represent value, and D1 (no token, no
+tradeable credit) and D4 are load-bearing, so each item below waits for an explicit owner choice.
+Source: the PW-1116 review (items PW-1 to PW-4). All `file:line` references are on `main` at fba4a34.
+
+### PW-1 — No credit hold at job creation, and answers readable before settlement
+**Current behaviour.** An automated job only *checks* the asker's balance at creation
+(`passiveworkers/net/_store_jobs.py:220`, `can_afford`) and debits nothing. The charge happens once,
+at settlement (`_store_jobs.py:497`, `settle_job`, which re-checks the balance and raises
+`InsufficientCredit`). The assisted path is the only one that holds, via `ledger.hold`
+(`_store_assisted.py:61`). Separately, `GET /jobs/{id}` returns each answer's `text` and the merged
+deliverable to anyone who has the job id (`coordinator_app.py:802-815`, `_store_reporting.py:67,128`);
+only the receipt and asker are redacted. That is deliberate (the capability-URL model), but it means
+results are visible while the job is still unsettled.
+
+**Failure scenario.** An asker with 10 credits creates three 8-credit jobs in a row. Each passes
+`can_afford` (nothing is held). The first settles and leaves 2 credits. The second and third reach
+`settle_job`, which raises `InsufficientCredit` (`_store_jobs.py:501-503`): the job is marked failed
+with "settlement failed", the workers and judge are paid nothing, and their work, now readable at
+`/jobs/{id}`, was delivered free. Anyone repeating this with an account at zero-after-first-job
+extracts unpaid compute (a spam/sybil lever, bounded only by `PW_RL_JOBS`, default 120 per window).
+
+**Options.**
+1. *Hold at creation (extend the assisted escrow pattern).* `ledger.hold(asker, cost)` in `create_job`,
+   `settle_job` pays out of escrow, and refund on fail/expiry/all-answers-failed. Trade-off: closes
+   the free-compute hole and matches D21. It touches the money path (every failure branch must refund
+   exactly once; the reaper's deadline fail at `_store_jobs.py:~670` gains a refund), and needs the
+   conservation tests extended. Largest change, strongest guarantee.
+2. *Soft reservation counter.* Track `reserved` per asker (not moved to escrow); `can_afford` checks
+   `balance - reserved`; release at settle/fail. Trade-off: smaller diff and no new account, but a
+   second source of truth beside the balance that can drift on a crash (needs persistence), and
+   `conservation_ok` doesn't cover it.
+3. *Keep settle-time charge, hide results until settled.* Redact `answers[].text` and `merged` in
+   `job_view` until `status == "done"`. Trade-off: trivial and no ledger change, but it removes live
+   progress/"thinking" visibility, doesn't stop a failed settlement from wasting worker time, and
+   would break the shareable-result model for in-progress jobs.
+**Recommended default: option 1**, plus option 3's redaction only for jobs whose settlement failed
+(never serve answers of a job with `error` starting "settlement failed"). Needs owner sign-off because it changes
+who is charged and when.
+
+### PW-2 — Node-earned credit is stranded
+**Current behaviour.** A node's earnings are credited to its *owner handle* in the ledger
+(`_store_ledger.py:140-147` opens an account under `owner`; `settle_job` pays
+`score_by_worker[owner]`, `_store_jobs.py:~520`). Spending requires a *user* identity:
+`POST /jobs` authenticates with `X-User-Secret` (`coordinator_app.py:777-779`, `_user_auth` at
+`:375`), which maps to a `users` row. Signup refuses any handle that already has a ledger account
+(`_store_ledger.py:236-245`, `_handle_in_use_locked`, introduced to stop a new secret spending someone
+else's balance). No claim/link route exists on `main` (grepped: no `claim_owner`, `link_owner` or
+equivalent).
+
+**Failure scenario.** Alice runs a node with `owner="alice"` and earns 40 credits. She then tries to
+ask a question: `register_user("alice")` returns "handle taken", and she has no user secret for the
+`alice` account. Her 40 credits cannot be spent by her, and a different handle starts at zero (the D6
+"dual-role recirculating credit" promise is not reachable for anyone who joined as a node first).
+
+**Options.**
+1. *Owner-claim route.* An authenticated node (node secret) can mint a user secret bound to its own
+   `owner` handle, once (`POST /nodes/claim-user`), after which that handle is a user. Trade-off:
+   fixes the stranding with a small, auditable surface and keeps one balance per handle. It is an AUTH
+   change (a node secret becomes able to create a user credential), so it needs owner approval and a
+   test that a different owner cannot claim.
+2. *Sign up first, then register nodes under the user handle.* `register_node` accepts a user secret
+   and takes `owner` from it; refuse an `owner` that is not an existing user. Trade-off: cleanest
+   identity model (one account type), but breaks existing enrolled nodes and the `pw join` flow
+   (D47) and needs a migration for existing owner-only accounts.
+3. *Do nothing; document that node owners and askers are separate accounts.* Trade-off: zero risk, but
+   contradicts D6's dual-role pitch, and earned credit is permanently unusable.
+**Recommended default: option 1**, behind the admin enrollment token (so only an enrolled owner can
+claim) and one claim per handle. Migration-free.
+
+### PW-3 — `dev-token` still accepted on loopback (AUTH-gated; code untouched)
+**Current behaviour.** `PW_TOKEN` defaults to `"dev-token"` (`net/config.py:25`; also
+`agent.py:71`, `operator.py:60`). The startup guard refuses a weak token only on a *non-loopback* bind
+(`coordinator_app.py:94`); on loopback it prints a warning and keeps serving (`:100-104`). The
+documented topology is loopback behind a tunnel or reverse proxy (`SELF_HOST.md`), so a loopback bind
+is public in practice. #62 closed the empty-token case (`_auth`, `:355-363`) but not `dev-token`.
+
+**Failure scenario.** A self-hoster runs the quickstart with the default token behind a Cloudflare
+tunnel. Anyone who guesses `dev-token` calls `/admin/enroll` and mints enrollment grants (free credit,
+node registration).
+
+**Options.** (1) Refuse to start with `dev-token` or an empty token on any bind; require an explicit
+`PW_TOKEN` (local demos set one, or pass `--insecure-dev`). (2) Generate and print a random token on
+first start when none is set (persisted `0600`). (3) Keep the warning only.
+**Owner question; recommended default: option 2** (no default token exists at all; zero-config demos
+keep working and nothing guessable is ever live). Option 1 is acceptable if you prefer to fail closed.
+Not implemented: it is an auth change and the startup guard is on AGENTS.md's never-weaken list.
+
+### PW-4 — An empty assisted delivery releases the pool
+**Current behaviour.** `POST /tasks/{id}/deliver` accepts `deliverable` of any length including `""`
+(`coordinator_app.py:588`, `Field(..., max_length=200_000)`, no `min_length`). `deliver_assisted`
+checks only ownership, status and, for a file artifact, chunk presence
+(`_store_assisted.py:224-246`), then calls `ledger.release(owner, pool)` at `:262`, paying the whole
+held reward, and marks the job `done` with `merged=""`.
+
+**Failure scenario.** An operator accepts a 30-credit offer and immediately delivers `""` (or
+whitespace). They are paid in full; the asker's hold is gone and the asker has nothing. The rating
+route (D24) only affects reputation afterwards, and credit is not refunded.
+
+**Options.**
+1. *Reject empty or whitespace-only deliverables* (409 "empty deliverable") before `release`, leaving
+   the offer claimed so the operator can retry or the reaper refunds on expiry. Trade-off: tiny change,
+   no new state; stops the trivial case but not a one-character or junk deliverable.
+2. *Option 1 plus a minimum size/shape check and a refund-on-bad-rating window.* Hold the payout for
+   N minutes; an asker rating at or below a threshold refunds. Trade-off: closes junk delivery, but
+   adds a pending-payout state, changes the operator's "paid on delivery" promise (D21) and needs
+   conservation tests.
+3. *Leave as is; rely on reputation.* Trade-off: no change, but one bad operator can burn real asker
+   credit repeatedly.
+**Recommended default: option 1 now** (reject empty/whitespace), with option 2 left as a separate
+future decision.
+
+### Owner questions (one pass)
+- PW-1: hold credit at creation via the escrow pattern? Default **yes (option 1)**.
+- PW-2: add a one-time owner-claim route so node earnings are spendable? Default **yes (option 1)**.
+- PW-3: remove the `dev-token` default (generate a random token on first start)? Default **yes (option 2)**.
+- PW-4: reject empty/whitespace assisted deliverables before paying? Default **yes (option 1)**.
