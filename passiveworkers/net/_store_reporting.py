@@ -184,7 +184,9 @@ class _ReportingMixin(_StoreProtocol):
                 "minds": len(nodes),                # worker processes (a computer can run several)
                 "recent_jobs": jobs,
                 "ledger_total": self.ledger.total_credit(),
-                "ledger_conserved": self.ledger.conservation_ok(),
+                # D56 health signal: conservation AND escrow == the sum of per-job holds (the
+                # dashboard turns red on an escrow desync, not just on minted/burned credit)
+                "ledger_conserved": self.ledger_integrity()["ok"],
                 # D48: the raw per-account balance sheet (every handle's balance/reputation/jobs) is
                 # NOT public. Pseudonymous OPERATOR rankings live at /leaderboard; a user reads their
                 # OWN balance at /me. /status stays a public, non-identifying view of the network.

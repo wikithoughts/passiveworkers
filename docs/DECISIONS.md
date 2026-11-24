@@ -1802,3 +1802,24 @@ separate future decision.
   refund-on-bad-rating window (option 2) stays a separate future decision.
 
 No question remains open. Implementation PRs follow this record; none is part of it.
+
+### PW-1 implementation amendments (owner, 2026-11-24, Wiki item 72 event e1355)
+Decided while reviewing the PW-1 implementation; they refine the PW-1 decision above.
+- **Escrow is tracked per job.** Every escrow payout (settle, release, refund, assisted included)
+  is checked against that job's own hold (`Ledger._holds`, persisted with the ledger), so a deficit
+  can only ever land on the job that has it and is never paid out of another job's hold. A pooled
+  escrow that disagrees with the jobs table logs `[ALARM]` and turns the status `ledger_conserved`
+  signal red.
+- **Judge selection prefers other owners.** A judge owned by someone other than the asker is used
+  when one is online, in first assignment and failover. The asker's own judge node is a fallback
+  only when no other eligible judge exists (so lone-operator setups keep working), and the
+  fallback is logged.
+- **Known limit, accepted: open mode cannot stop self-judging under another owner name.** A node's
+  `owner` is a self-declared string unless enrollment binds it, so in open mode an asker can
+  register a judge under a second handle, read the answers, stall, and take the expiry refund.
+  `PW_ENROLL` closes this (owners are bound by the enrollment token). No code change.
+- **Answers stay hidden until the job is `done` (decided deviation from D56 PW-1).** D56 said to
+  hide answers only for jobs whose settlement failed. `job_view` instead hides every answer's
+  text, the merged deliverable and the baseline until settlement, because failed and expired jobs
+  are refunded and serving their answers would be free compute. The app UI only shows answer
+  text once the job is done.

@@ -105,11 +105,11 @@ def test_expiry_refund_failure_does_not_strand_hold(store, monkeypatch):
     real_refund = store.ledger.refund
     calls = {"n": 0}
 
-    def flaky_refund(asker_id, amount):
+    def flaky_refund(asker_id, amount, job_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("ledger desync")                 # first tick fails
-        return real_refund(asker_id, amount)                    # later ticks succeed
+        return real_refund(asker_id, amount, job_id)            # later ticks succeed
 
     monkeypatch.setattr(store.ledger, "refund", flaky_refund)
 

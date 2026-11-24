@@ -218,8 +218,8 @@ def test_legacy_unheld_job_settles_by_old_path(store):
     other = store.create_job("bob", "other", job_type="chat", minds=1)
     j = store.create_job("alice", "q", job_type="chat", minds=1)
     held_a = _held(store, j["job_id"])
-    store.ledger.refund("alice", held_a)          # simulate legacy: no hold was ever taken
-    store.conn.execute("UPDATE jobs SET held=0 WHERE job_id=?", (j["job_id"],))
+    store.ledger.refund("alice", held_a, job_id=j["job_id"])          # simulate legacy: no hold was ever taken
+    store.conn.execute("UPDATE jobs SET held=NULL WHERE job_id=?", (j["job_id"],))
     store._save_ledger()
     store.conn.commit()
     escrow_before = store.ledger.balance(ESCROW)
@@ -232,17 +232,49 @@ def test_legacy_unheld_job_settles_by_old_path(store):
     assert store.job_status(other["job_id"]) == "pending_answers"
 
 
-def test_askers_own_judge_node_is_never_given_the_answers(store):
-    # review finding 1: an asker who runs the only judge node could read the paid answers via
-    # /tasks/next, stall, and take the expiry refund.
+def _judge_owner(store, job_id):
+    return store.conn.execute("SELECT owner FROM tasks WHERE job_id=? AND type='judge'",
+                              (job_id,)).fetchone()["owner"]
+
+
+def test_judge_prefers_another_owner_over_the_askers_own_node(store, capsys):
+    # owner decision e1355: prefer judges owned by someone else, even when the asker's is "fresher".
+    _reg(store, "op1")
+    _reg(store, "judgeop", judge=True)
+    _reg(store, "alice", judge=True)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    _answer_all(store, j["job_id"])
+    assert _judge_owner(store, j["job_id"]) == "judgeop"
+    assert "falling back" not in capsys.readouterr().out
+
+
+def test_askers_own_judge_is_the_fallback_when_no_other_judge_exists(store, capsys):
+    # lone-operator setups keep working: the asker's own judge node is used, and it is logged.
     _reg(store, "op1")
     _reg(store, "alice", judge=True)
     j = store.create_job("alice", "q", job_type="chat", minds=1)
-    _answer_all(store, j["job_id"], "PAID WORK TEXT")
-    assert store.conn.execute("SELECT 1 FROM tasks WHERE job_id=? AND type='judge'",
-                              (j["job_id"],)).fetchone() is None
-    assert store.job_status(j["job_id"]) == "failed"
-    assert store.ledger.balance("alice") == 100.0 and store.ledger_integrity()["ok"]
+    _answer_all(store, j["job_id"])
+    assert _judge_owner(store, j["job_id"]) == "alice"
+    assert store.job_status(j["job_id"]) == "judging"
+    assert "falling back to the asker's own judge" in capsys.readouterr().out
+    assert _judge(store, j["job_id"])
+    assert store.job_status(j["job_id"]) == "done" and store.ledger_integrity()["ok"]
+
+
+def test_failover_prefers_other_owner_then_falls_back_to_askers_own(store, capsys):
+    _reg(store, "op1")
+    jn = _reg(store, "judgeop", judge=True)
+    _reg(store, "alice", judge=True)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    _answer_all(store, j["job_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'",
+                            (j["job_id"],)).fetchone()
+    job = store.conn.execute("SELECT * FROM jobs WHERE job_id=?", (j["job_id"],)).fetchone()
+    repl = store._pick_replacement(job, jt)           # the other owner's node is the current judge
+    assert repl["owner"] == "alice" and jt["node_id"] == jn
+    assert "falling back" in capsys.readouterr().out
+    _reg(store, "judge2", judge=True)
+    assert store._pick_replacement(job, jt)["owner"] == "judge2"
 
 
 def test_baseline_not_served_before_settlement(store):
@@ -273,20 +305,174 @@ def test_short_escrow_at_settlement_leaves_job_open_and_refundable(store):
     assert store.ledger.balance("alice") == 100.0 and store.ledger_integrity()["ok"]
 
 
-def test_short_escrow_never_refunds_out_of_another_askers_hold(store):
-    # second review: pooled escrow checks only the total, so a deficit must not move onto another job.
-    _setup(store)
-    a = store.create_job("alice", "q", job_type="chat", minds=1)
-    held_a = _held(store, a["job_id"])
-    store.ledger.accounts[ESCROW].balance -= 1.0            # desync: 1 credit short
-    b = store.create_job("bob", "q", job_type="chat", minds=1)
-    held_b = _held(store, b["job_id"])
-    store.conn.execute("UPDATE jobs SET created=created-10000000 WHERE job_id=?", (a["job_id"],))
+def _deficit(store, job_id, amount=1.0):
+    """Simulate a ledger desync that belongs to ONE job: its own escrow bucket and the pooled escrow
+    are both `amount` short (a legacy desync or a bug elsewhere)."""
+    store.ledger.accounts[ESCROW].balance = round(store.ledger.accounts[ESCROW].balance - amount, 4)
+    holds = getattr(store.ledger, "_holds", None)
+    if holds is not None:
+        holds[job_id] = round(holds[job_id] - amount, 4)
+
+
+def _expire_job(store, job_id):
+    store.conn.execute("UPDATE jobs SET created=created-10000000 WHERE job_id=?", (job_id,))
     store.conn.commit()
+
+
+def test_deficit_on_job_b_does_not_freeze_settlement_or_refund_of_job_a(store, capsys):
+    # third review M1: the old pooled all-or-nothing check froze EVERY payout once any job was short.
+    _setup(store)
+    a = store.create_job("alice", "qa", job_type="chat", minds=1)
+    b = store.create_job("bob", "qb", job_type="chat", minds=1)
+    c = store.create_job("carol", "qc", job_type="chat", minds=1)
+    held_b = _held(store, b["job_id"])
+    _deficit(store, b["job_id"])
+    _answer_all(store, a["job_id"])
+    assert _judge(store, a["job_id"])
+    assert store.job_status(a["job_id"]) == "done"              # A settles from its OWN hold
+    _expire_job(store, c["job_id"])
+    _expire_job(store, b["job_id"])
     store._reap_once()
-    assert store.job_status(a["job_id"]) == "judging" or store.job_status(a["job_id"]) == "pending_answers"
-    assert store.ledger.balance("alice") == pytest.approx(100 - held_a)   # not refunded from bob's hold
-    assert store.ledger.balance(ESCROW) == pytest.approx(held_a + held_b - 1.0)
+    assert store.job_status(c["job_id"]) == "failed" and store.ledger.balance("carol") == 100.0
+    assert store.job_status(b["job_id"]) == "pending_answers"   # the deficit lands on B alone
+    assert store.ledger.balance("bob") == pytest.approx(100 - held_b)
+    assert not store.ledger_integrity()["ok"]
+    assert "ALARM" in capsys.readouterr().out                   # and it is loud, not silent
+
+
+def test_settlement_of_the_short_job_itself_is_refused_without_touching_others(store):
+    _setup(store)
+    a = store.create_job("alice", "qa", job_type="chat", minds=1)
+    b = store.create_job("bob", "qb", job_type="chat", minds=1)
+    held_b = _held(store, b["job_id"])
+    _deficit(store, a["job_id"])
+    _answer_all(store, a["job_id"])
+    assert _judge(store, a["job_id"])
+    assert store.job_status(a["job_id"]) == "judging"
+    assert store.ledger.balance(ESCROW) >= held_b - 1e-6        # B's hold was not drawn on
+    assert store.ledger.balance("judgeop") == 100.0 and store.ledger.balance("op1") == 100.0
+
+
+def _assisted_offer(store, asker="dave"):
+    j = store.create_job(asker, "human task", job_type="assisted")
+    tid = store.conn.execute("SELECT task_id FROM tasks WHERE job_id=? AND type='assisted'",
+                             (j["job_id"],)).fetchone()["task_id"]
+    return j["job_id"], tid
+
+
+def test_assisted_delivery_cannot_drain_a_council_hold(store):
+    # third review M2: assisted release()/refund() bypassed the guard, so a short assisted bucket
+    # was silently paid out of a council job's hold (the pooled total still covered it).
+    _setup(store)
+    b = store.create_job("bob", "qb", job_type="chat", minds=1)
+    held_b = _held(store, b["job_id"])
+    jid, tid = _assisted_offer(store)
+    assert store.accept_assisted(tid, "opnode", "opuser")["ok"]
+    _deficit(store, jid)
+    out = store.deliver_assisted(tid, "opnode", "done")
+    assert not out["ok"] and "refused" in out["error"]
+    assert store.ledger.balance("opuser") == 100.0 or "opuser" not in store.ledger.accounts \
+        or store.ledger.balance("opuser") == 0.0
+    assert store.ledger.balance(ESCROW) >= held_b - 1e-6        # council hold intact
+
+
+def test_assisted_expiry_refund_cannot_drain_a_council_hold(store):
+    _setup(store)
+    b = store.create_job("bob", "qb", job_type="chat", minds=1)
+    held_b = _held(store, b["job_id"])
+    jid, _ = _assisted_offer(store)
+    _deficit(store, jid)
+    _expire_job(store, jid)
+    store._reap_once()
+    assert store.job_status(jid) in ("pending_assist", "assisting")   # kept open, not paid from B
+    assert store.ledger.balance(ESCROW) >= held_b - 1e-6
+    assert store.job_status(b["job_id"]) == "pending_answers"
+
+
+def test_concurrent_settle_and_refund_conserve_credit(store):
+    import threading
+    _setup(store)
+    a = store.create_job("alice", "qa", job_type="chat", minds=1)
+    b = store.create_job("bob", "qb", job_type="chat", minds=1)
+    _answer_all(store, a["job_id"])
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'",
+                            (a["job_id"],)).fetchone()
+    _expire_job(store, b["job_id"])
+    errs = []
+
+    def settle():
+        try:
+            store.complete_task(jt["task_id"], {"scores": {}}, node_id=jt["node_id"])
+        except Exception as e:   # pragma: no cover
+            errs.append(e)
+
+    def reap():
+        try:
+            for _ in range(3):
+                store._reap_once()
+        except Exception as e:   # pragma: no cover
+            errs.append(e)
+
+    ts = [threading.Thread(target=settle), threading.Thread(target=reap)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs
+    assert store.job_status(a["job_id"]) == "done" and store.job_status(b["job_id"]) == "failed"
+    assert store.ledger.balance("bob") == 100.0 and store.ledger.balance(ESCROW) == 0.0
+    assert store.ledger_integrity()["ok"] and store.ledger.conservation_ok()
+
+
+def test_zero_cost_new_job_is_not_mistaken_for_a_legacy_job(store):
+    # third review L4: held==0 doubled as the legacy marker, so a zero-cost new job was charged
+    # CONFIG.worker_pool at settlement although nothing was held.
+    _setup(store)
+    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    held = _held(store, j["job_id"])
+    store.ledger.refund("alice", held, job_id=j["job_id"]) if held else None
+    store.conn.execute("UPDATE jobs SET held=0.0, pool=0.0 WHERE job_id=?", (j["job_id"],))
+    store._save_ledger()
+    store.conn.commit()
+    _answer_all(store, j["job_id"])
+    assert _judge(store, j["job_id"])
+    assert store.job_status(j["job_id"]) == "done"
+    assert store.ledger.balance("alice") == 100.0               # never charged for a zero-cost job
+    assert store.ledger_integrity()["ok"]
+
+
+def test_no_judge_online_reason_is_distinct_from_the_own_node_fallback(store, capsys):
+    # third review L5: "no judge online" (refund) must read differently from "used the asker's own".
+    _reg(store, "op1")
+    j1 = store.create_job("bob", "q", job_type="chat", minds=1)
+    _answer_all(store, j1["job_id"])
+    assert store.job_view(j1["job_id"])["error"] == "no judge node online"
+    assert "falling back" not in capsys.readouterr().out
+
+
+def test_buckets_survive_restart_and_are_rebuilt_for_a_pre_bucket_ledger(store):
+    import json
+    import passiveworkers.net.store as st
+    _setup(store)
+    b = store.create_job("bob", "q", job_type="chat", minds=1)
+    jid, _ = _assisted_offer(store)
+    holds = dict(store.ledger._holds)
+    assert set(holds) == {b["job_id"], jid}
+    s2 = st.Store()
+    s2._stop.set()
+    try:
+        assert s2.ledger._holds == holds and s2.ledger_integrity()["ok"]
+        # a ledger saved before per-job buckets has no "holds" key: rebuilt from the jobs table
+        d = json.loads(store.conn.execute("SELECT data FROM ledger WHERE id=1").fetchone()["data"])
+        d.pop("holds")
+        store.conn.execute("UPDATE ledger SET data=? WHERE id=1", (json.dumps(d),))
+        store.conn.commit()
+        s3 = st.Store()
+        s3._stop.set()
+        try:
+            assert s3.ledger._holds == holds and s3.ledger_integrity()["ok"]
+        finally:
+            s3.conn.close()
+    finally:
+        s2.conn.close()
 
 
 def test_integrity_flags_a_hold_stranded_on_a_closed_job(store):
