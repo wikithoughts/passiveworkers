@@ -8,6 +8,7 @@ one, which keeps the admin routes disabled) is used as given.
 
 from __future__ import annotations
 
+import enum
 import os
 import pathlib
 import secrets
@@ -17,6 +18,17 @@ import time
 from passiveworkers.paths import home
 
 LEGACY_DEV_TOKEN = "dev-token"
+
+
+class Event(enum.Enum):
+    EXPLICIT = "explicit"      # PW_TOKEN supplied by the operator
+    GENERATED = "generated"    # first start: new token written
+    ROTATED = "rotated"        # file had group/other bits: replaced
+    REPAIRED = "repaired"      # file empty/malformed: replaced
+    ADOPTED = "adopted"        # existing 0600 file reused
+
+
+_EVENT: tuple[Event, int, bool] = (Event.EXPLICIT, 0, False)   # (event, file mode, legacy dev-token); never the token
 _MIN_LEN = 24
 
 
@@ -110,8 +122,10 @@ def _read_trusted(path: pathlib.Path) -> tuple[str, int]:
         os.close(fd)
 
 
-def _load_or_create(path: pathlib.Path) -> tuple[str, str | None]:
-    """(token, note). note describes a first-start generation or a repair, else None."""
+def _load_or_create(path: pathlib.Path) -> str:
+    """The token. What happened (generated/rotated/repaired/adopted) is recorded in ``_EVENT``, a
+    value that never holds the token, so no message is built from the secret's data flow."""
+    global _EVENT
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     _check_home(path.parent)
     for _ in range(3):
@@ -125,7 +139,8 @@ def _load_or_create(path: pathlib.Path) -> tuple[str, str | None]:
         except FileNotFoundError:
             tok = secrets.token_urlsafe(32)
             if _publish_new(path, tok):
-                return tok, f"generated a random admin token on first start and saved it to {path} (mode 0600)"
+                _EVENT = (Event.GENERATED, 0, False)
+                return tok
             continue   # lost a race with another first start: read theirs
         except OSError as e:   # ELOOP: a symlink sits at the path
             raise RuntimeError(f"{path} cannot be opened safely ({e.strerror}); refusing to trust it. "
@@ -135,31 +150,52 @@ def _load_or_create(path: pathlib.Path) -> tuple[str, str | None]:
             # is already disclosed. Either way the content is compromised: rotate, never adopt.
             tok = secrets.token_urlsafe(32)
             _replace_private(path, tok)
-            return tok, (f"{path} was group/world accessible, so its token is treated as compromised: "
-                         f"rotated (was mode {mode:04o}); a new admin token was saved there (mode 0600)")
+            _EVENT = (Event.ROTATED, mode, False)
+            return tok
         if not _valid(existing):
             tok = secrets.token_urlsafe(32)
             _replace_private(path, tok)
-            return tok, f"{path} was empty or malformed; generated a new admin token there (mode 0600)"
-        return existing, None
+            _EVENT = (Event.REPAIRED, 0, False)
+            return tok
+        _EVENT = (Event.ADOPTED, 0, False)
+        return existing
     raise RuntimeError(f"could not read or create the admin token file {path}")
 
 
-def resolve(env_token: str | None) -> tuple[str, str | None]:
-    """The admin token to use and an optional operator-facing note (never containing the token)."""
+def resolve(env_token: str | None) -> str:
+    """The admin token to use. Returns the token ONLY; ``startup_note()`` gives the operator message."""
+    global _EVENT
     if env_token is not None and env_token != LEGACY_DEV_TOKEN:
-        return env_token, None
+        _EVENT = (Event.EXPLICIT, 0, False)
+        return env_token
     path = token_path()
     try:
-        tok, note = _load_or_create(path)
+        tok = _load_or_create(path)
     except OSError as e:
         raise RuntimeError(
             f"cannot persist a generated admin token at {path} ({e.strerror or e}). "
             "Set a strong PW_TOKEN (e.g. `openssl rand -hex 24`) or make PW_HOME writable.") from e
     if env_token == LEGACY_DEV_TOKEN:
-        legacy = ("PW_TOKEN=dev-token is no longer accepted. Using the generated admin token instead; "
-                  f"read it with `cat {path}` and use it (or set your own PW_TOKEN) wherever you used dev-token")
-        note = f"{legacy}. {note}" if note else legacy
-    elif note is None:
-        note = f"using the generated admin token in {path}"
-    return tok, note
+        _EVENT = (_EVENT[0], _EVENT[1], True)
+    return tok
+
+
+def startup_note() -> str | None:
+    """Operator-facing message for the last ``resolve()``, built from the token FILE PATH and the event
+    only. It has no access to the token, so it cannot contain it."""
+    kind, mode, legacy_dev = _EVENT
+    if kind is Event.EXPLICIT:
+        return None
+    path = token_path()
+    msg = {
+        Event.GENERATED: f"generated a random admin token on first start and saved it to {path} (mode 0600)",
+        Event.ROTATED: (f"{path} was group/world accessible, so its token is treated as compromised: "
+                        f"rotated (was mode {mode:04o}); a new admin token was saved there (mode 0600)"),
+        Event.REPAIRED: f"{path} was empty or malformed; generated a new admin token there (mode 0600)",
+        Event.ADOPTED: f"using the generated admin token in {path}",
+    }[kind]
+    if legacy_dev:
+        msg = ("PW_TOKEN=dev-token is no longer accepted. Using the generated admin token instead; "
+               f"read it with `cat {path}` and use it (or set your own PW_TOKEN) wherever you used "
+               f"dev-token. {msg}")
+    return msg

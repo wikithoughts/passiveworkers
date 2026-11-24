@@ -112,9 +112,10 @@ def _resolve_admin_token() -> None:
     """D56 / PW-3: no guessable default. Unset (or legacy `dev-token`) PW_TOKEN -> a generated, persisted
     0600 token; the token itself is never printed, only the file that holds it."""
     global CONFIG
-    token, note = _admin_token.resolve(os.environ.get("PW_TOKEN"))
+    token = _admin_token.resolve(os.environ.get("PW_TOKEN"))
     if token != CONFIG.token:
         CONFIG = dataclasses.replace(CONFIG, token=token)
+    note = _admin_token.startup_note()   # built from the file path + event only, never the token
     if note:
         print(f"[coordinator] {note}", file=sys.stderr, flush=True)
 

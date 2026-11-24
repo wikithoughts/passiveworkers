@@ -48,7 +48,7 @@ def test_generated_token_is_reused_on_restart_and_unique_per_home(tmp_path, monk
     other.mkdir()
     monkeypatch.setenv("PW_HOME", str(other))
     import passiveworkers.net.admin_token as at
-    assert at.resolve(None)[0] != first
+    assert at.resolve(None) != first
 
 
 def test_legacy_dev_token_env_is_not_accepted_and_tells_the_operator(tmp_path, monkeypatch, capsys):
@@ -79,12 +79,13 @@ def test_loose_permission_file_is_rotated_not_adopted(tmp_path, monkeypatch, mod
     """Any group/other bit means the token may be planted (writable) or disclosed (readable)."""
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
-    tok, _ = at.resolve(None)
+    tok = at.resolve(None)
     p = tmp_path / "admin_token"
     os.chmod(p, mode)
     p.write_text("planted-known-token-0123456789abcdef\n")   # what another local user could have left
     os.chmod(p, mode)
-    again, note = at.resolve(None)
+    again = at.resolve(None)
+    note = at.startup_note()
     assert again != tok and again != "planted-known-token-0123456789abcdef"
     assert p.read_text().strip() == again and stat.S_IMODE(p.stat().st_mode) == 0o600
     assert f"rotated (was mode {mode:04o})" in note and str(p) in note
@@ -107,7 +108,7 @@ def test_empty_file_from_a_racing_writer_is_waited_for_not_repaired(tmp_path, mo
         if calls["n"] == 2:                      # the writer finishes mid-wait
             p.write_text(final + "\n")
     monkeypatch.setattr(at.time, "sleep", fake_sleep)
-    tok, note = at.resolve(None)
+    tok = at.resolve(None)
     assert tok == final and calls["n"] >= 2
     assert p.read_text().strip() == final
 
@@ -125,7 +126,7 @@ def test_existing_home_must_be_ours_and_not_group_or_world_writable(tmp_path, mo
     with pytest.raises(RuntimeError, match="writable by other users"):
         at.resolve(None)
     os.chmod(home, 0o755)                           # readable by others but not writable: fine
-    assert at.resolve(None)[0]
+    assert at.resolve(None)
     monkeypatch.setattr(os, "getuid", lambda: os.stat(home).st_uid + 1)
     with pytest.raises(RuntimeError, match="not owned by this user"):
         at.resolve(None)
@@ -136,7 +137,7 @@ def test_corrupt_or_weak_file_is_replaced_not_trusted(tmp_path, monkeypatch, jun
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
     (tmp_path / "admin_token").write_text(junk)
-    tok, _ = at.resolve(None)
+    tok = at.resolve(None)
     assert len(tok) >= 24 and tok != junk.strip()
     assert (tmp_path / "admin_token").read_text().strip() == tok
 
@@ -213,3 +214,35 @@ def test_fifo_at_token_path_fails_fast_instead_of_hanging(tmp_path, monkeypatch)
     os.mkfifo(tmp_path / "admin_token")
     with pytest.raises(RuntimeError, match="is not a regular file owned by this user"):
         at.resolve(None)
+
+
+def test_token_value_never_appears_in_any_output_or_message(tmp_path, monkeypatch, capsys, caplog):
+    """CodeQL py/clear-text-logging: the token must not reach stdout/stderr/logs/notes/exceptions on the
+    generate, adopt, rotate, repair and legacy-dev-token paths (startup_note has no access to it)."""
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    p = tmp_path / "admin_token"
+    seen = []
+
+    def step(env=None):
+        tok = at.resolve(env)
+        seen.append(tok)
+        note = at.startup_note()
+        assert tok not in (note or "")
+        return tok
+
+    step()                                            # generate
+    step()                                            # adopt
+    step("dev-token")                                 # legacy dev-token
+    os.chmod(p, 0o666)
+    step()                                            # rotate
+    p.write_text("")
+    os.chmod(p, 0o600)
+    monkeypatch.setattr(at.time, "sleep", lambda s: None)
+    step()                                            # repair
+    out = capsys.readouterr()
+    boot_mod, _, _ = _boot(tmp_path / "boot", monkeypatch)   # the real coordinator startup path
+    boot = capsys.readouterr()
+    everything = out.out + out.err + boot.out + boot.err + caplog.text
+    for tok in seen + [boot_mod.CONFIG.token]:
+        assert tok not in everything
