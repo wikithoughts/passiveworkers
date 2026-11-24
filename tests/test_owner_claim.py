@@ -170,6 +170,43 @@ def test_unbound_first_node_cannot_preempt_a_bound_node(env):
     assert _claim(c, s_bound).status_code == 200
 
 
+def test_unbound_claim_refused_while_a_token_for_the_owner_is_pending(env):
+    c, _, _ = env
+    tok = c.post("/admin/enroll", json={"owner": "alice", "kind": "node", "grant": 0},
+                 headers=TOK).json()["enroll_token"]
+    s_attacker = _node(c, "alice")                 # no-token node registers + tries first
+    r = _claim(c, s_attacker)
+    assert r.status_code == 403 and "pending" in r.json()["detail"]
+    # the real owner's bound node registers afterwards and is NOT locked out
+    import os
+    os.environ["PW_ENROLL"] = "1"
+    try:
+        s_bound = _node(c, "alice", headers={}, extra={"X-Enroll-Token": tok})
+    finally:
+        del os.environ["PW_ENROLL"]
+    assert _claim(c, s_bound).status_code == 200
+    # a token for another owner, or a different kind, does not block
+    c.post("/admin/enroll", json={"owner": "carol", "kind": "user"}, headers=TOK)
+    c.post("/admin/enroll", json={"owner": "dave", "kind": "node"}, headers=TOK)
+    assert _claim(c, _node(c, "erin")).status_code == 200
+
+
+def test_token_owner_must_match_node_owner_exactly_to_bind(enrolled):
+    c, _, _ = enrolled
+    sec = _node(c, "alice ", headers={}, extra={"X-Enroll-Token": _token(c, "alice")})
+    assert _claim(c, sec).status_code == 403          # not bound: "alice" != "alice "
+
+
+def test_bound_rotate_is_logged_as_warning_without_secrets(enrolled, capsys):
+    c, _, _ = enrolled
+    c.post("/users", json={"handle": "alice"})
+    sec = _node(c, "alice", headers={}, extra={"X-Enroll-Token": _token(c, "alice")})
+    r = _claim(c, sec)
+    out = capsys.readouterr().out
+    assert "WARN owner-claim mode='rotate'" in out
+    assert r.json()["user_secret"] not in out and sec not in out
+
+
 def test_enrolled_bound_claim_over_squatter_rotates_secret(enrolled):
     c, capp, _ = enrolled
     squat = c.post("/users", json={"handle": "alice"}).json()["user_secret"]   # open signup, 0 grant

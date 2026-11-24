@@ -500,6 +500,9 @@ def claim_user(request: Request, x_node_secret: str | None = Header(default=None
     if res.get("error"):
         print(f"[coordinator] owner-claim refused node={node_id}: {res['error']}", flush=True)
         raise HTTPException(status_code=res.get("status", 403), detail=res["error"])
+    if res.get("mode") == "rotate":   # no secrets in the log line (D56 PW-2)
+        print(f"[coordinator] WARN owner-claim mode='rotate': replaced the existing user secret of "
+              f"handle={res['handle']!r} via enrollment-bound node={node_id}", flush=True)
     print(f"[coordinator] owner-claim OK node={node_id} handle={res['handle']!r} "
           f"balance={res['balance']}", flush=True)
     return res

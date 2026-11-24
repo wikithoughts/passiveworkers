@@ -148,8 +148,9 @@ class _LedgerMixin(_StoreProtocol):
                     return {"error": red.get("error", "valid enrollment token required")}
                 grant_amount = red.get("grant")
                 # PW-2 (D56): the token binds the owner only if the admin named it and it IS this owner
-                tok_owner = (red.get("owner") or "").strip()
-                if tok_owner and tok_owner == owner.strip():
+                # exact comparison; claim_owner compares enroll_owner to the exact ledger key too
+                tok_owner = red.get("owner") or ""
+                if tok_owner.strip() and tok_owner == owner:
                     enroll_owner = owner
             revert = self._open_account_reversible(owner, grant_amount)
             try:
@@ -248,6 +249,14 @@ class _LedgerMixin(_StoreProtocol):
                 if self.conn.execute("SELECT 1 FROM nodes WHERE owner=? AND enroll_owner=owner",
                                      (handle,)).fetchone():
                     return {"error": "owner is bound by another node's enrollment", "status": 403}
+                # an admin-minted node token naming this handle that is still redeemable: its holder
+                # (the real owner) may not have registered yet, so an unbound claim must not win
+                for t in self.conn.execute(
+                        "SELECT owner FROM enroll_tokens WHERE uses < max_uses "
+                        "AND kind IN ('any','node')"):
+                    if (t["owner"] or "").strip() == handle.strip():
+                        return {"error": "an enrollment token for this owner is pending",
+                                "status": 403}
                 # a case/whitespace variant that also holds credit makes the name ambiguous
                 if any(k != handle and k.strip().casefold() == key for k in self.ledger.accounts):
                     return {"error": "ambiguous handle (case variant exists)", "status": 403}
@@ -267,7 +276,8 @@ class _LedgerMixin(_StoreProtocol):
             except Exception:
                 self.conn.rollback()
                 raise
-            return {"handle": handle, "user_secret": secret, **self.user_balance(handle)}
+            return {"handle": handle, "user_secret": secret, **self.user_balance(handle),
+                    "mode": "rotate" if urow is not None else "create"}
 
     # ------------------------------------------------------------------ users (askers)
     def register_user(self, handle: str, grant_amount: float | None = None,

@@ -1801,4 +1801,29 @@ separate future decision.
   `ledger.release`, leaving the offer claimed so it can be retried or refunded on expiry. The
   refund-on-bad-rating window (option 2) stays a separate future decision.
 
+### PW-2 implementation notes (PR #67, `POST /nodes/claim-user`)
+Authenticated by the node secret; once per handle (casefold) via the `owner_claims` table, which is also
+the audit record (node, balance, mode `create` or `rotate`).
+- **Rules.** *Unbound* claim (no enrollment binding): needs no `users` row, must come from the handle's
+  first node, is refused while a redeemable node/any enrollment token naming the handle exists (so a
+  no-token node cannot pre-empt the real owner's bound node), and is refused when a case/whitespace
+  variant account exists. *Bound* claim (the node's token owner equals its owner exactly): allowed over
+  an exact-case existing `users` row, whose secret is then **rotated** (enrollment vouches for the
+  handle, not the squatter). Every rotation is logged at WARN with `mode='rotate'` (no secrets).
+- **Recorded deviation from D56 (safer).** With `PW_ENROLL` on, a binding is required even when the
+  handle has no `users` row: node owner is a self-declared string, so otherwise any enrolled node could
+  claim a stranger's earnings. Legacy nodes (no `enroll_owner`) therefore cannot claim in enrolled mode.
+- **Residuals, accepted.**
+  - *Lost claim response is permanent* (the secret is shown once). Ops runbook: stop nothing, take a DB
+    backup, then `DELETE FROM owner_claims WHERE handle_key = lower-cased handle;` and, for a row whose
+    `mode` was `create`, also `DELETE FROM users WHERE handle = '<handle>';` (never for `rotate`; there
+    the previous secret is already gone, so only re-claim after deleting the claim row). The owner then
+    claims again with a node secret.
+  - *Case-variant grief in open mode.* Anyone able to register a node (shared `PW_TOKEN`) can register a
+    case/whitespace variant of an owner's name and make that name ambiguous, refusing the unbound claim
+    for both. `PW_ENROLL` removes it (bound claims ignore the ambiguity check). Casefolding can likewise
+    strand credit under a variant name (no takeover); NFC/NFD forms are not unified (pre-existing).
+  - A pending (never redeemed) node token naming a handle blocks unbound claims of that handle until it is
+    redeemed or exhausted.
+
 No question remains open. Implementation PRs follow this record; none is part of it.
