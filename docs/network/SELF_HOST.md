@@ -96,7 +96,11 @@ enrollment token minted the same way as step 3 (`--kind user` instead of `any`/`
 - **Rate limits are on by default** (D36) — tunable via `PW_RL_*` env vars. If you put
   more than a handful of operators behind a reverse proxy, read the `PW_TRUST_XFF`
   warning in [CONTRIBUTE_COMPUTE.md](../CONTRIBUTE_COMPUTE.md) before setting it —
-  wrong, it lets a client spoof its way past your limits.
+  wrong, it lets a client spoof its way past your limits. Behind a tunnel or proxy on a
+  known address, prefer `PW_TRUSTED_PROXIES=127.0.0.1,::1` (comma-separated IPs/CIDRs): the
+  `X-Forwarded-For` header is then honoured only when the connection comes from one of those
+  addresses, and the client is the right-most hop that is not a trusted proxy — without it,
+  every client behind a loopback tunnel shares one global pre-auth rate-limit bucket.
 - **Back up `PW_DB`** (the SQLite file holding the ledger, accounts, and reputation).
   The store migrates its own schema on boot (`ALTER TABLE`), so upgrading in place is
   safe — losing the file is not recoverable.

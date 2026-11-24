@@ -145,7 +145,28 @@ def _library_add_text(path: str) -> str:
     into a clean 'error: …' string. Crucially, a missing optional extra (pypdf / python-docx)
     raises SystemExit — a BaseException, NOT caught by `except Exception` — so we catch it
     explicitly here, or the MCP client would see a raw traceback / a killed server."""
+    import os
+    import pathlib
+
     from passiveworkers.library import Library
+    # The library's default confinement root is $HOME, so an MCP-connected agent could otherwise ask
+    # for the whole home directory (dotfiles, keys, mail). Over MCP, refuse home itself (or anything
+    # above it) unless the operator deliberately set PW_LIBRARY_ROOTS; subfolders are still fine.
+    if not os.environ.get("PW_LIBRARY_ROOTS"):
+        try:
+            home = pathlib.Path.home().resolve()
+            target = pathlib.Path(path).expanduser().resolve()
+            if target == home or target in home.parents:
+                return ("error: refusing to index your whole home directory via MCP — pass a specific "
+                        "folder (e.g. ~/Documents) or set PW_LIBRARY_ROOTS to opt in")
+            # Defence in depth, NOT a complete credential guard: also refuse a hidden top-level dir under
+            # home (~/.ssh, ~/.aws, ~/.gnupg, ~/.config …). Only the first component is checked, so e.g.
+            # a credentials folder at ~/work/secrets is still indexable — keep PW_LIBRARY_ROOTS narrow.
+            if target.is_relative_to(home) and target.relative_to(home).parts[0].startswith("."):
+                return ("error: refusing to index a hidden directory under your home (credentials/config "
+                        "live there) via MCP — set PW_LIBRARY_ROOTS to opt in")
+        except Exception as exc:        # fail closed: if we can't resolve the path, don't index it
+            return f"error: could not resolve {path!r} safely ({type(exc).__name__}) — not indexed"
     try:
         n = Library().add(path)
         return f"Indexed {n} chunks from {path}."

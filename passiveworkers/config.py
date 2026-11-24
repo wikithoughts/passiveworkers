@@ -105,28 +105,11 @@ def load() -> dict:
 
 
 def _save(state: dict) -> None:
-    """Persist owner-only (0600) FROM CREATION — the file may hold API keys / a bearer token, so it
-    must never have a world-readable window. Same atomic pattern as passiveworkers.net.agent._save_join."""
-    p = path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    blob = json.dumps(state, indent=2, sort_keys=True).encode()
-    try:
-        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(blob)
-        os.chmod(p, 0o600)
-    except Exception:
-        # Fallback for platforms without os.open mode support: a restrictive umask around the
-        # create avoids the world-readable window that write_text() alone (0o644) would open.
-        old = os.umask(0o077)
-        try:
-            p.write_text(json.dumps(state, indent=2, sort_keys=True))
-        finally:
-            os.umask(old)
-        try:
-            os.chmod(p, 0o600)
-        except Exception:
-            pass
+    """Persist owner-only (0600), atomically — the file may hold API keys / a bearer token. Delegates
+    to ``paths.write_private_json`` (0600 temp file + ``os.replace``): a crash can't truncate the
+    config, there is no world-readable window, and a pre-existing loose-permission file is replaced
+    by a 0600 one instead of keeping its mode."""
+    paths.write_private_json(path(), state, sort_keys=True)
 
 
 def get(key: str):

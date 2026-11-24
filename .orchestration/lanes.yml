@@ -19,7 +19,8 @@ setup:
 # (changes, lint, types, test matrix, frontend, core-install), always runs, and fails if any of them
 # failed or was cancelled. Docs-only PRs skip the heavy jobs (the `changes` job) and ci-ok still
 # passes, so nothing waits forever. GitHub enforces it via a required_status_checks rule on the
-# "fleet: protect default branch" ruleset (id 23950251). `types` is continue-on-error (advisory).
+# "fleet: protect default branch" ruleset (id 23950251). `types` is a blocking job (pyright on
+# passiveworkers/net): a pyright error fails it and therefore `ci-ok`.
 required_checks: [ci-ok]
 merge: squash
 force_push: allowed

@@ -90,14 +90,16 @@ def test_write_private_json_overwrites_existing_file_and_keeps_0600(tmp_path):
     assert mode == 0o600
 
 
-def test_write_private_json_uses_os_open_with_mode_directly():
-    # Source-level guard against a regression to open()+chmod() (which has a real
-    # world-readable window between the two calls). Confirm the implementation opens the fd
-    # with the 0o600 mode baked into os.open() itself, never a separate os.chmod() call.
+def test_write_private_json_is_atomic_temp_then_replace():
+    # Source-level guard against a regression to open(path, O_TRUNC)+chmod() — a truncating write
+    # leaves a crash window with an empty file, keeps a pre-existing file's loose mode, and (with a
+    # chmod afterwards) has a world-readable window. The implementation must create a fresh 0600
+    # temp file (mkstemp) and os.replace() it over the target.
     src = inspect.getsource(P.write_private_json)
-    assert "os.open(" in src
+    assert "mkstemp(" in src
+    assert "os.replace(" in src
+    assert "O_TRUNC" not in src
     assert "0o600" in src
-    assert "os.chmod(" not in src   # the substring "chmod" alone also matches the docstring's prose
 
 
 # ---------------------------------------------------------------- coordinator_entries()

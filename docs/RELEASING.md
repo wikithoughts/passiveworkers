@@ -1,67 +1,62 @@
 # Releasing to PyPI
 
-## Current state — **0.4.0 PUBLISHED (2026-07-10)**
-`passiveworkers` **0.1.0 through 0.4.0 are live** on https://pypi.org/project/passiveworkers/, each
-git-tagged (`v0.1.0`…`v0.4.0`). **0.4.0** (R36/D52) is a broad round: web-evidence **rerank** +
-**adaptive/recursive** research depth, plus a hardening sweep (the escrow-refund atomicity fix, one shared
-UI theme in `passiveworkers/net/ui_common.py`, scoped `pyright`, and tests for the uncovered web-UI /
-legacy-`Council` surfaces). Published from commit `555b27c`, verified (PyPI JSON API 200 + a clean-venv
-`pip install passiveworkers==0.4.0` → `pworkers version` 0.4.0), tagged `v0.4.0`, and adversarially reviewed
-before commit (2 real issues caught + fixed). **The next release MUST bump the version** — `0.4.0` is now
-burned on PyPI. The `types` job shipped in 0.4.0 as advisory. It is a blocking gate now: `pyright`
-(`basic`, `passiveworkers/net`, `[tool.pyright]`) fails `types` and the required `ci-ok`
-(`.github/workflows/ci.yml`).
+## Current state — **0.5.0 is the latest published release**
 
-_Prior: **0.3.0** (2026-07-10, commit `c2921f2`, R35/D51) — inference-time citation-fidelity self-repair
-in `pworkers research` + a free local currency baseline (`--baseline local`) with a re-verified/expanded bank._
-
-_Prior: **0.2.0** (2026-07-07, commit `4963906`) bundled R32/D48 (security/privacy hardening, engine
-reliability, `pworkers status`/`--json`/`--html`, marketplace account recovery, CI matrix), R33/D49
-(`pworkers config` + keyed search backends), and R34/D50 (pricing dedup, shared UI module, operator/asker CLI
-test coverage, the `pworkers rate` fix)._
-
-Token: 1Password item
-**your PyPI token item** (field `credential`), read into a subshell env at upload time — never written
-to `~/.pypirc` or any file.
+`passiveworkers` **0.1.0 through 0.5.0 are live** on https://pypi.org/project/passiveworkers/, each
+git-tagged (`v0.1.0`…`v0.5.0`); `0.5.0` was tagged on commit `a507f39` (see `CHANGELOG.md` for what each
+release contained — this file does not duplicate it, so it cannot go stale again). Check the live
+state before releasing: `curl -s https://pypi.org/pypi/passiveworkers/json | jq -r .info.version`, and
+`pyproject.toml`'s `version` for what the next tag must be.
 
 > **Published versions are burned.** A version number on PyPI can never be reused, even after a yank.
-> The **next** release MUST bump `version` in `pyproject.toml` (`0.5.0` for the coming feature release;
-> a `0.4.x` bump only for a pure fix). Note: the PyPI JSON API updates instantly but the pip
-> simple-index lags ~30–60s — a fresh `pip install ==<newver>` may 404 right after upload; retry after a minute.
+> The **next** release MUST bump `version` in `pyproject.toml` (a feature release is a minor bump; a
+> pure fix is a patch bump). Note: the PyPI JSON API updates instantly but the pip simple-index lags
+> ~30–60s — a fresh `pip install ==<newver>` may 404 right after upload; retry after a minute.
 
-## How to publish (repeat for every bumped version)
+## How to publish — pick ONE path per version, never both
 
-1. Bump `version` in `pyproject.toml`; add a `CHANGELOG.md` section for the new version; commit.
+Publishing is **one-shot per version**: the automated path and the manual path below both upload to
+the same PyPI project, so running both double-publishes (the second upload is rejected or, with
+`skip-existing`, silently skipped). **The automated tag path is the default.**
+
+### Automated (default): push the tag
+
+`.github/workflows/release.yml` runs on any `v*.*.*` tag push: **verify-tag** (the tag commit must be
+on `main`, and the tag must equal `v` + the `pyproject.toml` version) → **test** (the `ci-ok` gates:
+ruff, pyright, coverage-gated pytest, inline-JS guard) and **core-install** → build + `twine check` →
+PyPI publish (Trusted Publishing, OIDC, no stored token) → GitHub Release. One-time prerequisite: a
+Trusted Publisher registration on the `passiveworkers` PyPI project (Owner `wikithoughts`, Repo
+`passiveworkers`, Workflow `release.yml`, Environment `pypi`).
+
+1. Bump `version` in `pyproject.toml`; add a `CHANGELOG.md` section for it; merge that PR to `main`.
 2. **Confirm positioning consistency:** the README hero paragraph, the pyproject.toml
    `description`, and ANNOUNCE.md's opening lines all still match docs/VISION.md's opening
-   paragraph. A mismatch here is exactly what caused docs/REVIEW_2026-07.md F3/F4 (the repo
-   disagreeing with itself about whether single-player research or the network is "the
-   product") — check it every release, not just when VISION.md changes.
-3. `rm -rf dist/ build/ *.egg-info && python -m build` (rebuild so artifacts match committed code).
-4. `twine check dist/*` → must PASS; `tar tzf dist/*.tar.gz` → confirm no secrets bundled.
-5. Smoke-test the wheel in a throwaway venv: `pip install dist/*.whl` → `pworkers --help` works.
-6. Upload (token never persisted):
+   paragraph (a mismatch is what caused docs/REVIEW_2026-07.md F3/F4) — check it every release.
+3. Tag the merged `main` commit and push the tag — **pushing the tag is the publish**:
+   ```bash
+   git tag -a v<ver> -m "Release <ver> — <one-line summary>"
+   git push origin v<ver>
+   ```
+4. Verify: the Release workflow is green; `curl -s -o /dev/null -w '%{http_code}'
+   https://pypi.org/pypi/passiveworkers/<ver>/json` = 200; `pip install passiveworkers==<ver>` in a
+   clean venv runs `pworkers version`.
+
+### Manual fallback (only if the workflow is unavailable)
+
+Do **not** push the `v<ver>` tag until the upload is done and verified — the tag push is what triggers
+the automated path, so tagging while the workflow is healthy double-publishes. If you publish
+manually, push the tag afterwards only as a record and cancel the Release run it triggers.
+
+1. Steps 1–2 above.
+2. `rm -rf dist/ build/ *.egg-info && python -m build`; `twine check dist/*` must PASS;
+   `tar tzf dist/*.tar.gz` — confirm no secrets bundled; smoke-test the wheel in a throwaway venv.
+3. Upload (token never persisted — read from your password manager into the subshell env only):
    ```bash
    TWINE_USERNAME=__token__ \
    TWINE_PASSWORD="$(op item get '<your PyPI token item>' --fields credential --reveal)" \
    twine upload --non-interactive dist/*
    ```
-7. Verify: `curl -s -o /dev/null -w '%{http_code}' https://pypi.org/pypi/passiveworkers/<ver>/json`
-   = 200, and `pip install passiveworkers==<ver>` in a clean venv runs `pworkers`.
-8. **Tag the release** so the published code is checkout-able by tag (one tag per PyPI version):
-   ```bash
-   git tag -a v<ver> -m "Release <ver> — <one-line summary>"
-   git push origin v<ver>
-   ```
-   (Retroactive tags `v0.1.1` / `v0.1.2` were added in the 0.1.3 round on their release commits.)
-
-**Automated alternative (R37):** `.github/workflows/release.yml` runs the test → build →
-`twine check` → PyPI-publish (Trusted Publishing, OIDC, no stored token) → GitHub Release
-sequence automatically on any `git push origin v<ver>` tag. It still needs step 1-2 done and
-committed first, and a one-time Trusted Publisher registration on the `passiveworkers` PyPI
-project (Owner `wikithoughts`, Repo `passiveworkers`, Workflow `release.yml`, Environment
-`pypi`) before its first use. Steps 3-7 above become optional manual verification once that's
-set up — pushing the tag *is* the publish.
+4. Verify as in step 4 above, then tag and push `v<ver>` (cancel the Release run it triggers).
 
 ---
 

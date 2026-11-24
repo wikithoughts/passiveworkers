@@ -254,6 +254,8 @@ function md(t){
   let h=esc(t||'');
   h=h.replace(/^### (.*)$/gm,'<h4>$1</h4>').replace(/^## (.*)$/gm,'<h3>$1</h3>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
   h=h.replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1</b>');
+  h=h.replace(/(^|[\\s(])_([^_\\n]+)_(?=[\\s.,;:)]|$)/gm,'$1<i>$2</i>');
+  h=h.replace(/^- (.*)$/gm,'• $1');
   h=h.replace(/(https?:\\/\\/[^\\s<)\\]]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
   h=h.replace(/\\n{2,}/g,'</p><p>').replace(/\\n/g,'<br>');
   return '<p>'+h+'</p>';
