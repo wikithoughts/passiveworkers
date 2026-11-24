@@ -57,7 +57,7 @@ def _profile() -> dict:
 class Operator:
     def __init__(self):
         self.base = os.environ.get("PW_COORDINATOR", "").rstrip("/")
-        self.token = os.environ.get("PW_TOKEN", "dev-token")
+        self.token = os.environ.get("PW_TOKEN", "")
         if not self.base:
             raise SystemExit("set PW_COORDINATOR (e.g. http://127.0.0.1:8791)")
         self.owner = os.environ.get("PW_OWNER", socket.gethostname())

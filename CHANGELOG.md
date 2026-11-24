@@ -14,6 +14,19 @@ Not yet itemized here: the earlier post-0.5.0 merges #2–#28 (`git log v0.5.0..
 two user-visible ones — the `council`→`passiveworkers` / `pw`→`pworkers` rename (#18) and the
 OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROADMAP.md` Round 39.
 ### Fixed
+- **The coordinator no longer has a `dev-token` default (PW-3, D56).** With `PW_TOKEN` unset it
+  generates a random admin token on first start and persists it `0600` at
+  `~/.passiveworkers/admin_token` (never logged; the startup line names the file). `PW_TOKEN=dev-token`
+  is no longer accepted anywhere: the generated token is used and the startup message says to read it.
+  `pworkers` clients and node agents no longer default their token to `dev-token` either. An explicitly
+  empty `PW_TOKEN=` still disables the admin routes. Upgrade note in `docs/network/SELF_HOST.md`.
+  The token file is rotated (never adopted) if it has any group/other permission bit, and the
+  coordinator refuses a `PW_HOME` that is not ours or is group/world-writable. A non-loopback bind
+  now refuses any weak `PW_TOKEN` (empty, shorter than 24 characters), not just empty/`dev-token`.
+  Token generation/rotation is serialised with an `flock`; on a filesystem that ignores `chmod` a
+  loose token file is refused (set `PW_TOKEN`) unless `PW_ALLOW_LOOSE_TOKEN_FILE=1` keeps it with a
+  "readable by others" warning, instead of rotating on every restart; a 0775 `PW_HOME` whose group is
+  your private group is accepted with a warning (world-writable or foreign-owned is still refused).
 - **`pworkers fetch` refuses auto-loaded and executable file names (PW-5).** Beyond dotfiles, a
   delivered file may no longer be named `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `conftest.py`,
   `sitecustomize.py`, `Makefile`, `package.json`, `*.pth` and similar names that agents, shells,
