@@ -116,3 +116,86 @@ def test_zero_chunk_file_artifact_is_empty_and_pays_nothing(store):
         assert out["ok"] is False and "empty deliverable" in out["error"]
     assert _snapshot(store) == pre and store.job_status(j["job_id"]) == "assisting"
     assert store.ledger.conservation_ok()
+
+
+# ---- PW-4 re-review: file artifacts must carry real, size-consistent bytes ----
+import hashlib
+
+
+def _artifact(size, chunks, **extra):
+    from passiveworkers import artifacts as A
+    return A.wrap_artifact({"name": "x", "size": size, "chunk_size": 262144, "chunks": chunks,
+                            "root": A.manifest_root(chunks), **extra})
+
+
+def _upload(store, job_id, data):
+    h = hashlib.sha256(data).hexdigest()
+    assert store.put_blob(job_id, h, data)["ok"]
+    return h
+
+
+def _assert_refused_unchanged(store, j, tid, deliverable, needle="empty deliverable"):
+    pre = _snapshot(store)
+    out = store.deliver_assisted(tid, "bobnode", deliverable)
+    assert out["ok"] is False and needle in out["error"], out
+    assert _snapshot(store) == pre and store.job_status(j["job_id"]) == "assisting"
+    assert store.ledger.conservation_ok()
+
+
+def test_empty_blob_chunk_artifact_pays_nothing(store):
+    j, tid = _claimed(store)
+    h = _upload(store, j["job_id"], b"")          # sha256(b"") — put_blob accepts zero-length
+    assert h == hashlib.sha256(b"").hexdigest()
+    _assert_refused_unchanged(store, j, tid, _artifact(0, [h]))
+    _assert_refused_unchanged(store, j, tid, _artifact(0, [h, h]))
+    _assert_refused_unchanged(store, j, tid, _artifact(5, [h]))      # declared size, empty bytes
+
+
+def test_empty_chunk_mixed_with_real_chunk_refused(store):
+    j, tid = _claimed(store)
+    e = _upload(store, j["job_id"], b"")
+    r = _upload(store, j["job_id"], b"abc")
+    _assert_refused_unchanged(store, j, tid, _artifact(3, [r, e]))
+
+
+def test_artifact_size_must_match_stored_bytes(store):
+    j, tid = _claimed(store)
+    h = _upload(store, j["job_id"], b"abc")
+    _assert_refused_unchanged(store, j, tid, _artifact(999_999, [h]), "size")
+    _assert_refused_unchanged(store, j, tid, _artifact(2, [h]), "size")
+    _assert_refused_unchanged(store, j, tid, _artifact(0, [h]), "empty deliverable")
+
+
+def test_consistent_artifact_is_paid_once(store):
+    j, tid = _claimed(store)
+    a = _upload(store, j["job_id"], b"hello ")
+    b = _upload(store, j["job_id"], b"world")
+    assert store.deliver_assisted(tid, "bobnode", _artifact(11, [a, b]))["ok"]
+    assert store.ledger.accounts["bob"].balance == 150.0 and store.ledger.conservation_ok()
+
+
+def test_encrypted_artifact_size_is_plaintext_size(store):
+    # ciphertext is longer than the plaintext the manifest declares (D23) — must still pay
+    j, tid = _claimed(store)
+    h = _upload(store, j["job_id"], b"x" * 60)                 # 60 ciphertext bytes
+    assert store.deliver_assisted(tid, "bobnode", _artifact(30, [h], encrypted=True))["ok"]
+    assert store.ledger.accounts["bob"].balance == 150.0
+
+
+def test_encrypted_artifact_cannot_declare_more_than_stored(store):
+    j, tid = _claimed(store)
+    h = _upload(store, j["job_id"], b"x" * 10)
+    _assert_refused_unchanged(store, j, tid, _artifact(30, [h], encrypted=True), "size")
+
+
+@pytest.mark.parametrize("blank", ["⠀", "ㅤ", "ᅟ", "ᅠ", "ﾠ", ".", "-", "_",
+                                   " . ", "\x00", "\x00​"])
+def test_more_blank_lookalikes_refused(store, blank):
+    j, tid = _claimed(store)
+    _assert_refused_unchanged(store, j, tid, blank)
+
+
+@pytest.mark.parametrize("ok", ["a", "ok", "..", "a.", "0", "é", "日本"])
+def test_real_short_text_still_pays(store, ok):
+    _, tid = _claimed(store)
+    assert store.deliver_assisted(tid, "bobnode", ok)["ok"]

@@ -30,11 +30,23 @@ from passiveworkers.net.config import JOB_TYPES, pool_for
 from passiveworkers.sanitize import sanitize_brief
 
 
+# Invisible-or-empty-looking characters that are not whitespace/control/format by Unicode category.
+_BLANK_LOOKALIKES = frozenset("⠀ㅤᅟᅠﾠ")
+_BLANK_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Cn", "Co", "Cs"})
+_FILLER_ONLY = frozenset({".", "-", "_"})
+_EMPTY_ERROR = "empty deliverable — nothing to pay for; deliver real content"
+
+
 def _is_blank(text: str) -> bool:
-    """True for an empty / whitespace-only deliverable (D56 / PW-4). Invisible format characters
-    (zero-width space, BOM, ...: Unicode category Cf) count as blank too, else a lone ZWSP would
-    pass a plain `.strip()` check and release the pool for nothing."""
-    return all(ch.isspace() or unicodedata.category(ch) == "Cf" for ch in text or "")
+    """True for an empty / whitespace-only deliverable (D56 / PW-4). This is a HEURISTIC, not a
+    quality gate: anyone can type 'asdf'. It only closes the cheap "looks empty" cases: whitespace,
+    control and invisible format chars (ZWSP, BOM: a plain `.strip()` misses them), unassigned /
+    private / surrogate code points, a few blank-glyph characters (braille blank, Hangul fillers),
+    and a lone '.', '-' or '_' once blanks are removed. Real short text ('a', '..', '0') passes."""
+    visible = "".join(ch for ch in (text or "")
+                      if not (ch.isspace() or ch in _BLANK_LOOKALIKES
+                              or unicodedata.category(ch) in _BLANK_CATEGORIES))
+    return visible == "" or visible in _FILLER_ONLY
 
 
 class _AssistedMixin(_StoreProtocol):
@@ -252,8 +264,7 @@ class _AssistedMixin(_StoreProtocol):
             # refunds the asker's hold on expiry. Placed after the ownership/status checks so it
             # never masks those errors.
             if _is_blank(deliverable):
-                return {"ok": False,
-                        "error": "empty deliverable — nothing to pay for; deliver real content"}
+                return {"ok": False, "error": _EMPTY_ERROR}
             # if it's a file artifact, refuse to pay unless every chunk was actually uploaded
             from passiveworkers.artifacts import read_artifact, verify_manifest
             manifest = read_artifact(deliverable)
@@ -261,10 +272,23 @@ class _AssistedMixin(_StoreProtocol):
                 # a zero-chunk manifest is an empty file — the same "paid for nothing" case as an
                 # empty text deliverable (verify_manifest allows it and blobs_present([]) is vacuous).
                 if isinstance(manifest.get("chunks"), list) and not manifest["chunks"]:
-                    return {"ok": False,
-                            "error": "empty deliverable — nothing to pay for; deliver real content"}
+                    return {"ok": False, "error": _EMPTY_ERROR}
                 if not verify_manifest(manifest) or not self.blobs_present(t["job_id"], manifest["chunks"]):
                     return {"ok": False, "error": "file incomplete — upload all chunks before delivering"}
+                # The declared size must be backed by real stored bytes: no zero-length chunk
+                # (sha256(b"") uploads fine), size > 0, and the stored bytes match the manifest.
+                # An encrypted manifest declares the PLAINTEXT size while the blobs are ciphertext
+                # (longer), so there the stored total must be >= the declared size.
+                lens = self.blob_lengths(t["job_id"], manifest["chunks"])
+                if manifest["size"] <= 0 or min(lens) <= 0:
+                    return {"ok": False, "error": _EMPTY_ERROR}
+                stored = sum(lens)
+                size_ok = stored >= manifest["size"] if manifest.get("encrypted") \
+                    else stored == manifest["size"]
+                if not size_ok:
+                    return {"ok": False,
+                            "error": f"file size mismatch — manifest declares {manifest['size']} "
+                                     f"bytes but {stored} were uploaded"}
             result = {"text": deliverable}
             if signature and signer_pub:   # D23: operator's signature over the deliverable
                 result["signature"] = signature[:200]
@@ -332,6 +356,16 @@ class _AssistedMixin(_StoreProtocol):
             ok = self.conn.execute("SELECT 1 FROM blobs WHERE hash=? AND job_id=?",
                                    (blob_hash, job_id)).fetchone() is not None
             return {"ok": ok, "hash": blob_hash} if ok else {"ok": False, "error": "not stored"}
+
+    def blob_lengths(self, job_id: str, hashes: list) -> list:
+        """Stored byte length of each hash (in order, repeats kept) for this job; 0 if missing."""
+        with self.lock:
+            out = []
+            for h in hashes:
+                row = self.conn.execute("SELECT LENGTH(data) n FROM blobs WHERE hash=? AND job_id=?",
+                                        (h, job_id)).fetchone()
+                out.append(int(row["n"]) if row and row["n"] else 0)
+            return out
 
     def blobs_present(self, job_id: str, hashes: list) -> bool:
         """True iff every hash is stored for this job (used to gate payment on full upload)."""
