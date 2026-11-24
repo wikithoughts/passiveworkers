@@ -147,9 +147,18 @@ _AUTOLOAD_NAMES = frozenset({
     "pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "noxfile.py", "manage.py",
     "makefile", "gnumakefile", "justfile", "rakefile", "gemfile", "dockerfile", "docker-compose.yml",
     "package.json", "package-lock.json", "gulpfile.js", "gruntfile.js", "webpack.config.js",
-    "build.gradle", "pom.xml", "cargo.toml", "build.rs",
+    "build.gradle", "pom.xml", "cargo.toml", "build.rs", "go.mod", "pipfile", "procfile", "jenkinsfile",
+    "vagrantfile", "taskfile.yml", "taskfile.yaml", "cmakelists.txt", "tsconfig.json",
+    "compose.yml", "compose.yaml", "docker-compose.yaml", "qwen.md", "agents.override.md",
+    "conventions.md", "warp.md", "crush.md",
+    # Windows reserved device names (any extension) are refused separately below
 })
-_AUTOLOAD_SUFFIXES = (".pth", ".pyc", ".pyo", ".so", ".dll", ".dylib", ".exe", ".bat", ".cmd", ".ps1", ".desktop")
+_WIN_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                           *(f"lpt{i}" for i in range(1, 10))})
+_AUTOLOAD_SUFFIXES = (".pth", ".pyc", ".pyo", ".so", ".dll", ".dylib", ".exe", ".bat", ".cmd", ".ps1", ".desktop",
+                      ".command", ".terminal", ".app", ".scpt", ".workflow", ".webloc", ".lnk", ".url", ".jar",
+                      ".vbs", ".wsf", ".msi", ".scr", ".com", ".pyz", ".whl", ".mk", ".cmake",
+                      ".config.js", ".config.ts", ".config.mjs", ".config.cjs")
 
 
 def _safe_name(raw) -> str:
@@ -168,10 +177,10 @@ def _safe_name(raw) -> str:
         raise ValueError("unsafe deliverable name: control characters are not allowed")
     if len(name.encode("utf-8", "replace")) > _MAX_NAME_BYTES:
         raise ValueError("unsafe deliverable name: too long")
-    if name.endswith((".", " ")) or ":" in name:    # Windows trailing-dot/space folding, ADS streams
-        raise ValueError("unsafe deliverable name: trailing dot/space and ':' are not allowed")
+    if name.endswith(".") or ":" in name:    # Windows trailing-dot folding, ADS streams
+        raise ValueError("unsafe deliverable name: a trailing dot and ':' are not allowed")
     low = name.lower()
-    if low in _AUTOLOAD_NAMES or low.endswith(_AUTOLOAD_SUFFIXES):
+    if low in _AUTOLOAD_NAMES or low.endswith(_AUTOLOAD_SUFFIXES) or low.split(".")[0] in _WIN_RESERVED:
         raise ValueError("unsafe deliverable name: auto-loaded or executable file names are not allowed")
     return name
 

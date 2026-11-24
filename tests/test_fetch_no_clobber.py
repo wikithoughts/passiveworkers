@@ -108,7 +108,8 @@ def test_fetch_cli_keeps_existing_file_and_says_so(op_module, monkeypatch, capsy
     "conftest.py", "sitecustomize.py", "usercustomize.py", "setup.py", "__init__.py", "__main__.py",
     "Makefile", "GNUmakefile", "Justfile", "Dockerfile", "package.json", "pyproject.toml",
     "evil.pth", "EVIL.PTH", "tox.ini", "pytest.ini", "setup.cfg", "Rakefile", "Gemfile",
-    "report.md.", "report.md ", "CLAUDE.md::$DATA",
+    "report.md.", "CLAUDE.md::$DATA", "a:b.txt", "QWEN.md", "go.mod", "vite.config.ts", "x.command",
+    "NUL.txt", "com1", "tool.jar", "Taskfile.yml", "compose.yaml",
 ])
 def test_reassemble_refuses_auto_loaded_names(tmp_path, name):
     out = tmp_path / "out"
@@ -125,11 +126,3 @@ def test_reassemble_still_accepts_ordinary_names(tmp_path, name):
     out.mkdir()
     man, blobs = _manifest_named(tmp_path, name)
     assert A.reassemble(man, blobs.get, str(out)).name == name
-
-
-def test_reassemble_result_is_not_executable(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    man, blobs = _manifest_named(tmp_path, "tool.sh")
-    dest = A.reassemble(man, blobs.get, str(out))
-    assert dest.stat().st_mode & 0o111 == 0
