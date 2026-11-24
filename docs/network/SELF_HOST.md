@@ -42,7 +42,9 @@ Safety rules for that file (the coordinator enforces them at startup):
   adopted (the startup line says `rotated (was mode 0xxx)`; update clients with the new token).
   Exception: on a filesystem that ignores `chmod` (vfat, some SMB shares or Docker volumes) the bits
   can never be cleared, so the coordinator warns "filesystem does not enforce permissions; token not
-  rotated" and keeps the token. Put `PW_HOME` on a real POSIX filesystem to get the protection.
+  rotated" and keeps the token, unless others can also *write* the file (a planted token cannot be
+  ruled out), in which case it refuses to start. Put `PW_HOME` on a real POSIX filesystem to get the
+  protection. Waiting for the lock is bounded (30 s), after which startup fails instead of hanging.
 - `PW_HOME` must be owned by the coordinator's user and not world-writable. A group-writable `PW_HOME`
   (mode 0775, the Debian/Ubuntu default umask) is accepted only when the group is your own private
   group, with a warning (`chmod g-w` silences it); any other group-writable or foreign-owned directory

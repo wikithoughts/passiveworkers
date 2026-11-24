@@ -103,15 +103,27 @@ _WRITER_WAIT_TRIES = 10     # ONLY when flock is unavailable: the no-hardlink fa
 _WRITER_WAIT_S = 0.1        # empty, then writes it, so wait ~1 s for a concurrent first start
 
 
+_LOCK_TIMEOUT_S = 30.0
+
+
 def _flock_ex(fd: int) -> bool:
-    """Take an exclusive flock on ``fd`` (blocking). False if locking is unsupported here."""
+    """Take an exclusive flock on ``fd``, waiting up to ``_LOCK_TIMEOUT_S`` (a wedged holder must not
+    hang startup forever: that raises, failing closed). False if locking is unsupported here."""
     if fcntl is None:
         return False
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        return True
-    except OSError:
-        return False
+    deadline = time.monotonic() + _LOCK_TIMEOUT_S
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "timed out waiting for the admin token lock (.admin_token.lock in PW_HOME); another "
+                    "coordinator is starting or stuck. Retry, or set a strong PW_TOKEN.") from None
+            time.sleep(0.05)
+        except OSError:
+            return False
 
 
 @contextlib.contextmanager
@@ -224,6 +236,13 @@ def _load_or_create_locked(path: pathlib.Path, locked: bool) -> str:
         if mode & 0o077 and not enforced:
             # The filesystem ignores permissions (vfat/SMB/some docker volumes): the bits will show
             # forever, so rotating would change the token on every restart. Keep it and say so.
+            if mode & 0o022:
+                # Others may be able to WRITE it and we cannot clear that, so a planted token cannot
+                # be ruled out: do not adopt it.
+                raise RuntimeError(
+                    f"{path} is writable by other users and this filesystem does not enforce permissions, "
+                    "so its token cannot be trusted. Move PW_HOME to a POSIX filesystem or set a strong "
+                    "PW_TOKEN.")
             _WARNINGS.append("filesystem does not enforce permissions; token not rotated "
                              f"(keep {path} on a filesystem that does, or set PW_TOKEN)")
             if _valid(existing):

@@ -353,3 +353,32 @@ def test_token_value_never_appears_in_any_output_or_message(tmp_path, monkeypatc
     everything = out.out + out.err + boot.out + boot.err + caplog.text
     for tok in seen + [boot_mod.CONFIG.token]:
         assert tok not in everything
+
+
+def test_no_chmod_filesystem_with_other_writable_token_file_is_refused(tmp_path, monkeypatch):
+    """If the mode cannot be fixed AND others may write the file, a planted token cannot be ruled out:
+    refuse (set PW_TOKEN) instead of adopting. Read-only-for-others (0644) is still kept."""
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    at.resolve(None)
+    p = tmp_path / "admin_token"
+    monkeypatch.setattr(os, "fchmod", lambda fd, mode: None)
+    for mode in (0o666, 0o662, 0o620):
+        os.chmod(p, mode)
+        with pytest.raises(RuntimeError, match="PW_TOKEN"):
+            at.resolve(None)
+    os.chmod(p, 0o644)
+    assert at.resolve(None)
+
+
+def test_lock_wait_is_bounded_and_fails_closed(tmp_path, monkeypatch):
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    monkeypatch.setattr(at, "_LOCK_TIMEOUT_S", 0.3)
+    fd = _hold_lock(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="lock"):
+            at.resolve(None)
+    finally:
+        os.close(fd)
+    assert at.resolve(None)
