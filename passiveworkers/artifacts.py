@@ -138,6 +138,29 @@ def verify_manifest(manifest: dict) -> bool:
 _MAX_NAME_BYTES = 200   # leaves room for ".<name>.<random>.part" and " (n)" inside a 255-byte limit
 
 
+# PW-5: names (compared case-insensitively) that an agent, shell, build tool or interpreter loads or
+# executes automatically from a directory. A delivered file may not take one of them even in a fresh
+# directory: planting `CLAUDE.md` / `conftest.py` / `evil.pth` there is code or instruction injection.
+_AUTOLOAD_NAMES = frozenset({
+    "claude.md", "claude.local.md", "agents.md", "agent.md", "gemini.md", "skill.md", "copilot-instructions.md",
+    "conftest.py", "sitecustomize.py", "usercustomize.py", "setup.py", "__init__.py", "__main__.py",
+    "pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "noxfile.py", "manage.py",
+    "makefile", "gnumakefile", "justfile", "rakefile", "gemfile", "dockerfile", "docker-compose.yml",
+    "package.json", "package-lock.json", "gulpfile.js", "gruntfile.js", "webpack.config.js",
+    "build.gradle", "pom.xml", "cargo.toml", "build.rs", "go.mod", "pipfile", "procfile", "jenkinsfile",
+    "vagrantfile", "taskfile.yml", "taskfile.yaml", "cmakelists.txt", "tsconfig.json",
+    "compose.yml", "compose.yaml", "docker-compose.yaml", "qwen.md", "agents.override.md",
+    "conventions.md", "warp.md", "crush.md",
+    # Windows reserved device names (any extension) are refused separately below
+})
+_WIN_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                           *(f"lpt{i}" for i in range(1, 10))})
+_AUTOLOAD_SUFFIXES = (".pth", ".pyc", ".pyo", ".so", ".dll", ".dylib", ".exe", ".bat", ".cmd", ".ps1", ".desktop",
+                      ".command", ".terminal", ".app", ".scpt", ".workflow", ".webloc", ".lnk", ".url", ".jar",
+                      ".vbs", ".wsf", ".msi", ".scr", ".com", ".pyz", ".whl", ".mk", ".cmake",
+                      ".config.js", ".config.ts", ".config.mjs", ".config.cjs")
+
+
 def _safe_name(raw) -> str:
     """The deliverable's file name, taken from a manifest the OTHER party controls. Refuses (never
     silently rewrites) anything that could address a different file than a plain new one in the
@@ -154,6 +177,11 @@ def _safe_name(raw) -> str:
         raise ValueError("unsafe deliverable name: control characters are not allowed")
     if len(name.encode("utf-8", "replace")) > _MAX_NAME_BYTES:
         raise ValueError("unsafe deliverable name: too long")
+    if name.endswith(".") or ":" in name:    # Windows trailing-dot folding, ADS streams
+        raise ValueError("unsafe deliverable name: a trailing dot and ':' are not allowed")
+    low = name.lower()
+    if low in _AUTOLOAD_NAMES or low.endswith(_AUTOLOAD_SUFFIXES) or low.split(".")[0] in _WIN_RESERVED:
+        raise ValueError("unsafe deliverable name: auto-loaded or executable file names are not allowed")
     return name
 
 

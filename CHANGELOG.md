@@ -14,6 +14,11 @@ Not yet itemized here: the earlier post-0.5.0 merges #2–#28 (`git log v0.5.0..
 two user-visible ones — the `council`→`passiveworkers` / `pw`→`pworkers` rename (#18) and the
 OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROADMAP.md` Round 39.
 ### Fixed
+- **`pworkers fetch` refuses auto-loaded and executable file names (PW-5).** Beyond dotfiles, a
+  delivered file may no longer be named `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `conftest.py`,
+  `sitecustomize.py`, `Makefile`, `package.json`, `*.pth` and similar names that agents, shells,
+  build tools and interpreters load or execute from a directory (case-insensitive), nor end in
+  a dot/space or contain `:`. Ordinary names such as `report.md` are unaffected.
 - **An empty `PW_TOKEN` no longer authenticates the admin routes** (`/admin/enroll`, node
   registration): a missing `X-PW-Token` header was read as `""` and matched an empty configured
   token, so a blank `PW_TOKEN=` on the documented loopback-behind-a-tunnel setup let anyone mint
