@@ -375,7 +375,7 @@ def join(argv: list) -> int:
     url = pos[0].rstrip("/") if pos else ""
     # A token on argv is visible in `ps` and shell history; PW_ENROLL_TOKEN in the environment is the
     # safer way to pass it, so accept it when no positional token is given.
-    token = pos[1] if len(pos) > 1 else os.environ.get("PW_ENROLL_TOKEN", "")
+    token = pos[1] if len(pos) > 1 else ""
 
     state = _load_join()
     if not url:                                   # resume: fall back to the last coordinator joined
@@ -383,6 +383,12 @@ def join(argv: list) -> int:
         if not url:
             raise SystemExit("usage: pworkers join <coordinator-url> <enrollment-token>   (first time)\n"
                              "       pworkers join | pworkers work                              (resume)")
+
+    # Env token only for a FIRST join: with a cached identity the (single-use) token is already spent,
+    # and a lingering PW_ENROLL_TOKEN (systemd EnvironmentFile, .bashrc) must not break resume.
+    _cached = state.get(url, {})
+    if not token and not (_cached.get("node_id") and _cached.get("node_secret")):
+        token = os.environ.get("PW_ENROLL_TOKEN", "")
 
     if token and _is_cleartext_remote(url):
         print(f"  ⚠ {url} is plain http:// to a non-local host — the enrollment token and node "

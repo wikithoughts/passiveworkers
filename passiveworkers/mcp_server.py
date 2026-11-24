@@ -159,6 +159,10 @@ def _library_add_text(path: str) -> str:
             if target == home or target in home.parents:
                 return ("error: refusing to index your whole home directory via MCP — pass a specific "
                         "folder (e.g. ~/Documents) or set PW_LIBRARY_ROOTS to opt in")
+            # hidden top-level dirs under home (~/.ssh, ~/.aws, ~/.gnupg, ~/.config …) hold credentials
+            if target.is_relative_to(home) and target.relative_to(home).parts[0].startswith("."):
+                return ("error: refusing to index a hidden directory under your home (credentials/config "
+                        "live there) via MCP — set PW_LIBRARY_ROOTS to opt in")
         except Exception:
             pass
     try:

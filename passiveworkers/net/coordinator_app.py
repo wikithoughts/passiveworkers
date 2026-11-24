@@ -305,11 +305,17 @@ def _trusted_proxy_client(request: Request) -> str:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             return False
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:   # dual-stack ::ffff:a.b.c.d peer
+            ip = ip.ipv4_mapped
         return any(ip in n for n in nets)
 
     if not trusted(peer):
         return ""
-    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    # A proxy that adds its own X-Forwarded-For as a separate header line (instead of appending) must
+    # not let the client's forged first line win: join every line in order, then walk from the right.
+    headers = request.headers
+    lines = headers.getlist("x-forwarded-for") if hasattr(headers, "getlist") else [headers.get("x-forwarded-for", "")]
+    hops = [h.strip() for line in lines for h in line.split(",") if h.strip()]
     for hop in reversed(hops):
         if not trusted(hop):
             return hop

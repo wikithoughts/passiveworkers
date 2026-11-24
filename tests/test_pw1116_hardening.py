@@ -139,6 +139,36 @@ def test_mcp_library_add_allows_home_when_roots_explicit(monkeypatch, tmp_path):
     assert M._library_add_text(str(tmp_path)).startswith("Indexed")
 
 
+def test_mcp_library_add_refuses_hidden_dirs_under_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PW_LIBRARY_ROOTS", raising=False)
+    (tmp_path / ".ssh").mkdir()
+    assert M._library_add_text(str(tmp_path / ".ssh")).startswith("error: refusing")
+
+
+def test_join_resume_ignores_stale_env_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("PW_LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setenv("PW_ENROLL_TOKEN", "spent")
+    A._save_join({"default": "http://127.0.0.1:1",
+                  "http://127.0.0.1:1": {"node_id": "n1", "node_secret": "s1"}})
+    monkeypatch.setattr(A, "_installed_models", lambda base: None)
+    seen = {}
+
+    class _Stop(Exception):
+        pass
+
+    def fake_run(self):
+        seen.update(token=self.enroll_token, node_id=self.node_id)
+        raise _Stop
+
+    monkeypatch.setattr(A.Agent, "run", fake_run)
+    monkeypatch.setattr(A.signal, "signal", lambda *a, **k: None)
+    with pytest.raises(_Stop):
+        A.join(["join"])
+    assert seen["node_id"] == "n1"           # cached identity reused, no re-register
+    assert os.environ.get("PW_ENROLL_TOKEN") == "spent" or seen["token"] in ("", "spent")
+
+
 # ---------------------------------------------------------------- L7: PW_TRUSTED_PROXIES
 class _Req:
     def __init__(self, host, xff=None):
@@ -154,6 +184,16 @@ def test_trusted_proxies_keys_per_client_behind_loopback_tunnel(monkeypatch):
     # a forged leftmost hop is ignored: the right-most non-proxy hop wins
     assert capp._client_key(_Req("127.0.0.1", "6.6.6.6, 198.51.100.7")) == "198.51.100.7"
     assert capp._client_ip(_Req("127.0.0.1", "6.6.6.6, 198.51.100.7, 127.0.0.1")) == "198.51.100.7"
+
+
+def test_trusted_proxies_handles_ipv4_mapped_peer_and_multiple_xff_lines(monkeypatch):
+    import passiveworkers.net.coordinator_app as capp
+    from starlette.datastructures import Headers
+    monkeypatch.delenv("PW_TRUST_XFF", raising=False)
+    monkeypatch.setenv("PW_TRUSTED_PROXIES", "127.0.0.1")
+    req = _Req("::ffff:127.0.0.1")
+    req.headers = Headers(raw=[(b"x-forwarded-for", b"6.6.6.6"), (b"x-forwarded-for", b"198.51.100.7")])
+    assert capp._client_key(req) == "198.51.100.7"
 
 
 def test_trusted_proxies_ignores_xff_from_untrusted_peer(monkeypatch):
