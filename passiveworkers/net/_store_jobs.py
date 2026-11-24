@@ -394,7 +394,8 @@ class _JobsMixin(_StoreProtocol):
         if not judges:
             snap = self.ledger.snapshot()
             try:
-                if not self._fail_job(job, "no judge node online"):
+                if not self._fail_job(
+                        job, "no judge node online (the asker's own nodes cannot judge their job)"):
                     return
                 self._save_ledger()
                 self.conn.commit()
@@ -524,6 +525,8 @@ class _JobsMixin(_StoreProtocol):
                 if held > 0:
                     # D56: pay out of the escrow taken at creation — the exact amount held, so a
                     # config change since creation can't make settlement over- or under-pay.
+                    if not self._escrow_solvent():   # never draw on other jobs' holds
+                        raise InsufficientCredit("escrow holds less than all open holds")
                     receipt = self.ledger.settle_job(
                         job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
                         worker_pool=pool, judge_id=judge_owner,
@@ -613,6 +616,17 @@ class _JobsMixin(_StoreProtocol):
         # (no-op unless one was declared). After the commit so the parent is durable first.
         self._maybe_chain(job_id, job["asker"], result.get("merged", ""))
 
+    def _escrow_solvent(self) -> bool:
+        """Escrow is ONE pooled account, so refund/settle only check the total. If it holds less than
+        every open hold (assisted pools + council `held`), paying one job out would silently draw down
+        ANOTHER asker's hold and move the shortfall onto them. Refuse any payout until it is repaired."""
+        owed = sum(round(r["pool"] or 0.0, 4) for r in self.conn.execute(
+            "SELECT pool FROM jobs WHERE status IN ('pending_assist','assisting')"))
+        owed += sum(round(r["held"] or 0.0, 4) for r in self.conn.execute(
+            "SELECT held FROM jobs WHERE held > 0 AND status IN ('pending_answers','judging')"))
+        esc = self.ledger.accounts.get("__escrow__")
+        return (esc.balance if esc else 0.0) + 1e-6 >= round(owed, 4)
+
     def _fail_job(self, job: Any, error: str) -> bool:
         """Fail an automated job and refund its D56 escrow hold to the asker EXACTLY ONCE: the refund
         and `held=0` happen together, and only while the job is still open (status guard), so a repeat
@@ -626,6 +640,8 @@ class _JobsMixin(_StoreProtocol):
         held = round(cur["held"] or 0.0, 4)
         if held > 0:
             try:
+                if not self._escrow_solvent():
+                    raise InsufficientCredit("escrow holds less than all open holds (ledger desync)")
                 self.ledger.refund(job["asker"], held)
             except Exception as exc:
                 print(f"[refund] job {job['job_id']}: hold refund failed ({exc}); left open to retry",

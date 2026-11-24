@@ -273,6 +273,22 @@ def test_short_escrow_at_settlement_leaves_job_open_and_refundable(store):
     assert store.ledger.balance("alice") == 100.0 and store.ledger_integrity()["ok"]
 
 
+def test_short_escrow_never_refunds_out_of_another_askers_hold(store):
+    # second review: pooled escrow checks only the total, so a deficit must not move onto another job.
+    _setup(store)
+    a = store.create_job("alice", "q", job_type="chat", minds=1)
+    held_a = _held(store, a["job_id"])
+    store.ledger.accounts[ESCROW].balance -= 1.0            # desync: 1 credit short
+    b = store.create_job("bob", "q", job_type="chat", minds=1)
+    held_b = _held(store, b["job_id"])
+    store.conn.execute("UPDATE jobs SET created=created-10000000 WHERE job_id=?", (a["job_id"],))
+    store.conn.commit()
+    store._reap_once()
+    assert store.job_status(a["job_id"]) == "judging" or store.job_status(a["job_id"]) == "pending_answers"
+    assert store.ledger.balance("alice") == pytest.approx(100 - held_a)   # not refunded from bob's hold
+    assert store.ledger.balance(ESCROW) == pytest.approx(held_a + held_b - 1.0)
+
+
 def test_integrity_flags_a_hold_stranded_on_a_closed_job(store):
     _setup(store)
     j = store.create_job("alice", "q", job_type="chat", minds=1)
