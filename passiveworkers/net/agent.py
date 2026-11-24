@@ -68,7 +68,7 @@ def _fix_hint(exc: Exception) -> str:
 class Agent:
     def __init__(self):
         self.base = _env("PW_COORDINATOR").rstrip("/")
-        self.token = _env("PW_TOKEN", "dev-token")
+        self.token = _env("PW_TOKEN", "")
         if not self.base:
             raise SystemExit("set PW_COORDINATOR (e.g. http://127.0.0.1:8088)")
         host = socket.gethostname()

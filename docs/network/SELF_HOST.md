@@ -28,10 +28,19 @@ pip install -e '.[all]'
 export PW_TOKEN=$(openssl rand -hex 24)   # this is your ADMIN token — keep it secret
 ```
 `PW_TOKEN` gates every write endpoint on the coordinator, including minting enrollment
-tokens for others. Losing it means regenerating and re-inviting everyone. An empty or unset
-`PW_TOKEN` disables the admin routes (they answer 401), and the coordinator warns at startup about a
-token that is empty, `dev-token` or shorter than 24 characters, even on loopback: a tunnel or reverse
-proxy makes loopback public.
+tokens for others. Losing it means regenerating and re-inviting everyone. There is no default token
+(D56): if `PW_TOKEN` is **unset**, the coordinator generates a random one on first start and saves
+it, mode `0600`, at `~/.passiveworkers/admin_token` (`$PW_HOME/admin_token`). It is never printed or
+logged; the startup line names the file, so read it with `cat ~/.passiveworkers/admin_token` and use
+it as `PW_TOKEN` in the `pworkers invite` commands below. The file is reused on every restart.
+
+**Upgrading from a build that defaulted to `dev-token`:** `dev-token` is no longer accepted, on
+loopback or anywhere else. If `PW_TOKEN` is unset or `dev-token`, the coordinator now uses the
+generated token and says so at startup; update any script, `pworkers invite` call or node agent that
+sent `dev-token` to use that token (or set your own `PW_TOKEN`). An explicitly **empty** `PW_TOKEN=`
+still disables the admin routes (they answer 401). The coordinator warns at startup about a token
+that is empty or shorter than 24 characters, even on loopback: a tunnel or reverse proxy makes
+loopback public.
 
 ## 2. Run it — loopback first
 

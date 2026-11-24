@@ -35,11 +35,12 @@ matched on the app-relative path (root_path and trailing slashes stripped), as S
 /jobs and /result also reject over-count bodies that are still under the byte cap (too many items,
 stages, requires keys, result rows, scores, or council points).
 
-Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app
+Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app   (unset → generated 0600 token, D56)
 """
 
 from __future__ import annotations
 
+import dataclasses
 import ipaddress
 import os
 import re
@@ -52,6 +53,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from passiveworkers.net import admin_token as _admin_token
 from passiveworkers.net import geoip
 from passiveworkers.net.app import APP_HTML
 from passiveworkers.net.baseline import generate_baseline
@@ -106,6 +108,18 @@ def _startup_guard() -> None:
               "PW_TOKEN, e.g. `openssl rand -hex 24`.", file=sys.stderr, flush=True)
 
 
+def _resolve_admin_token() -> None:
+    """D56 / PW-3: no guessable default. Unset (or legacy `dev-token`) PW_TOKEN -> a generated, persisted
+    0600 token; the token itself is never printed, only the file that holds it."""
+    global CONFIG
+    token, note = _admin_token.resolve(os.environ.get("PW_TOKEN"))
+    if token != CONFIG.token:
+        CONFIG = dataclasses.replace(CONFIG, token=token)
+    if note:
+        print(f"[coordinator] {note}", file=sys.stderr, flush=True)
+
+
+_resolve_admin_token()
 _startup_guard()
 if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
     # D36 review: trusting X-Forwarded-For for rate-limit keys is only safe behind a reverse proxy
