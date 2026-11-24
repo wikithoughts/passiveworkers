@@ -199,3 +199,14 @@ def test_more_blank_lookalikes_refused(store, blank):
 def test_real_short_text_still_pays(store, ok):
     _, tid = _claimed(store)
     assert store.deliver_assisted(tid, "bobnode", ok)["ok"]
+
+
+@pytest.mark.parametrize("blank", ["️", "͏", "឵", "᠋"])
+def test_invisible_combining_only_refused(store, blank):
+    j, tid = _claimed(store)
+    _assert_refused_unchanged(store, j, tid, blank)
+
+
+def test_unassigned_codepoint_is_not_treated_as_blank():
+    from passiveworkers.net._store_assisted import _is_blank
+    assert not _is_blank("\U0001fac6") and not _is_blank("\U000e0080")   # Unicode-table independent

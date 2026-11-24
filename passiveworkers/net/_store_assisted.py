@@ -32,7 +32,13 @@ from passiveworkers.sanitize import sanitize_brief
 
 # Invisible-or-empty-looking characters that are not whitespace/control/format by Unicode category.
 _BLANK_LOOKALIKES = frozenset("⠀ㅤᅟᅠﾠ")
-_BLANK_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Cn", "Co", "Cs"})
+# Cn (unassigned) is deliberately NOT blank: it depends on the interpreter's Unicode tables, so a
+# real newer emoji would be rejected on an older Python.
+_BLANK_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Co", "Cs"})
+# invisible combining/selector characters (variation selectors, CGJ, Khmer inherent vowels, Mongolian FVS)
+_BLANK_LOOKALIKES = _BLANK_LOOKALIKES | frozenset(
+    [chr(c) for c in range(0xFE00, 0xFE10)] + ["͏", "឴", "឵"]
+    + [chr(c) for c in range(0x180B, 0x1810)])
 _FILLER_ONLY = frozenset({".", "-", "_"})
 _EMPTY_ERROR = "empty deliverable — nothing to pay for; deliver real content"
 
@@ -283,7 +289,7 @@ class _AssistedMixin(_StoreProtocol):
                 if manifest["size"] <= 0 or min(lens) <= 0:
                     return {"ok": False, "error": _EMPTY_ERROR}
                 stored = sum(lens)
-                size_ok = stored >= manifest["size"] if manifest.get("encrypted") \
+                size_ok = stored >= manifest["size"] if manifest.get("encrypted") is True \
                     else stored == manifest["size"]
                 if not size_ok:
                     return {"ok": False,
