@@ -145,3 +145,24 @@ def test_concurrent_first_start_never_sees_a_partial_file(tmp_path):
     assert at._publish_new(p, "y" * 40) is False             # loser leaves the winner's file alone
     assert p.read_text().strip() == "x" * 40
     assert [f.name for f in tmp_path.iterdir()] == ["admin_token"]   # no stray temp files
+
+
+def test_publish_falls_back_when_hard_links_are_unsupported(tmp_path, monkeypatch):
+    import passiveworkers.net.admin_token as at
+
+    def no_link(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(os, "link", no_link)
+    p = tmp_path / "admin_token"
+    assert at._publish_new(p, "x" * 40) is True
+    assert p.read_text().strip() == "x" * 40 and stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert at._publish_new(p, "y" * 40) is False
+    assert [f.name for f in tmp_path.iterdir()] == ["admin_token"]
+
+
+def test_fifo_at_token_path_fails_fast_instead_of_hanging(tmp_path, monkeypatch):
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    os.mkfifo(tmp_path / "admin_token")
+    with pytest.raises(RuntimeError, match="owned by this user|refusing to trust|cannot"):
+        at.resolve(None)

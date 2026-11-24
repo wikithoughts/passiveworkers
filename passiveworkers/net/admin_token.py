@@ -51,6 +51,18 @@ def _publish_new(path: pathlib.Path, tok: str) -> bool:
         return True
     except FileExistsError:
         return False
+    except OSError:
+        # Filesystem without hard links (some FUSE/SMB/volume mounts): fall back to a plain O_EXCL
+        # create. Still never world-readable; only the narrow partial-read window returns.
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "w") as f:
+            f.write(tok + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        return True
     finally:
         os.unlink(tmp)
 
@@ -68,7 +80,8 @@ def _read_trusted(path: pathlib.Path) -> tuple[str, bool]:
     """(content, loose_perms) of the token file, opened without following a symlink and only if it
     is a regular file owned by us; anything else is refused (an attacker-planted token must never be
     adopted as the admin token)."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    # O_NONBLOCK: a planted FIFO must fail the regular-file check below, not hang startup in open().
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
