@@ -244,6 +244,10 @@ class _LedgerMixin(_StoreProtocol):
                     (handle,)).fetchone()
                 if not first or first["node_id"] != node_id:
                     return {"error": "only the first node of this owner may claim", "status": 403}
+                # an enrollment-bound node of this handle is the stronger proof: it alone may claim
+                if self.conn.execute("SELECT 1 FROM nodes WHERE owner=? AND enroll_owner=owner",
+                                     (handle,)).fetchone():
+                    return {"error": "owner is bound by another node's enrollment", "status": 403}
                 # a case/whitespace variant that also holds credit makes the name ambiguous
                 if any(k != handle and k.strip().casefold() == key for k in self.ledger.accounts):
                     return {"error": "ambiguous handle (case variant exists)", "status": 403}

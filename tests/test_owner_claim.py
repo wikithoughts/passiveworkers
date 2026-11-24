@@ -155,6 +155,21 @@ def test_enrolled_unbound_owner_cannot_claim(enrolled):
     assert _claim(c, sec2).status_code == 403
 
 
+def test_unbound_first_node_cannot_preempt_a_bound_node(env):
+    c, capp, _ = env
+    s_attacker = _node(c, "alice")                        # open registration, shared token, no binding
+    tok = c.post("/admin/enroll", json={"owner": "alice", "kind": "node", "grant": 0},
+                 headers=TOK).json()["enroll_token"]
+    import os
+    os.environ["PW_ENROLL"] = "1"
+    try:
+        s_bound = _node(c, "alice", headers={}, extra={"X-Enroll-Token": tok})
+    finally:
+        del os.environ["PW_ENROLL"]
+    assert _claim(c, s_attacker).status_code == 403
+    assert _claim(c, s_bound).status_code == 200
+
+
 def test_enrolled_bound_claim_over_squatter_rotates_secret(enrolled):
     c, capp, _ = enrolled
     squat = c.post("/users", json={"handle": "alice"}).json()["user_secret"]   # open signup, 0 grant
