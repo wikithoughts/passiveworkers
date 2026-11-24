@@ -108,9 +108,11 @@ def test_empty_file_from_a_racing_writer_is_waited_for_not_repaired(tmp_path, mo
         if calls["n"] == 2:                      # the writer finishes mid-wait
             p.write_text(final + "\n")
     monkeypatch.setattr(at.time, "sleep", fake_sleep)
+    monkeypatch.setattr(at, "_flock_ex", lambda fd: False)    # no flock here: the timed wait is the fallback
     tok = at.resolve(None)
     assert tok == final and calls["n"] >= 2
     assert p.read_text().strip() == final
+    assert "locking" in at.startup_note()                     # and the operator is told it is degraded
 
 
 def test_existing_home_must_be_ours_and_not_group_or_world_writable(tmp_path, monkeypatch):
@@ -119,17 +121,122 @@ def test_existing_home_must_be_ours_and_not_group_or_world_writable(tmp_path, mo
     home.mkdir()
     os.chmod(home, 0o777)
     monkeypatch.setenv("PW_HOME", str(home))
-    with pytest.raises(RuntimeError, match="writable by other users"):
+    with pytest.raises(RuntimeError, match="PW_HOME.*writable by other users"):
         at.resolve(None)
     assert not (home / "admin_token").exists()
-    os.chmod(home, 0o775)
-    with pytest.raises(RuntimeError, match="writable by other users"):
+    monkeypatch.setattr(at, "_is_private_group", lambda gid: True)
+    with pytest.raises(RuntimeError, match="PW_HOME.*writable by other users"):   # never world-writable
+        at.resolve(None)
+    monkeypatch.setattr(at, "_is_private_group", lambda gid: False)
+    os.chmod(home, 0o775)                           # shared group: refuse
+    with pytest.raises(RuntimeError, match="PW_HOME.*writable by other users"):
         at.resolve(None)
     os.chmod(home, 0o755)                           # readable by others but not writable: fine
     assert at.resolve(None)
     monkeypatch.setattr(os, "getuid", lambda: os.stat(home).st_uid + 1)
-    with pytest.raises(RuntimeError, match="not owned by this user"):
+    with pytest.raises(RuntimeError, match="PW_HOME.*not owned by this user"):
         at.resolve(None)
+
+
+def test_group_writable_home_is_accepted_for_a_private_group_with_a_warning(tmp_path, monkeypatch):
+    """Debian/Ubuntu user-private-group (umask 002) makes ~/.passiveworkers 0775 with our own group."""
+    import passiveworkers.net.admin_token as at
+    home = tmp_path / "home"
+    home.mkdir()
+    os.chmod(home, 0o775)
+    monkeypatch.setenv("PW_HOME", str(home))
+    monkeypatch.setattr(at, "_is_private_group", lambda gid: gid == os.getgid())
+    assert at.resolve(None)
+    assert "group-writable" in at.startup_note() and str(home) in at.startup_note()
+
+
+def test_private_group_detection(monkeypatch):
+    import grp
+    import pwd
+
+    import passiveworkers.net.admin_token as at
+
+    me = pwd.getpwuid(os.getuid())
+    monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group(("g", "x", g, [me.pw_name])))
+    monkeypatch.setattr(pwd, "getpwall", lambda: [me])
+    assert at._is_private_group(os.getgid()) is True
+    assert at._is_private_group(os.getgid() + 1) is False            # not our primary group
+    monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group(("g", "x", g, [me.pw_name, "other"])))
+    assert at._is_private_group(os.getgid()) is False                # another member
+    monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group(("g", "x", g, [])))
+    other = pwd.struct_passwd(("other", "x", me.pw_uid + 1, os.getgid(), "", "/", "/bin/sh"))
+    monkeypatch.setattr(pwd, "getpwall", lambda: [me, other])
+    assert at._is_private_group(os.getgid()) is False                # another user's primary group
+
+
+def _hold_lock(tmp_path):
+    import fcntl
+    fd = os.open(tmp_path / ".admin_token.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def test_resolve_waits_on_the_lock_not_a_timer(tmp_path, monkeypatch):
+    """A writer (e.g. the no-hardlink fallback) holds the lock while the file is still empty; the
+    reader must wait for the lock — however long — then read the finished token, never replace it."""
+    import threading
+    import time as _t
+
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    (tmp_path / "admin_token").write_text("")
+    os.chmod(tmp_path / "admin_token", 0o600)
+    fd = _hold_lock(tmp_path)
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("tok", at.resolve(None)))
+    t.start()
+    _t.sleep(1.6)                                   # longer than the old 1 s timer
+    assert t.is_alive()                             # still waiting on the lock
+    (tmp_path / "admin_token").write_text("s" * 40 + "\n")
+    os.close(fd)                                    # writer done: releases the lock
+    t.join(5)
+    assert out["tok"] == "s" * 40
+    assert (tmp_path / "admin_token").read_text().strip() == "s" * 40
+
+
+def test_concurrent_rotations_converge_on_one_token(tmp_path, monkeypatch):
+    import threading
+    import time as _t
+
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    at.resolve(None)
+    p = tmp_path / "admin_token"
+    os.chmod(p, 0o644)
+    real = at._replace_private
+
+    def slow(path, tok):
+        _t.sleep(0.15)
+        real(path, tok)
+    monkeypatch.setattr(at, "_replace_private", slow)
+    got = []
+    ts = [threading.Thread(target=lambda: got.append(at.resolve(None))) for _ in range(5)]
+    [t.start() for t in ts]
+    [t.join(10) for t in ts]
+    assert len(got) == 5 and len(set(got)) == 1
+    assert p.read_text().strip() == got[0] and stat.S_IMODE(p.stat().st_mode) == 0o600
+
+
+def test_filesystem_that_ignores_chmod_keeps_the_token_with_a_warning(tmp_path, monkeypatch):
+    """vfat/SMB/some docker volumes always report loose bits: rotating on every restart would break
+    every client, so when fchmod(0600) does not take, keep the token and say so."""
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    first = at.resolve(None)
+    p = tmp_path / "admin_token"
+    os.chmod(p, 0o644)
+    monkeypatch.setattr(os, "fchmod", lambda fd, mode: None)      # the filesystem ignores it
+    again = at.resolve(None)
+    assert again == first                                          # not rotated
+    note = at.startup_note()
+    assert "filesystem does not enforce permissions; token not rotated" in note
+    assert first not in note
+    assert at.resolve(None) == first                               # and stays stable across restarts
 
 
 @pytest.mark.parametrize("junk", ["", "short", "has space in it but is long enough 0123456789\nx"])

@@ -34,6 +34,20 @@ it, mode `0600`, at `~/.passiveworkers/admin_token` (`$PW_HOME/admin_token`). It
 logged; the startup line names the file, so read it with `cat ~/.passiveworkers/admin_token` and use
 it as `PW_TOKEN` in the `pworkers invite` commands below. The file is reused on every restart.
 
+Safety rules for that file (the coordinator enforces them at startup):
+- Generation, rotation and repair are serialised with an `flock` on `$PW_HOME/.admin_token.lock`, so
+  several coordinators starting together all end up with the same token. Without `flock` support the
+  coordinator warns and falls back to unserialised behaviour: start them one at a time.
+- A token file with any group/other permission bit is treated as compromised and **rotated**, not
+  adopted (the startup line says `rotated (was mode 0xxx)`; update clients with the new token).
+  Exception: on a filesystem that ignores `chmod` (vfat, some SMB shares or Docker volumes) the bits
+  can never be cleared, so the coordinator warns "filesystem does not enforce permissions; token not
+  rotated" and keeps the token. Put `PW_HOME` on a real POSIX filesystem to get the protection.
+- `PW_HOME` must be owned by the coordinator's user and not world-writable. A group-writable `PW_HOME`
+  (mode 0775, the Debian/Ubuntu default umask) is accepted only when the group is your own private
+  group, with a warning (`chmod g-w` silences it); any other group-writable or foreign-owned directory
+  is refused with an error naming `PW_HOME`.
+
 **Upgrading from a build that defaulted to `dev-token`:** `dev-token` is no longer accepted, on
 loopback or anywhere else. If `PW_TOKEN` is unset or `dev-token`, the coordinator now uses the
 generated token and says so at startup; update any script, `pworkers invite` call or node agent that
