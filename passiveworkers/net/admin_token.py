@@ -12,6 +12,7 @@ import os
 import pathlib
 import secrets
 import stat
+import time
 
 from passiveworkers.paths import home
 
@@ -76,8 +77,24 @@ def _replace_private(path: pathlib.Path, tok: str) -> None:
         raise
 
 
-def _read_trusted(path: pathlib.Path) -> tuple[str, bool]:
-    """(content, loose_perms) of the token file, opened without following a symlink and only if it
+_WRITER_WAIT_TRIES = 10     # the no-hardlink fallback creates the file empty, then writes it:
+_WRITER_WAIT_S = 0.1        # wait up to ~1 s for a concurrent first start before calling it corrupt
+
+
+def _check_home(directory: pathlib.Path) -> None:
+    """The directory holding the token must be ours and not writable by group/other (otherwise
+    another local user could swap or pre-create the token file)."""
+    st = os.stat(directory)
+    if st.st_uid != os.getuid():
+        raise RuntimeError(f"{directory} is not owned by this user; refusing to keep the admin token "
+                           "there. Use a PW_HOME you own or set a strong PW_TOKEN.")
+    if stat.S_IMODE(st.st_mode) & 0o022:
+        raise RuntimeError(f"{directory} is writable by other users (mode {stat.S_IMODE(st.st_mode):04o}); "
+                           "refusing to keep the admin token there. `chmod 700` it or set a strong PW_TOKEN.")
+
+
+def _read_trusted(path: pathlib.Path) -> tuple[str, int]:
+    """(content, mode) of the token file, opened without following a symlink and only if it
     is a regular file owned by us; anything else is refused (an attacker-planted token must never be
     adopted as the admin token)."""
     # O_NONBLOCK: a planted FIFO must fail the regular-file check below, not hang startup in open().
@@ -87,11 +104,8 @@ def _read_trusted(path: pathlib.Path) -> tuple[str, bool]:
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
             raise RuntimeError(f"{path} is not a regular file owned by this user; refusing to trust it. "
                                "Remove it or set a strong PW_TOKEN.")
-        loose = bool(stat.S_IMODE(st.st_mode) & 0o077)
-        if loose:
-            os.fchmod(fd, 0o600)
         with os.fdopen(os.dup(fd), "r", encoding="utf-8", errors="replace") as f:
-            return f.read().strip(), loose
+            return f.read().strip(), stat.S_IMODE(st.st_mode)
     finally:
         os.close(fd)
 
@@ -99,9 +113,15 @@ def _read_trusted(path: pathlib.Path) -> tuple[str, bool]:
 def _load_or_create(path: pathlib.Path) -> tuple[str, str | None]:
     """(token, note). note describes a first-start generation or a repair, else None."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _check_home(path.parent)
     for _ in range(3):
         try:
-            existing, loose = _read_trusted(path)
+            existing, mode = _read_trusted(path)
+            for _w in range(_WRITER_WAIT_TRIES):
+                if mode & 0o077 or _valid(existing):
+                    break
+                time.sleep(_WRITER_WAIT_S)          # maybe a first start is still writing it
+                existing, mode = _read_trusted(path)
         except FileNotFoundError:
             tok = secrets.token_urlsafe(32)
             if _publish_new(path, tok):
@@ -110,15 +130,18 @@ def _load_or_create(path: pathlib.Path) -> tuple[str, str | None]:
         except OSError as e:   # ELOOP: a symlink sits at the path
             raise RuntimeError(f"{path} cannot be opened safely ({e.strerror}); refusing to trust it. "
                                "Remove it or set a strong PW_TOKEN.") from e
+        if mode & 0o077:
+            # Group/other bits: a writable file may hold a token another user planted, a readable one
+            # is already disclosed. Either way the content is compromised: rotate, never adopt.
+            tok = secrets.token_urlsafe(32)
+            _replace_private(path, tok)
+            return tok, (f"{path} was group/world accessible, so its token is treated as compromised: "
+                         f"rotated (was mode {mode:04o}); a new admin token was saved there (mode 0600)")
         if not _valid(existing):
             tok = secrets.token_urlsafe(32)
             _replace_private(path, tok)
             return tok, f"{path} was empty or malformed; generated a new admin token there (mode 0600)"
-        note = None
-        if loose:
-            note = (f"{path} had loose permission bits; tightened to 0600. If others could read this host, "
-                    "delete the file and restart to rotate the token")
-        return existing, note
+        return existing, None
     raise RuntimeError(f"could not read or create the admin token file {path}")
 
 

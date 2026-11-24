@@ -93,9 +93,9 @@ def _startup_guard() -> None:
     weak = _weak_token_reason(CONFIG.token)
     if weak is None:
         return
-    if not _is_loopback(CONFIG.host) and CONFIG.token in ("", "dev-token"):
+    if not _is_loopback(CONFIG.host):
         raise RuntimeError(
-            f"refusing to bind {CONFIG.host} with a weak PW_TOKEN. Set a strong PW_TOKEN, "
+            f"refusing to bind {CONFIG.host} with a weak PW_TOKEN ({weak}). Set a strong PW_TOKEN, "
             "or bind 127.0.0.1 and front it with a tunnel/reverse proxy.")
     if CONFIG.token == "":
         print("[coordinator] WARNING: PW_TOKEN is empty. Every admin route (/admin/enroll, ...) "

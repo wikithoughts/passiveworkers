@@ -20,6 +20,9 @@ OpenAI-compatible inference backend, `PW_INFERENCE_BACKEND` (#7). See `docs/ROAD
   is no longer accepted anywhere: the generated token is used and the startup message says to read it.
   `pworkers` clients and node agents no longer default their token to `dev-token` either. An explicitly
   empty `PW_TOKEN=` still disables the admin routes. Upgrade note in `docs/network/SELF_HOST.md`.
+  The token file is rotated (never adopted) if it has any group/other permission bit, and the
+  coordinator refuses a `PW_HOME` that is not ours or is group/world-writable. A non-loopback bind
+  now refuses any weak `PW_TOKEN` (empty, shorter than 24 characters), not just empty/`dev-token`.
 - **`pworkers fetch` refuses auto-loaded and executable file names (PW-5).** Beyond dotfiles, a
   delivered file may no longer be named `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `conftest.py`,
   `sitecustomize.py`, `Makefile`, `package.json`, `*.pth` and similar names that agents, shells,

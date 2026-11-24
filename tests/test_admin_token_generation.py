@@ -74,14 +74,61 @@ def test_explicit_empty_token_still_disables_admin(tmp_path, monkeypatch):
     assert client.post("/admin/enroll", json=ENROLL, headers={"X-PW-Token": ""}).status_code == 401
 
 
-def test_loose_permission_file_is_tightened(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", [0o666, 0o664, 0o644, 0o640, 0o604])
+def test_loose_permission_file_is_rotated_not_adopted(tmp_path, monkeypatch, mode):
+    """Any group/other bit means the token may be planted (writable) or disclosed (readable)."""
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
     tok, _ = at.resolve(None)
     p = tmp_path / "admin_token"
-    os.chmod(p, 0o644)
+    os.chmod(p, mode)
+    p.write_text("planted-known-token-0123456789abcdef\n")   # what another local user could have left
+    os.chmod(p, mode)
     again, note = at.resolve(None)
-    assert again == tok and stat.S_IMODE(p.stat().st_mode) == 0o600 and "permission" in note
+    assert again != tok and again != "planted-known-token-0123456789abcdef"
+    assert p.read_text().strip() == again and stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert f"rotated (was mode {mode:04o})" in note and str(p) in note
+    assert again not in note and tok not in note
+
+
+def test_empty_file_from_a_racing_writer_is_waited_for_not_repaired(tmp_path, monkeypatch):
+    """The no-hardlink fallback creates the path empty before writing it; a concurrent reader must
+    retry briefly instead of replacing it with a DIFFERENT token."""
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    p = tmp_path / "admin_token"
+    p.write_text("")
+    os.chmod(p, 0o600)
+    final = "w" * 40
+    calls = {"n": 0}
+
+    def fake_sleep(_s):
+        calls["n"] += 1
+        if calls["n"] == 2:                      # the writer finishes mid-wait
+            p.write_text(final + "\n")
+    monkeypatch.setattr(at.time, "sleep", fake_sleep)
+    tok, note = at.resolve(None)
+    assert tok == final and calls["n"] >= 2
+    assert p.read_text().strip() == final
+
+
+def test_existing_home_must_be_ours_and_not_group_or_world_writable(tmp_path, monkeypatch):
+    import passiveworkers.net.admin_token as at
+    home = tmp_path / "home"
+    home.mkdir()
+    os.chmod(home, 0o777)
+    monkeypatch.setenv("PW_HOME", str(home))
+    with pytest.raises(RuntimeError, match="writable by other users"):
+        at.resolve(None)
+    assert not (home / "admin_token").exists()
+    os.chmod(home, 0o775)
+    with pytest.raises(RuntimeError, match="writable by other users"):
+        at.resolve(None)
+    os.chmod(home, 0o755)                           # readable by others but not writable: fine
+    assert at.resolve(None)[0]
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(home).st_uid + 1)
+    with pytest.raises(RuntimeError, match="not owned by this user"):
+        at.resolve(None)
 
 
 @pytest.mark.parametrize("junk", ["", "short", "has space in it but is long enough 0123456789\nx"])
@@ -164,5 +211,5 @@ def test_fifo_at_token_path_fails_fast_instead_of_hanging(tmp_path, monkeypatch)
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
     os.mkfifo(tmp_path / "admin_token")
-    with pytest.raises(RuntimeError, match="owned by this user|refusing to trust|cannot"):
+    with pytest.raises(RuntimeError, match="is not a regular file owned by this user"):
         at.resolve(None)
