@@ -5,7 +5,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source .venv/bin/activate
-export PW_TOKEN=dev-token
+export PW_TOKEN=$(openssl rand -hex 24)   # D56: no default token; this is a throwaway local one
 export PW_HOST=127.0.0.1
 export PW_COORDINATOR=http://127.0.0.1:8088
 export PW_POLL=1

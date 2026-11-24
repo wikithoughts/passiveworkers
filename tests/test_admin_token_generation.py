@@ -111,3 +111,37 @@ def test_clients_have_no_dev_token_default(monkeypatch):
     assert config.CONFIG.token == ""
     from passiveworkers.net.agent import Agent
     assert Agent().token == ""
+
+
+def test_symlinked_token_file_is_refused_not_adopted(tmp_path, monkeypatch):
+    import passiveworkers.net.admin_token as at
+    planted = tmp_path / "planted"
+    planted.write_text("attacker-chosen-known-token-0123456789\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "admin_token").symlink_to(planted)
+    monkeypatch.setenv("PW_HOME", str(home))
+    with pytest.raises(RuntimeError, match="refusing to trust"):
+        at.resolve(None)
+    assert planted.read_text().startswith("attacker")           # target untouched
+
+
+def test_token_file_owned_by_someone_else_is_refused(tmp_path, monkeypatch):
+    import passiveworkers.net.admin_token as at
+    monkeypatch.setenv("PW_HOME", str(tmp_path))
+    at.resolve(None)
+    owner = (tmp_path / "admin_token").stat().st_uid
+    monkeypatch.setattr(os, "getuid", lambda: owner + 1)
+    with pytest.raises(RuntimeError, match="owned by this user"):
+        at.resolve(None)
+
+
+def test_concurrent_first_start_never_sees_a_partial_file(tmp_path):
+    """Publishing is atomic (os.link of a complete temp file), so a racing first start can never read
+    an empty file and 'repair' it with a different token."""
+    import passiveworkers.net.admin_token as at
+    p = tmp_path / "admin_token"
+    assert at._publish_new(p, "x" * 40) is True
+    assert at._publish_new(p, "y" * 40) is False             # loser leaves the winner's file alone
+    assert p.read_text().strip() == "x" * 40
+    assert [f.name for f in tmp_path.iterdir()] == ["admin_token"]   # no stray temp files
