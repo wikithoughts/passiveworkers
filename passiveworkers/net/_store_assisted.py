@@ -84,7 +84,7 @@ class _AssistedMixin(_StoreProtocol):
             self.ledger.open_account(asker)
             # HOLD the reward in escrow now so it can't be spent before the operator delivers.
             try:
-                self.ledger.hold(asker, pool)
+                self.ledger.hold(asker, pool, job_id)
             except InsufficientCredit:
                 self.conn.execute(
                     "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
@@ -309,7 +309,7 @@ class _AssistedMixin(_StoreProtocol):
             # release the escrow hold to the operator (asker was already debited at offer
             # creation, so this can't fail on asker balance and pays exactly once).
             try:
-                self.ledger.release(t["owner"], pool)   # atomic: refuses (mutating nothing) if
+                self.ledger.release(t["owner"], pool, t["job_id"])   # per-job guard; atomic: refuses (mutating nothing) if
             except InsufficientCredit as exc:           # escrow can't cover it — never go negative
                 return {"ok": False, "error": f"settlement refused: {exc}"}
             try:

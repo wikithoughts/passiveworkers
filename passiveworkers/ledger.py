@@ -76,6 +76,11 @@ class Ledger:
     accounts: dict[str, Account] = field(default_factory=dict)
     _granted_total: float = 0.0        # sum of all starter grants (for accounting)
     _job_count: int = 0
+    # Per-job escrow buckets (D56): job_id -> credit held for THAT job. Every escrow payout that names
+    # a job is checked against its own bucket, so a deficit (desync/bug) lands only on the job that
+    # has it and can never be paid out of another job's hold. Payouts with no job_id keep the old
+    # pooled-only check (direct Ledger users and unit tests).
+    _holds: dict[str, float] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ accounts
     def open_account(self, user_id: str, grant_amount: float | None = None) -> Account:
@@ -120,15 +125,22 @@ class Ledger:
         worker_pool: float,
         judge_id: str,
         judge_fee: float,
+        from_escrow: bool = False,
     ) -> Receipt:
         """
         Debit the asker `worker_pool + judge_fee`; split `worker_pool` among helpers
         in proportion to their judge score (ideas compete); pay the judge `judge_fee`.
         Conserved: total debit == total credit.
+
+        `from_escrow=True` (D56): the cost was already moved into escrow by hold() when the job was
+        created, so it is paid OUT OF ESCROW and the asker is not debited a second time. Escrow must
+        cover the cost (checked before anything moves), so a refusal mutates nothing.
         """
         total_cost = self.quote(worker_pool, judge_fee)
         asker = self.accounts[asker_id]
-        if asker.balance < total_cost:
+        if from_escrow:
+            self._check_escrow_covers(total_cost, job_id)
+        elif asker.balance < total_cost:
             raise InsufficientCredit(
                 f"{asker_id} has {asker.balance:.1f} credits but the job costs "
                 f"{total_cost:.1f}. They must HELP on some jobs before asking again."
@@ -155,9 +167,14 @@ class Ledger:
             else:  # last payee absorbs the remainder → exact sum
                 payouts[w] = round(worker_pool - allocated, 4)
 
-        # Apply debit then credits (conserved).
-        asker.balance = round(asker.balance - total_cost, 4)
-        asker.lifetime_spent = round(asker.lifetime_spent + total_cost, 4)
+        # Apply debit then credits (conserved). From escrow, hold() already took the balance and
+        # counted lifetime_spent; draw escrow down instead of the asker.
+        if from_escrow:
+            self._escrow().balance = round(self._escrow().balance - total_cost, 4)
+            self._draw_hold(job_id, total_cost)
+        else:
+            asker.balance = round(asker.balance - total_cost, 4)
+            asker.lifetime_spent = round(asker.lifetime_spent + total_cost, 4)
         asker.jobs_asked += 1
 
         for w, credit in payouts.items():
@@ -195,8 +212,9 @@ class Ledger:
             self.accounts[ESCROW_ID] = Account(user_id=ESCROW_ID, balance=0.0)
         return self.accounts[ESCROW_ID]
 
-    def hold(self, asker_id: str, amount: float) -> None:
-        """Move `amount` from the asker into escrow (raises if they can't afford it)."""
+    def hold(self, asker_id: str, amount: float, job_id: str | None = None) -> None:
+        """Move `amount` from the asker into escrow (raises if they can't afford it). With `job_id`
+        the amount is also recorded in that job's own escrow bucket."""
         a = self.accounts[asker_id]
         amount = round(amount, 4)
         if a.balance < amount:
@@ -206,34 +224,52 @@ class Ledger:
         a.balance = round(a.balance - amount, 4)
         a.lifetime_spent = round(a.lifetime_spent + amount, 4)
         self._escrow().balance = round(self._escrow().balance + amount, 4)
+        if job_id is not None and amount > 0:
+            self._holds[job_id] = round(self._holds.get(job_id, 0.0) + amount, 4)
 
-    def _check_escrow_covers(self, amount: float) -> None:
+    def _draw_hold(self, job_id: str | None, amount: float) -> None:
+        if job_id is not None:
+            left = round(self._holds.get(job_id, 0.0) - amount, 4)
+            if left <= 1e-9:
+                self._holds.pop(job_id, None)
+            else:
+                self._holds[job_id] = left
+
+    def _check_escrow_covers(self, amount: float, job_id: str | None = None) -> None:
         """Escrow may never go negative: it only ever holds credit moved in by hold(), so paying
-        out more than it holds would mint credit (and silently draw down OTHER askers' holds)."""
+        out more than it holds would mint credit (and silently draw down OTHER askers' holds). With
+        `job_id`, the payout must ALSO fit inside that job's own bucket: the single guard every
+        escrow payout (settle, release, refund) goes through."""
+        if job_id is not None and self._holds.get(job_id, 0.0) + 1e-6 < amount:
+            raise InsufficientCredit(
+                f"job {job_id} holds {self._holds.get(job_id, 0.0):.1f} in escrow but {amount:.1f} "
+                "was requested — refusing to pay out of other jobs' holds")
         if self._escrow().balance + 1e-6 < amount:
             raise InsufficientCredit(
                 f"escrow holds {self._escrow().balance:.1f} but {amount:.1f} was requested — "
                 "refusing to pay out credit that was never held")
 
-    def release(self, to_id: str, amount: float) -> None:
+    def release(self, to_id: str, amount: float, job_id: str | None = None) -> None:
         """Pay an escrow hold out to the operator (on delivery). ATOMIC: the payee account and the
         escrow balance are both checked BEFORE anything moves, so a refusal mutates nothing."""
         o = self.accounts[to_id]
         amount = round(amount, 4)
-        self._check_escrow_covers(amount)
+        self._check_escrow_covers(amount, job_id)
         self._escrow().balance = round(self._escrow().balance - amount, 4)
+        self._draw_hold(job_id, amount)
         o.balance = round(o.balance + amount, 4)
         o.lifetime_earned = round(o.lifetime_earned + amount, 4)
 
-    def refund(self, asker_id: str, amount: float) -> None:
+    def refund(self, asker_id: str, amount: float, job_id: str | None = None) -> None:
         """Return an escrow hold to the asker (on offer expiry / failure). ATOMIC: the asker account
         is resolved BEFORE any balance moves, so a missing account raises without first decrementing
         escrow — nothing mutates on failure, so credit is never burned and a caller can safely retry
         (R36 hardening; previously escrow was debited first, so a KeyError destroyed the held credit)."""
         a = self.accounts[asker_id]
         amount = round(amount, 4)
-        self._check_escrow_covers(amount)
+        self._check_escrow_covers(amount, job_id)
         self._escrow().balance = round(self._escrow().balance - amount, 4)
+        self._draw_hold(job_id, amount)
         a.balance = round(a.balance + amount, 4)
         a.lifetime_spent = round(a.lifetime_spent - amount, 4)
 
@@ -244,12 +280,14 @@ class Ledger:
         ledger must roll back with it, or a retry pays/refunds a second time out of another offer's
         hold (ledger and DB diverge)."""
         return ({k: replace(a) for k, a in self.accounts.items()},
-                self._granted_total, self._job_count)
+                self._granted_total, self._job_count, dict(self._holds))
 
     def restore(self, snap: tuple) -> None:
         """Put the ledger back exactly as snapshot() saw it: accounts opened since are dropped, the
         rest get their saved fields back IN PLACE (live Account references stay valid)."""
-        accounts, granted, jobs = snap
+        accounts, granted, jobs, holds = snap
+        self._holds.clear()
+        self._holds.update(holds)
         for k in [k for k in self.accounts if k not in accounts]:
             del self.accounts[k]
         for k, saved in accounts.items():

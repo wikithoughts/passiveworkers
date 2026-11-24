@@ -99,11 +99,33 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
         with self.lock:
             owed = round(sum(round(r["pool"] or 0.0, 4) for r in self.conn.execute(
                 "SELECT pool FROM jobs WHERE status IN ('pending_assist','assisting')")), 4)
+            # D56: council/batch jobs also hold their cost (worker pool + judge fee) from creation
+            # until settlement or refund; `held` is the exact amount still in escrow for the job.
+            owed = round(owed + sum(round(r["held"] or 0.0, 4) for r in self.conn.execute(
+                "SELECT held FROM jobs WHERE held > 0 AND status IN ('pending_answers','judging')")), 4)
+            # a closed job must never still carry a hold: that credit is stranded in escrow
+            stranded = self.conn.execute(
+                "SELECT COUNT(*) c FROM jobs WHERE held > 0 AND status NOT IN ('pending_answers','judging')"
+            ).fetchone()["c"]
             escrow = self.ledger.accounts.get(ESCROW_ID)
             held = escrow.balance if escrow else 0.0
             conserved = self.ledger.conservation_ok()
-            return {"ok": conserved and abs(held - owed) < 1e-6, "ledger_conserved": conserved,
-                    "escrow": held, "outstanding_holds": owed}
+            # per-job buckets must equal what each open job's row says it holds
+            expect: dict[str, float] = {}
+            for r in self.conn.execute(
+                    "SELECT job_id, pool, held, status FROM jobs WHERE status IN "
+                    "('pending_assist','assisting','pending_answers','judging')"):
+                amt = round((r["pool"] if r["status"] in ("pending_assist", "assisting")
+                             else r["held"]) or 0.0, 4)
+                if amt > 0:
+                    expect[r["job_id"]] = amt
+            have = self.ledger._holds
+            mismatched = sorted(k for k in set(expect) | set(have)
+                                if abs(expect.get(k, 0.0) - have.get(k, 0.0)) > 1e-6)
+            return {"ok": (conserved and abs(held - owed) < 1e-6 and not stranded
+                           and not mismatched),
+                    "ledger_conserved": conserved, "escrow": held, "outstanding_holds": owed,
+                    "mismatched_jobs": mismatched}
 
     def conservation_ok(self) -> bool:
         """Store-level conservation: ledger_integrity()["ok"]."""
@@ -151,6 +173,9 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
         if "baseline" not in cols:   # independent single-model baseline (passiveworkers/net/baseline.py)
             self.conn.execute("ALTER TABLE jobs ADD COLUMN baseline TEXT")
+        if "held" not in cols:       # D56: credit currently held in escrow for this job (0 = none)
+            # NULL (not 0) is the explicit legacy marker: a job with no hold was created before D56
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN held REAL")
         if "pool" not in cols:       # per-job worker pool (responder dial: cost scales with minds)
             self.conn.execute("ALTER TABLE jobs ADD COLUMN pool REAL")
         if "type" not in cols:       # job type — async work marketplace (D13); null/legacy = chat

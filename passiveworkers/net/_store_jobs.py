@@ -217,7 +217,11 @@ class _JobsMixin(_StoreProtocol):
             try:
                 self.ledger.open_account(asker)
                 cost = self.ledger.quote(pool, CONFIG.judge_fee)
-                if not self.ledger.can_afford(asker, cost):
+                # D56: HOLD the cost in escrow now (atomic with the job rows below); refuse creation
+                # if the balance can't cover it. Settlement pays out of this hold, never a 2nd debit.
+                try:
+                    self.ledger.hold(asker, cost, job_id)
+                except InsufficientCredit:
                     self.conn.execute(
                         "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council)"
                         " VALUES(?,?,?,?,?,?,?,?,?)",
@@ -234,9 +238,10 @@ class _JobsMixin(_StoreProtocol):
                 then_spec = _norm_then(then)
                 self.conn.execute(
                     "INSERT INTO jobs(job_id,asker,question,status,created,merged,receipt,error,council,"
-                    "pool,type,then_spec,as_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "pool,type,then_spec,as_file,held) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (job_id, asker, question, "pending_answers", _now(), None, None, None, None,
-                     pool, job_type, then_spec, 1 if (as_file and task_behavior(job_type).sharded) else 0))
+                     pool, job_type, then_spec, 1 if (as_file and task_behavior(job_type).sharded) else 0,
+                     cost))
                 beh = task_behavior(job_type)
                 for n in workers:
                     payload: dict[str, Any] = {"question": question, "job_type": job_type}
@@ -383,11 +388,28 @@ class _JobsMixin(_StoreProtocol):
         # flipping it to 'judging' would let it settle and charge after being reported failed.
         if not job or job["status"] != "pending_answers":
             return
-        judges = self.online_nodes(judge_only=True)
+        # D56 (owner decision, e1355): the judge task carries every answer's text, so PREFER judges
+        # owned by someone other than the asker; fall back to the asker's own nodes only when no other
+        # eligible judge exists (keeps lone-operator setups working). The fallback is logged.
+        all_judges = self.online_nodes(judge_only=True)
+        judges = [n for n in all_judges if n["owner"] != job["asker"]]
+        if not judges and all_judges:
+            judges = all_judges
+            print(f"[judge] job {job_id}: no judge owned by another user is online; falling back to "
+                  "the asker's own judge node", flush=True)
         if not judges:
-            self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
-                              ("no judge node online", job_id))
-            self.conn.commit()
+            snap = self.ledger.snapshot()
+            try:
+                if not self._fail_job(job, "no judge node online"):
+                    return
+                self._save_ledger()
+                self.conn.commit()
+            except Exception:
+                try:
+                    self.conn.rollback()
+                finally:
+                    self.ledger.restore(snap)
+                raise
             return
         # Self-dealing guard: prefer a judge that did NOT answer this job.
         answer_owners = {a["owner"] for a in answers}
@@ -438,6 +460,13 @@ class _JobsMixin(_StoreProtocol):
         answers = list(self.conn.execute(
             "SELECT * FROM tasks WHERE job_id=? AND type='answer'", (job_id,)))
         raw_scores = result.get("scores", {}) if isinstance(result.get("scores"), dict) else {}
+        if judge_owner == job["asker"]:
+            # The asker's own node judged (the D56 fallback when no other judge exists). It must not
+            # steer the payout: its scores could zero every other worker and return the whole pool to
+            # the asker's own answer. Ignore them — every answer then gets the neutral default.
+            print(f"[judge] job {job_id}: judged by the asker's own node; its scores are ignored "
+                  "(neutral split)", flush=True)
+            raw_scores = {}
         self_judged = any(a["owner"] == judge_owner for a in answers)
 
         # Compute sanitized per-answer scores (empty/errored answer → 0, no reputation).
@@ -476,9 +505,18 @@ class _JobsMixin(_StoreProtocol):
             return bool((r.get("text") or "").strip())
 
         if answers and not any(_produced(a) for a in answers):
-            self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
-                              ("all answers failed — the job was not charged", job_id))
-            self.conn.commit()
+            snap = self.ledger.snapshot()
+            try:
+                if not self._fail_job(job, "all answers failed — the job was not charged"):
+                    return
+                self._save_ledger()
+                self.conn.commit()
+            except Exception:
+                try:
+                    self.conn.rollback()
+                finally:
+                    self.ledger.restore(snap)
+                raise
             return
 
         score_by_owner: dict[str, float] = {}
@@ -493,14 +531,36 @@ class _JobsMixin(_StoreProtocol):
         snap = self.ledger.snapshot()
         try:
             # FAIL-CLOSED: settle the ledger FIRST. Only on success do we write scores/rep/done.
+            # `held IS NULL` is the explicit LEGACY marker (a job created before D56 took no hold);
+            # any non-NULL value, including 0.0 for a zero-cost job, means the escrow path.
+            escrowed = job["held"] is not None
+            held = round(job["held"] or 0.0, 4)
+            pool = (job["pool"] or 0.0) if escrowed else (job["pool"] or CONFIG.worker_pool)
             try:
-                receipt = self.ledger.settle_job(
-                    job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
-                    worker_pool=job["pool"] if job["pool"] else CONFIG.worker_pool,
-                    judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
+                if escrowed:
+                    # D56: pay out of the escrow taken at creation — the exact amount held, so a
+                    # config change since creation can't make settlement over- or under-pay. The
+                    # ledger checks the payout against THIS job's own escrow bucket, so a deficit
+                    # elsewhere can neither block nor be paid out of this settlement.
+                    receipt = self.ledger.settle_job(
+                        job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
+                        worker_pool=pool, judge_id=judge_owner,
+                        judge_fee=round(held - pool, 4), from_escrow=True)
+                else:   # legacy in-flight job created before D56: nothing was held, charge now
+                    receipt = self.ledger.settle_job(
+                        job_id=job_id, asker_id=job["asker"], score_by_worker=score_by_owner,
+                        worker_pool=pool, judge_id=judge_owner, judge_fee=CONFIG.judge_fee)
             except InsufficientCredit as exc:
-                self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
-                                  (f"settlement failed: {exc}", job_id))
+                if escrowed:
+                    # escrow can't cover a hold it took = a ledger desync. Failing the job here would
+                    # strand the asker's hold (never refunded); leave it open so the reaper's refund
+                    # path retries once the ledger is repaired, and say so loudly.
+                    print(f"[ALARM] settle: job {job_id} escrow short of its own hold ({exc}); "
+                          "left open, other jobs unaffected", flush=True)
+                    return
+                self.conn.execute(
+                    "UPDATE jobs SET status='failed', error=? WHERE job_id=?",
+                    (f"settlement failed: {exc}", job_id))
                 self._save_ledger()
                 self.conn.commit()
                 return
@@ -556,7 +616,7 @@ class _JobsMixin(_StoreProtocol):
                         acct.quality_n += 1
             council = result.get("council") if isinstance(result.get("council"), dict) else None
             self.conn.execute(
-                "UPDATE jobs SET status='done', merged=?, receipt=?, council=? WHERE job_id=?",
+                "UPDATE jobs SET status='done', merged=?, receipt=?, council=?, held=0 WHERE job_id=?",
                 (result.get("merged", ""), json.dumps(receipt.__dict__),
                  json.dumps(council) if council else None, job_id))
             self._save_ledger()
@@ -570,6 +630,48 @@ class _JobsMixin(_StoreProtocol):
         # stage chaining (D35): now that this job is settled+committed, spawn its `then` follow-on
         # (no-op unless one was declared). After the commit so the parent is durable first.
         self._maybe_chain(job_id, job["asker"], result.get("merged", ""))
+
+    _last_alarm = ""
+
+    def _escrow_alarm(self) -> bool:
+        """Loud signal when escrow disagrees with the jobs table (pooled escrow != sum of holds, or a
+        job's bucket != its recorded hold). Payouts are already isolated per job by the ledger; this
+        makes a desync visible instead of silently retrying. Logs once per distinct state. Returns
+        True when something is wrong."""
+        integ = self.ledger_integrity()
+        if integ["ok"]:
+            self._last_alarm = ""
+            return False
+        msg = (f"[ALARM] escrow desync: escrow={integ['escrow']} outstanding_holds="
+               f"{integ['outstanding_holds']} conserved={integ['ledger_conserved']} "
+               f"mismatched_jobs={integ.get('mismatched_jobs')}")
+        if msg != self._last_alarm:
+            self._last_alarm = msg
+            print(msg, flush=True)
+        return True
+
+    def _fail_job(self, job: Any, error: str) -> bool:
+        """Fail an automated job and refund its D56 escrow hold to the asker EXACTLY ONCE: the refund
+        and `held=0` happen together, and only while the job is still open (status guard), so a repeat
+        call (reaper tick, late result) can never refund twice. Returns False — mutating nothing — if
+        the refund can't complete, so the caller leaves the job open to retry. The caller owns the
+        commit and the ledger snapshot/restore."""
+        cur = self.conn.execute("SELECT status, held FROM jobs WHERE job_id=?",
+                                (job["job_id"],)).fetchone()
+        if not cur or cur["status"] not in ("pending_answers", "judging"):
+            return False
+        held = round(cur["held"] or 0.0, 4)
+        if held > 0:
+            try:
+                # checked against THIS job's own escrow bucket, never another job's hold
+                self.ledger.refund(job["asker"], held, job["job_id"])
+            except Exception as exc:
+                print(f"[ALARM] refund: job {job['job_id']} hold refund failed ({exc}); "
+                      "left open to retry, other jobs unaffected", flush=True)
+                return False
+        self.conn.execute("UPDATE jobs SET status='failed', error=?, held=0 WHERE job_id=?",
+                          (error, job["job_id"]))
+        return True
 
     # ------------------------------------------------------------------ failover (D32)
     def _pick_replacement(self, job: Any, task: Any) -> Optional[sqlite3.Row]:
@@ -588,7 +690,13 @@ class _JobsMixin(_StoreProtocol):
         if task["type"] == "judge":
             answer_owners = {r["owner"] for r in self.conn.execute(
                 "SELECT owner FROM tasks WHERE job_id=? AND type='answer'", (job_id,))}
-            cands = [n for n in self.online_nodes(judge_only=True) if n["node_id"] != task["node_id"]]
+            all_c = [n for n in self.online_nodes(judge_only=True) if n["node_id"] != task["node_id"]]
+            # prefer judges not owned by the asker; fall back to the asker's own only if none else
+            cands = [n for n in all_c if n["owner"] != job["asker"]]
+            if not cands and all_c:
+                cands = all_c
+                print(f"[judge] job {job_id}: failover has no judge owned by another user; falling "
+                      "back to the asker's own judge node", flush=True)
             external = [n for n in cands
                         if n["owner"] not in answer_owners and n["node_id"] not in assigned]
             pool_c = external or [n for n in cands if n["node_id"] not in assigned] or cands
@@ -638,6 +746,12 @@ class _JobsMixin(_StoreProtocol):
                 finally:
                     self.ledger.restore(snap)
                 raise
+            # AFTER the pass committed, outside the rollback scope: a failure here must never restore
+            # a pre-refund ledger over refunds that are already saved.
+            try:
+                self._escrow_alarm()   # loud log line while escrow disagrees with the jobs table
+            except Exception as exc:
+                print(f"[ALARM] escrow integrity check itself failed: {exc}", flush=True)
 
     def _reap_pass(self) -> None:
         with self.lock:   # re-entrant; _reap_once owns the rollback on failure
@@ -662,7 +776,7 @@ class _JobsMixin(_StoreProtocol):
                     # double-credit (R36 hardening; was `except: pass` → failed regardless).
                     try:
                         if job["pool"]:
-                            self.ledger.refund(job["asker"], job["pool"])
+                            self.ledger.refund(job["asker"], job["pool"], job["job_id"])
                     except Exception:
                         continue   # refund failed → keep the offer open, retry next tick
                     self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
@@ -679,8 +793,7 @@ class _JobsMixin(_StoreProtocol):
                 jt = job["type"] or "chat"
                 deadline = JOB_TYPES.get(jt, JOB_TYPES["chat"])["deadline_s"]
                 if now - job["created"] > deadline:
-                    self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
-                                      (f"deadline exceeded ({int(deadline)}s)", job["job_id"]))
+                    self._fail_job(job, f"deadline exceeded ({int(deadline)}s)")
                     continue
                 # Per-task FAILOVER (D32): a not-done task whose node went OFFLINE, or whose claim
                 # has been held past the claim timeout WITHOUT a result, is "stalled". Reassign it
@@ -710,6 +823,6 @@ class _JobsMixin(_StoreProtocol):
                         break
                     self._reassign_task(t, repl)
                 if fail:
-                    self.conn.execute("UPDATE jobs SET status='failed', error=? WHERE job_id=?",
-                                      (fail, job["job_id"]))
+                    self._fail_job(job, fail)
+            self._save_ledger()
             self.conn.commit()

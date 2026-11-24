@@ -29,10 +29,10 @@ def test_late_answer_does_not_resurrect_deadline_failed_job(store, monkeypatch):
     import passiveworkers.net._store_jobs as sj
     _reg(store, "op1")
     _reg(store, "judgeop", judge=True)
-    j = store.create_job("alice", "q", job_type="chat", minds=1)
+    balance_before = 100000.0   # the starter grant; D56 holds the cost at creation, expiry must refund it
+    j = store.create_job("alice", "q", job_type="chat", minds=1)   # D56: cost is held at creation
     t = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='answer'",
                            (j["job_id"],)).fetchone()
-    balance_before = store.ledger.balance("alice")
     real_now = sj._now
     monkeypatch.setattr(sj, "_now", lambda: real_now() + 10**9)   # past the job deadline
     store._reap_once()
@@ -43,7 +43,8 @@ def test_late_answer_does_not_resurrect_deadline_failed_job(store, monkeypatch):
     assert store.job_status(j["job_id"]) == "failed"              # NOT flipped to 'judging'
     assert store.conn.execute("SELECT 1 FROM tasks WHERE job_id=? AND type='judge'",
                               (j["job_id"],)).fetchone() is None  # no judge task queued
-    assert store.ledger.balance("alice") == balance_before        # never charged
+    assert store.ledger.balance("alice") == balance_before        # never charged: hold refunded once
+    assert store.ledger_integrity()["ok"]
     assert store.ledger.conservation_ok()
 
 

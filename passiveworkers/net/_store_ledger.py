@@ -44,6 +44,18 @@ class _LedgerMixin(_StoreProtocol):
             led._job_count = d.get("jobs", 0)
             for a in d.get("accounts", []):
                 led.accounts[a["user_id"]] = Account(**a)
+            if "holds" in d:
+                led._holds = {k: float(v) for k, v in d["holds"].items()}
+            else:
+                # A ledger saved before per-job escrow buckets: rebuild them from the jobs table
+                # (open assisted offers hold their pool; open council jobs hold `held`).
+                for r in self.conn.execute(
+                        "SELECT job_id, pool, held, status FROM jobs WHERE status IN "
+                        "('pending_assist','assisting','pending_answers','judging')"):
+                    amt = (r["pool"] if r["status"] in ("pending_assist", "assisting")
+                           else r["held"]) or 0.0
+                    if amt > 0:
+                        led._holds[r["job_id"]] = round(amt, 4)
         return led
 
     def _save_ledger(self) -> None:
@@ -51,6 +63,7 @@ class _LedgerMixin(_StoreProtocol):
             "granted": self.ledger._granted_total,
             "jobs": self.ledger._job_count,
             "accounts": [vars(a) for a in self.ledger.accounts.values()],
+            "holds": self.ledger._holds,
         }
         self.conn.execute(
             "INSERT INTO ledger(id, data) VALUES(1, ?) "

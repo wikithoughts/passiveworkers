@@ -244,7 +244,9 @@ def test_successful_settlement_still_charges_once(store):
     before = _memory(store)
     assert store.complete_task(judge["task_id"], {"scores": {}}, node_id=judge["node_id"])
     assert store.job_status(job_id) == "done"
-    assert store.ledger.balance("alice") < before["alice"]
+    # D56: the charge happened at creation (escrow); settlement pays out of escrow, no second debit
+    assert store.ledger.balance("alice") == before["alice"]
+    assert store.ledger.balance("__escrow__") == 0.0
     assert store.ledger.conservation_ok() and _memory(store) == _persisted(store)
 
 

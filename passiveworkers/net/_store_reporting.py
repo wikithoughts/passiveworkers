@@ -56,6 +56,9 @@ class _ReportingMixin(_StoreProtocol):
                   for r in self.conn.execute("SELECT node_id, machine_id FROM nodes")}
             mkey = lambda nid: hashlib.sha256((nm.get(nid) or nid or "").encode()).hexdigest()[:12]
             label = {"queued": "assigned", "claimed": "thinking", "done": "answered"}
+            # D56: answers stay unreadable until the job is SETTLED (done). A job that failed or
+            # expired had its escrow refunded, so serving its answers would be free compute.
+            settled = job["status"] == "done"
             ans = []
             for a in answers:
                 res = json.loads(a["result"]) if a["result"] else {}
@@ -64,7 +67,7 @@ class _ReportingMixin(_StoreProtocol):
                             "node_key": hashlib.sha256((a["node_id"] or "").encode()).hexdigest()[:12],
                             "machine_key": mkey(a["node_id"]),
                             "status": a["status"], "status_label": label.get(a["status"], a["status"]),
-                            "score": a["score"], "text": res.get("text", ""),
+                            "score": a["score"], "text": res.get("text", "") if settled else "",
                             "tokens": res.get("tokens"), "elapsed_s": res.get("elapsed_s"),
                             # COORDINATOR-computed content hash of this result. It detects later
                             # alteration of the STORED answer; it is NOT a node signature and does
@@ -73,7 +76,8 @@ class _ReportingMixin(_StoreProtocol):
                             # Ed25519 signature on `assisted` deliverables (D23, the `sig` field).
                             "digest": res.get("_digest"),
                             "is_baseline": False})
-            baseline = json.loads(job["baseline"]) if job["baseline"] else None
+            # the single-model baseline is an answer too: serve it only once settled (D56)
+            baseline = json.loads(job["baseline"]) if (job["baseline"] and settled) else None
             done = [x for x in ans if x["status"] == "done" and x["score"] is not None]
             if done and not baseline:   # fallback only: best single COUNCIL answer as baseline
                 max(done, key=lambda x: x["score"])["is_baseline"] = True
@@ -125,7 +129,7 @@ class _ReportingMixin(_StoreProtocol):
                 "job_id": job["job_id"], "asker": job["asker"], "question": job["question"],
                 "type": job["type"] or "chat", "progress": progress,
                 "parent": job["parent"], "child": job["child"],   # stage chain links (D35)
-                "status": job["status"], "error": job["error"], "merged": job["merged"],
+                "status": job["status"], "error": job["error"], "merged": job["merged"] if settled else None,
                 "council": json.loads(job["council"]) if job["council"] else None,
                 "judge_country": jt["country"] if jt else None,
                 "judge_status": jt["status"] if jt else None,
@@ -180,7 +184,9 @@ class _ReportingMixin(_StoreProtocol):
                 "minds": len(nodes),                # worker processes (a computer can run several)
                 "recent_jobs": jobs,
                 "ledger_total": self.ledger.total_credit(),
-                "ledger_conserved": self.ledger.conservation_ok(),
+                # D56 health signal: conservation AND escrow == the sum of per-job holds (the
+                # dashboard turns red on an escrow desync, not just on minted/burned credit)
+                "ledger_conserved": self.ledger_integrity()["ok"],
                 # D48: the raw per-account balance sheet (every handle's balance/reputation/jobs) is
                 # NOT public. Pseudonymous OPERATOR rankings live at /leaderboard; a user reads their
                 # OWN balance at /me. /status stays a public, non-identifying view of the network.
