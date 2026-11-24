@@ -103,3 +103,16 @@ def test_http_blank_deliver_is_409_then_real_deliver_pays(coord_client):
     assert r.status_code == 409
     r = coord_client.post(f"/tasks/{tid}/deliver", headers=nh, json={"deliverable": "ok"})
     assert r.status_code == 200
+
+
+def test_zero_chunk_file_artifact_is_empty_and_pays_nothing(store):
+    from passiveworkers import artifacts as A
+    j, tid = _claimed(store)
+    pre = _snapshot(store)
+    for size in (0, 999_999):
+        m = {"name": "x", "size": size, "chunk_size": 262144, "chunks": [],
+             "root": A.manifest_root([])}
+        out = store.deliver_assisted(tid, "bobnode", A.wrap_artifact(m))
+        assert out["ok"] is False and "empty deliverable" in out["error"]
+    assert _snapshot(store) == pre and store.job_status(j["job_id"]) == "assisting"
+    assert store.ledger.conservation_ok()

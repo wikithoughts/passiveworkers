@@ -258,6 +258,11 @@ class _AssistedMixin(_StoreProtocol):
             from passiveworkers.artifacts import read_artifact, verify_manifest
             manifest = read_artifact(deliverable)
             if manifest is not None:
+                # a zero-chunk manifest is an empty file — the same "paid for nothing" case as an
+                # empty text deliverable (verify_manifest allows it and blobs_present([]) is vacuous).
+                if isinstance(manifest.get("chunks"), list) and not manifest["chunks"]:
+                    return {"ok": False,
+                            "error": "empty deliverable — nothing to pay for; deliver real content"}
                 if not verify_manifest(manifest) or not self.blobs_present(t["job_id"], manifest["chunks"]):
                     return {"ok": False, "error": "file incomplete — upload all chunks before delivering"}
             result = {"text": deliverable}
