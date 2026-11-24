@@ -22,7 +22,7 @@ class Config:
     # Persistence (a single SQLite file → easy to relocate; swap to Postgres later via this seam).
     db_path: str = os.environ.get("PW_DB", "council_coordinator.db")
     # Shared secret required on every write endpoint (node register, poll, submit results).
-    token: str = os.environ.get("PW_TOKEN", "dev-token")
+    token: str = os.environ.get("PW_TOKEN", "")
     # Economy knobs (mirror passiveworkers.coordinator).
     worker_pool: float = float(os.environ.get("PW_WORKER_POOL", "30"))
     judge_fee: float = float(os.environ.get("PW_JUDGE_FEE", "5"))

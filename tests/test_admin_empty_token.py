@@ -53,7 +53,7 @@ def test_startup_guard_quiet_for_strong_token_and_refuses_public_weak(tmp_path, 
     capsys.readouterr()
     mod._startup_guard()
     assert capsys.readouterr().err == ""
-    for weak in ("", "dev-token"):
+    for weak in ("", "dev-token", "x", "password", "a" * 23):
         monkeypatch.setattr(mod, "CONFIG", dataclasses.replace(mod.CONFIG, host="0.0.0.0", token=weak))
         with pytest.raises(RuntimeError, match="refusing to bind"):
             mod._startup_guard()

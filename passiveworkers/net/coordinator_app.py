@@ -36,11 +36,12 @@ matched on the app-relative path (root_path and trailing slashes stripped), as S
 /jobs and /result also reject over-count bodies that are still under the byte cap (too many items,
 stages, requires keys, result rows, scores, or council points).
 
-Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app
+Run:  PW_TOKEN=… python -m passiveworkers.net.coordinator_app   (unset → generated 0600 token, D56)
 """
 
 from __future__ import annotations
 
+import dataclasses
 import ipaddress
 import os
 import re
@@ -53,6 +54,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from passiveworkers.net import admin_token as _admin_token
 from passiveworkers.net import geoip
 from passiveworkers.net.app import APP_HTML
 from passiveworkers.net.baseline import generate_baseline
@@ -92,9 +94,9 @@ def _startup_guard() -> None:
     weak = _weak_token_reason(CONFIG.token)
     if weak is None:
         return
-    if not _is_loopback(CONFIG.host) and CONFIG.token in ("", "dev-token"):
+    if not _is_loopback(CONFIG.host):
         raise RuntimeError(
-            f"refusing to bind {CONFIG.host} with a weak PW_TOKEN. Set a strong PW_TOKEN, "
+            f"refusing to bind {CONFIG.host} with a weak PW_TOKEN ({weak}). Set a strong PW_TOKEN, "
             "or bind 127.0.0.1 and front it with a tunnel/reverse proxy.")
     if CONFIG.token == "":
         print("[coordinator] WARNING: PW_TOKEN is empty. Every admin route (/admin/enroll, ...) "
@@ -107,6 +109,19 @@ def _startup_guard() -> None:
               "PW_TOKEN, e.g. `openssl rand -hex 24`.", file=sys.stderr, flush=True)
 
 
+def _resolve_admin_token() -> None:
+    """D56 / PW-3: no guessable default. Unset (or legacy `dev-token`) PW_TOKEN -> a generated, persisted
+    0600 token; the token itself is never printed, only the file that holds it."""
+    global CONFIG
+    token = _admin_token.resolve(os.environ.get("PW_TOKEN"))
+    if token != CONFIG.token:
+        CONFIG = dataclasses.replace(CONFIG, token=token)
+    note = _admin_token.startup_note()   # built from the file path + event only, never the token
+    if note:
+        print(f"[coordinator] {note}", file=sys.stderr, flush=True)
+
+
+_resolve_admin_token()
 _startup_guard()
 if os.environ.get("PW_TRUST_XFF", "0").lower() in ("1", "true", "yes"):
     # D36 review: trusting X-Forwarded-For for rate-limit keys is only safe behind a reverse proxy

@@ -8,6 +8,7 @@ a module's `requests` with `RequestsShim(client, base)` and its network calls hi
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import threading
 
@@ -73,6 +74,14 @@ class RequestsShim:
 
     def post(self, url, **kw):
         return _ShimResp(self.client.post(self._path(url), **self._kw(kw)))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_pw_home(monkeypatch, tmp_path_factory):
+    """D56: a coordinator started without PW_TOKEN writes a generated admin token under PW_HOME. Keep
+    that (and any other home state) out of the developer's real ~/.passiveworkers."""
+    if "PW_HOME" not in os.environ:
+        monkeypatch.setenv("PW_HOME", str(tmp_path_factory.mktemp("pwhome")))
 
 
 @pytest.fixture(autouse=True)
