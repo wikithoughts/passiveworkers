@@ -102,10 +102,9 @@ def _reg(store, owner, judge=True):
 
 def test_all_errored_job_is_failed_and_asker_not_charged(store):
     _reg(store, "op", judge=True)
-    before = store.ledger.accounts["alice"].balance if "alice" in store.ledger.accounts else None
     j = store.create_job("alice", "answer me", job_type="chat", minds=1)
     jid = j["job_id"]
-    start_balance = store.ledger.accounts["alice"].balance   # charged only at settle, so unchanged
+    start_balance = store.ledger.accounts["alice"].balance + store.ledger.balance("__escrow__")  # D56: held at creation
     # the sole answer comes back errored (worker crashed / returned nothing)
     ans = list(store.conn.execute(
         "SELECT * FROM tasks WHERE job_id=? AND type='answer'", (jid,)))
@@ -121,8 +120,6 @@ def test_all_errored_job_is_failed_and_asker_not_charged(store):
     assert "not charged" in (view["error"] or "")
     # the asker's balance is exactly what it was before settlement — no charge for a blank result
     assert store.ledger.accounts["alice"].balance == start_balance
-    if before is not None:
-        assert store.ledger.accounts["alice"].balance == before
 
 
 def test_failed_register_does_not_burn_enrollment_token(store, monkeypatch):
@@ -183,7 +180,7 @@ def test_all_errored_batch_is_failed_and_not_charged(store):
     _reg(store, "op", judge=True)
     j = store.create_job("alice", "classify each", job_type="shard_map", items=["a", "b"], minds=1)
     jid = j["job_id"]
-    start = store.ledger.accounts["alice"].balance
+    start = store.ledger.accounts["alice"].balance + store.ledger.balance("__escrow__")  # D56: held at creation
     for a in store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='answer'", (jid,)):
         allerr = {"text": "Processed 0/2 items", "results": [
             {"i": 0, "item": "a", "error": True, "output": "(error: ConnectionError)"},

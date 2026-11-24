@@ -120,15 +120,22 @@ class Ledger:
         worker_pool: float,
         judge_id: str,
         judge_fee: float,
+        from_escrow: bool = False,
     ) -> Receipt:
         """
         Debit the asker `worker_pool + judge_fee`; split `worker_pool` among helpers
         in proportion to their judge score (ideas compete); pay the judge `judge_fee`.
         Conserved: total debit == total credit.
+
+        `from_escrow=True` (D56): the cost was already moved into escrow by hold() when the job was
+        created, so it is paid OUT OF ESCROW and the asker is not debited a second time. Escrow must
+        cover the cost (checked before anything moves), so a refusal mutates nothing.
         """
         total_cost = self.quote(worker_pool, judge_fee)
         asker = self.accounts[asker_id]
-        if asker.balance < total_cost:
+        if from_escrow:
+            self._check_escrow_covers(total_cost)
+        elif asker.balance < total_cost:
             raise InsufficientCredit(
                 f"{asker_id} has {asker.balance:.1f} credits but the job costs "
                 f"{total_cost:.1f}. They must HELP on some jobs before asking again."
@@ -155,9 +162,13 @@ class Ledger:
             else:  # last payee absorbs the remainder → exact sum
                 payouts[w] = round(worker_pool - allocated, 4)
 
-        # Apply debit then credits (conserved).
-        asker.balance = round(asker.balance - total_cost, 4)
-        asker.lifetime_spent = round(asker.lifetime_spent + total_cost, 4)
+        # Apply debit then credits (conserved). From escrow, hold() already took the balance and
+        # counted lifetime_spent; draw escrow down instead of the asker.
+        if from_escrow:
+            self._escrow().balance = round(self._escrow().balance - total_cost, 4)
+        else:
+            asker.balance = round(asker.balance - total_cost, 4)
+            asker.lifetime_spent = round(asker.lifetime_spent + total_cost, 4)
         asker.jobs_asked += 1
 
         for w, credit in payouts.items():

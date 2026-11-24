@@ -99,6 +99,10 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
         with self.lock:
             owed = round(sum(round(r["pool"] or 0.0, 4) for r in self.conn.execute(
                 "SELECT pool FROM jobs WHERE status IN ('pending_assist','assisting')")), 4)
+            # D56: council/batch jobs also hold their cost (worker pool + judge fee) from creation
+            # until settlement or refund; `held` is the exact amount still in escrow for the job.
+            owed = round(owed + sum(round(r["held"] or 0.0, 4) for r in self.conn.execute(
+                "SELECT held FROM jobs WHERE held > 0")), 4)
             escrow = self.ledger.accounts.get(ESCROW_ID)
             held = escrow.balance if escrow else 0.0
             conserved = self.ledger.conservation_ok()
@@ -151,6 +155,8 @@ class Store(_JobsMixin, _AssistedMixin, _LedgerMixin, _ReportingMixin):
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
         if "baseline" not in cols:   # independent single-model baseline (passiveworkers/net/baseline.py)
             self.conn.execute("ALTER TABLE jobs ADD COLUMN baseline TEXT")
+        if "held" not in cols:       # D56: credit currently held in escrow for this job (0 = none)
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN held REAL DEFAULT 0")
         if "pool" not in cols:       # per-job worker pool (responder dial: cost scales with minds)
             self.conn.execute("ALTER TABLE jobs ADD COLUMN pool REAL")
         if "type" not in cols:       # job type — async work marketplace (D13); null/legacy = chat
