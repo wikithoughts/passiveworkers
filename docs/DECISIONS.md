@@ -1667,9 +1667,11 @@ letters or inside a delimiter, and ZWNJ outside Arabic script are stripped; a ru
 kept forms.
 
 ## D56 — Credit-ledger semantics: hold at creation, node-earned credit, empty delivery, dev token (PW-1116, 2026-11-24)
-**Status:** PROPOSED — owner decision needed. This entry records current behaviour and options only;
-no ledger or auth code changes with it. The ledger can represent value, and D1 (no token, no
-tradeable credit) and D4 are load-bearing, so each item below waits for an explicit owner choice.
+**Status:** DECIDED 2026-11-24 by the owner (all four items answered YES, Wiki item 72, event e1315):
+PW-1 option 1, PW-2 option 1 with its safety condition, PW-3 option 2, PW-4 option 1 (details in the
+"Decision" section at the end). This entry is docs-only: no ledger or auth code changes with it. The
+implementation of each item ships as its own PR (ledger and auth changes need their own review). The
+option analysis below is kept as the record of what was weighed and rejected.
 Source: the PW-1116 review (items PW-1 to PW-4). All `file:line` references are on `main` at fba4a34.
 
 ### PW-1 — No credit hold at job creation, and answers readable before settlement
@@ -1703,9 +1705,8 @@ extracts unpaid compute (a spam/sybil lever, bounded only by `PW_RL_JOBS`, defau
    `job_view` until `status == "done"`. Trade-off: trivial and no ledger change, but it removes live
    progress/"thinking" visibility, doesn't stop a failed settlement from wasting worker time, and
    would break the shareable-result model for in-progress jobs.
-**Recommended default: option 1**, plus option 3's redaction only for jobs whose settlement failed
-(applied in `job_view`, before `get_job` redacts `error` for non-askers). Needs owner sign-off because it changes
-who is charged and when.
+**Recommended default (adopted): option 1**, plus option 3's redaction only for jobs whose settlement
+failed (applied in `job_view`, before `get_job` redacts `error` for non-askers).
 
 ### PW-2 — Node-earned credit is stranded
 **Current behaviour.** A node's earnings are credited to its *owner handle* in the ledger
@@ -1734,7 +1735,7 @@ ask a question: `register_user("alice")` returns "handle taken", and she has no 
    (D47) and needs a migration for existing owner-only accounts.
 3. *Do nothing; document that node owners and askers are separate accounts.* Trade-off: zero risk, but
    contradicts D6's dual-role pitch, and earned credit is permanently unusable.
-**Recommended default: option 1, with a safety condition.** A node's `owner` is a self-declared string:
+**Recommended default (adopted): option 1, with a safety condition.** A node's `owner` is a self-declared string:
 without enrollment, `/nodes/register` needs only the shared `PW_TOKEN` (`coordinator_app.py:466-486`,
 `register_node` checks only reserved handles), so a node claiming `owner=<an existing user>` could mint a
 second secret and spend that user's balance. Claim must therefore be allowed only when the handle has
@@ -1757,9 +1758,10 @@ node registration).
 **Options.** (1) Refuse to start with `dev-token` or an empty token on any bind; require an explicit
 `PW_TOKEN` (local demos set one, or pass `--insecure-dev`). (2) Generate and print a random token on
 first start when none is set (persisted `0600`). (3) Keep the warning only.
-**Owner question; recommended default: option 2** (no default token exists at all; zero-config demos
-keep working and nothing guessable is ever live). Option 1 is acceptable if you prefer to fail closed.
-Not implemented: it is an auth change and the startup guard is on AGENTS.md's never-weaken list.
+**Recommended default (adopted): option 2** (no default token exists at all; zero-config demos
+keep working and nothing guessable is ever live). Option 1 was the fail-closed alternative and is not chosen.
+Not implemented here: it is an auth change and the startup guard is on AGENTS.md's never-weaken list,
+so the code lands in a separate PR.
 
 ### PW-4 — An empty assisted delivery releases the pool
 **Current behaviour.** `POST /tasks/{id}/deliver` accepts `deliverable` of any length including `""`
@@ -1782,11 +1784,21 @@ route (D24) only affects reputation afterwards, and credit is not refunded.
    conservation tests.
 3. *Leave as is; rely on reputation.* Trade-off: no change, but one bad operator can burn real asker
    credit repeatedly.
-**Recommended default: option 1 now** (reject empty/whitespace), with option 2 left as a separate
-future decision.
+**Recommended default (adopted): option 1 now** (reject empty/whitespace), with option 2 left as a
+separate future decision.
 
-### Owner questions (one pass)
-- PW-1: hold credit at creation via the escrow pattern? Default **yes (option 1)**.
-- PW-2: add a one-time owner-claim route so node earnings are spendable? Default **yes (option 1)**.
-- PW-3: remove the `dev-token` default (generate a random token on first start)? Default **yes (option 2)**.
-- PW-4: reject empty/whitespace assisted deliverables before paying? Default **yes (option 1)**.
+### Decision (owner, 2026-11-24, Wiki item 72 event e1315)
+- **PW-1 — YES, option 1.** Hold the requester's credit in escrow at job creation (the assisted-escrow
+  pattern), pay out of escrow at settlement, and refund exactly once on failure, expiry or
+  all-answers-failed. Settlement-failed jobs do not serve answers. Conservation tests extend to cover
+  every failure branch.
+- **PW-2 — YES, option 1.** Add a one-time owner-claim route so node-earned credit becomes spendable.
+  It is allowed only when the handle has no `users` row, or when enrollment binds the owner; one claim
+  per handle; a node registered under an existing user's handle cannot claim.
+- **PW-3 — YES, option 2.** Drop the `dev-token` default. When `PW_TOKEN` is unset, generate a random
+  token on first start, print it once and persist it `0600`. No guessable token is ever live.
+- **PW-4 — YES, option 1.** Reject an empty or whitespace-only assisted deliverable with 409 before
+  `ledger.release`, leaving the offer claimed so it can be retried or refunded on expiry. The
+  refund-on-bad-rating window (option 2) stays a separate future decision.
+
+No question remains open. Implementation PRs follow this record; none is part of it.
