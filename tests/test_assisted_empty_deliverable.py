@@ -207,6 +207,40 @@ def test_invisible_combining_only_refused(store, blank):
     _assert_refused_unchanged(store, j, tid, blank)
 
 
-def test_unassigned_codepoint_is_not_treated_as_blank():
+def test_unassigned_non_noncharacter_codepoint_is_not_treated_as_blank():
+    # unassigned (Cn) code points that are NOT permanent noncharacters stay accepted: whether they
+    # are assigned depends on the interpreter's Unicode tables (a newer emoji on an older Python)
     from passiveworkers.net._store_assisted import _is_blank
     assert not _is_blank("\U0001fac6") and not _is_blank("\U000e0080")   # Unicode-table independent
+
+
+@pytest.mark.parametrize("blank", ["￾", "￿", "﷐", "﷯",
+                                   "￾￿", " ﷐ ", "﷕."])
+def test_noncharacter_only_refused(store, blank):
+    # U+FFFE, U+FFFF and U+FDD0-U+FDEF are permanent noncharacters (never assigned in any Unicode
+    # version), so treating them as blank does not depend on the interpreter's Unicode tables
+    j, tid = _claimed(store)
+    _assert_refused_unchanged(store, j, tid, blank)
+
+
+def test_every_permanent_bmp_noncharacter_is_blank():
+    from passiveworkers.net._store_assisted import _is_blank
+    for c in [0xFFFE, 0xFFFF, *range(0xFDD0, 0xFDF0)]:
+        assert _is_blank(chr(c)), hex(c)
+    assert not _is_blank("﷏") and not _is_blank("ﷰ")   # range neighbours are real text
+    assert not _is_blank("a￾")                              # real text beside one still pays
+
+
+@pytest.mark.parametrize("flag", ["yes", 1])
+def test_non_bool_encrypted_flag_uses_exact_size(store, flag):
+    # only `encrypted: true` relaxes the size check to stored >= declared; a truthy non-bool
+    # ("yes", 1) must not, so stored bytes > declared size is a size mismatch
+    j, tid = _claimed(store)
+    h = _upload(store, j["job_id"], b"x" * 60)
+    _assert_refused_unchanged(store, j, tid, _artifact(30, [h], encrypted=flag), "size")
+
+
+def test_encrypted_artifact_zero_size_refused_as_empty(store):
+    j, tid = _claimed(store)
+    h = _upload(store, j["job_id"], b"x" * 60)
+    _assert_refused_unchanged(store, j, tid, _artifact(0, [h], encrypted=True), "empty deliverable")

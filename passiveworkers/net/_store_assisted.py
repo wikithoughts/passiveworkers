@@ -39,6 +39,10 @@ _BLANK_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Co", "Cs"})
 _BLANK_LOOKALIKES = _BLANK_LOOKALIKES | frozenset(
     [chr(c) for c in range(0xFE00, 0xFE10)] + ["͏", "឴", "឵"]
     + [chr(c) for c in range(0x180B, 0x1810)])
+# the BMP's permanent noncharacters (U+FFFE, U+FFFF, U+FDD0-U+FDEF): Cn, but guaranteed never to be
+# assigned in any Unicode version, so unlike the rest of Cn this is interpreter-table independent
+_BLANK_LOOKALIKES = _BLANK_LOOKALIKES | frozenset(
+    ["￾", "￿"] + [chr(c) for c in range(0xFDD0, 0xFDF0)])
 _FILLER_ONLY = frozenset({".", "-", "_"})
 _EMPTY_ERROR = "empty deliverable — nothing to pay for; deliver real content"
 
@@ -46,8 +50,9 @@ _EMPTY_ERROR = "empty deliverable — nothing to pay for; deliver real content"
 def _is_blank(text: str) -> bool:
     """True for an empty / whitespace-only deliverable (D56 / PW-4). This is a HEURISTIC, not a
     quality gate: anyone can type 'asdf'. It only closes the cheap "looks empty" cases: whitespace,
-    control and invisible format chars (ZWSP, BOM: a plain `.strip()` misses them), unassigned /
-    private / surrogate code points, a few blank-glyph characters (braille blank, Hangul fillers),
+    control and invisible format chars (ZWSP, BOM: a plain `.strip()` misses them), private-use /
+    surrogate code points, the BMP noncharacters (other unassigned code points still pass), a few
+    blank-glyph characters (braille blank, Hangul fillers),
     and a lone '.', '-' or '_' once blanks are removed. Real short text ('a', '..', '0') passes."""
     visible = "".join(ch for ch in (text or "")
                       if not (ch.isspace() or ch in _BLANK_LOOKALIKES
