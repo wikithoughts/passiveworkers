@@ -1676,13 +1676,13 @@ Source: the PW-1116 review (items PW-1 to PW-4). All `file:line` references are 
 **Current behaviour.** An automated job only *checks* the asker's balance at creation
 (`passiveworkers/net/_store_jobs.py:220`, `can_afford`) and debits nothing. The charge happens once,
 at settlement (`_store_jobs.py:497`, `settle_job`, which re-checks the balance and raises
-`InsufficientCredit`). The assisted path is the only one that holds, via `ledger.hold`
+`InsufficientCredit` at `ledger.py:129-135`). The assisted path is the only one that holds, via `ledger.hold`
 (`_store_assisted.py:61`). Separately, `GET /jobs/{id}` returns each answer's `text` and the merged
 deliverable to anyone who has the job id (`coordinator_app.py:802-815`, `_store_reporting.py:67,128`);
 only the receipt and asker are redacted. That is deliberate (the capability-URL model), but it means
 results are visible while the job is still unsettled.
 
-**Failure scenario.** An asker with 10 credits creates three 8-credit jobs in a row. Each passes
+**Failure scenario.** An asker with 10 credits (needs an enrollment grant; an un-enrolled signup gets 0) creates three 8-credit jobs in a row. Each passes
 `can_afford` (nothing is held). The first settles and leaves 2 credits. The second and third reach
 `settle_job`, which raises `InsufficientCredit` (`_store_jobs.py:501-503`): the job is marked failed
 with "settlement failed", the workers and judge are paid nothing, and their work, now readable at
@@ -1693,7 +1693,7 @@ extracts unpaid compute (a spam/sybil lever, bounded only by `PW_RL_JOBS`, defau
 1. *Hold at creation (extend the assisted escrow pattern).* `ledger.hold(asker, cost)` in `create_job`,
    `settle_job` pays out of escrow, and refund on fail/expiry/all-answers-failed. Trade-off: closes
    the free-compute hole and matches D21. It touches the money path (every failure branch must refund
-   exactly once; the reaper's deadline fail at `_store_jobs.py:665` gains a refund), and needs the
+   exactly once; the reaper's automated-job deadline/failover failures (`_store_jobs.py:~682`, `~713`; the assisted path at `:665` already refunds) gain a refund), and needs the
    conservation tests extended. Largest change, strongest guarantee.
 2. *Soft reservation counter.* Track `reserved` per asker (not moved to escrow); `can_afford` checks
    `balance - reserved`; release at settle/fail. Trade-off: smaller diff and no new account, but a
@@ -1704,12 +1704,12 @@ extracts unpaid compute (a spam/sybil lever, bounded only by `PW_RL_JOBS`, defau
    progress/"thinking" visibility, doesn't stop a failed settlement from wasting worker time, and
    would break the shareable-result model for in-progress jobs.
 **Recommended default: option 1**, plus option 3's redaction only for jobs whose settlement failed
-(never serve answers of a job with `error` starting "settlement failed"). Needs owner sign-off because it changes
+(applied in `job_view`, before `get_job` redacts `error` for non-askers). Needs owner sign-off because it changes
 who is charged and when.
 
 ### PW-2 — Node-earned credit is stranded
 **Current behaviour.** A node's earnings are credited to its *owner handle* in the ledger
-(`_store_ledger.py:140-147` opens an account under `owner`; `settle_job` pays
+(`register_node` opens an account under `owner` at `_store_ledger.py:149` via `_open_account_reversible`, `:110`; `settle_job` pays
 `score_by_worker[owner]`, `_store_jobs.py:498`). Spending requires a *user* identity:
 `POST /jobs` authenticates with `X-User-Secret` (`coordinator_app.py:777-779`, `_user_auth` at
 `:375`), which maps to a `users` row. Signup refuses any handle that already has a ledger account
@@ -1734,14 +1734,20 @@ ask a question: `register_user("alice")` returns "handle taken", and she has no 
    (D47) and needs a migration for existing owner-only accounts.
 3. *Do nothing; document that node owners and askers are separate accounts.* Trade-off: zero risk, but
    contradicts D6's dual-role pitch, and earned credit is permanently unusable.
-**Recommended default: option 1**, behind the admin enrollment token (so only an enrolled owner can
-claim) and one claim per handle. Migration-free.
+**Recommended default: option 1, with a safety condition.** A node's `owner` is a self-declared string:
+without enrollment, `/nodes/register` needs only the shared `PW_TOKEN` (`coordinator_app.py:466-486`,
+`register_node` checks only reserved handles), so a node claiming `owner=<an existing user>` could mint a
+second secret and spend that user's balance. Claim must therefore be allowed only when the handle has
+no `users` row, or when enrollment is required and the owner was bound by the enrollment token; one
+claim per handle; test that a node registered under an existing user's handle cannot claim. (Order
+matters: user-first then node works today because both use the same account; only node-first strands.)
+Migration-free.
 
 ### PW-3 — `dev-token` still accepted on loopback (AUTH-gated; code untouched)
 **Current behaviour.** `PW_TOKEN` defaults to `"dev-token"` (`net/config.py:25`; also
 `agent.py:71`, `operator.py:60`). The startup guard refuses a weak token only on a *non-loopback* bind
 (`coordinator_app.py:94`); on loopback it prints a warning and keeps serving (`:100-104`). The
-documented topology is loopback behind a tunnel or reverse proxy (`SELF_HOST.md`), so a loopback bind
+documented topology is loopback behind a tunnel or reverse proxy (`docs/network/SELF_HOST.md`), so a loopback bind
 is public in practice. #62 closed the empty-token case (`_auth`, `:355-363`) but not `dev-token`.
 
 **Failure scenario.** A self-hoster runs the quickstart with the default token behind a Cloudflare
