@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import math
+import unicodedata
 import uuid
 from typing import Optional
 
@@ -27,6 +28,13 @@ from passiveworkers.ledger import InsufficientCredit
 from passiveworkers.net._store_base import _StoreProtocol, _clip, _now
 from passiveworkers.net.config import JOB_TYPES, pool_for
 from passiveworkers.sanitize import sanitize_brief
+
+
+def _is_blank(text: str) -> bool:
+    """True for an empty / whitespace-only deliverable (D56 / PW-4). Invisible format characters
+    (zero-width space, BOM, ...: Unicode category Cf) count as blank too, else a lone ZWSP would
+    pass a plain `.strip()` check and release the pool for nothing."""
+    return all(ch.isspace() or unicodedata.category(ch) == "Cf" for ch in text or "")
 
 
 class _AssistedMixin(_StoreProtocol):
@@ -239,6 +247,13 @@ class _AssistedMixin(_StoreProtocol):
             if job is None or job["status"] != "assisting":
                 return {"ok": False,
                         "error": f"offer no longer open for delivery ({job and job['status']})"}
+            # D56 (PW-4): an empty / whitespace-only deliverable earns nothing. Reject BEFORE any
+            # ledger movement; the task stays claimed so the operator can retry, or the reaper
+            # refunds the asker's hold on expiry. Placed after the ownership/status checks so it
+            # never masks those errors.
+            if _is_blank(deliverable):
+                return {"ok": False,
+                        "error": "empty deliverable — nothing to pay for; deliver real content"}
             # if it's a file artifact, refuse to pay unless every chunk was actually uploaded
             from passiveworkers.artifacts import read_artifact, verify_manifest
             manifest = read_artifact(deliverable)
