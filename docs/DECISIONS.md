@@ -1693,7 +1693,7 @@ extracts unpaid compute (a spam/sybil lever, bounded only by `PW_RL_JOBS`, defau
 1. *Hold at creation (extend the assisted escrow pattern).* `ledger.hold(asker, cost)` in `create_job`,
    `settle_job` pays out of escrow, and refund on fail/expiry/all-answers-failed. Trade-off: closes
    the free-compute hole and matches D21. It touches the money path (every failure branch must refund
-   exactly once; the reaper's deadline fail at `_store_jobs.py:~670` gains a refund), and needs the
+   exactly once; the reaper's deadline fail at `_store_jobs.py:665` gains a refund), and needs the
    conservation tests extended. Largest change, strongest guarantee.
 2. *Soft reservation counter.* Track `reserved` per asker (not moved to escrow); `can_afford` checks
    `balance - reserved`; release at settle/fail. Trade-off: smaller diff and no new account, but a
@@ -1710,7 +1710,7 @@ who is charged and when.
 ### PW-2 — Node-earned credit is stranded
 **Current behaviour.** A node's earnings are credited to its *owner handle* in the ledger
 (`_store_ledger.py:140-147` opens an account under `owner`; `settle_job` pays
-`score_by_worker[owner]`, `_store_jobs.py:~520`). Spending requires a *user* identity:
+`score_by_worker[owner]`, `_store_jobs.py:498`). Spending requires a *user* identity:
 `POST /jobs` authenticates with `X-User-Secret` (`coordinator_app.py:777-779`, `_user_auth` at
 `:375`), which maps to a `users` row. Signup refuses any handle that already has a ledger account
 (`_store_ledger.py:236-245`, `_handle_in_use_locked`, introduced to stop a new secret spending someone
