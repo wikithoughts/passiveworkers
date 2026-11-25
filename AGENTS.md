@@ -1,4 +1,4 @@
-<!-- fleet-template: v1 | reconciled-against: fleet-kit/templates/AGENT-CONTEXT-TEMPLATE.md @ 08dbc79 2026-09-19 -->
+<!-- fleet-template: v1 | public -->
 # Passive Workers — instructions for AI coding agents
 
 ## What this repo is
@@ -105,7 +105,7 @@ Verification before done for the full check on this VPS.
 
 **For anything touching the served dashboard/app/serve HTML or JS**, don't stop at the
 syntax guard above: headless Chrome plus Xvfb and the chrome-devtools MCP server are
-available on this VPS (wikiclaw-1), so web and admin UI verification — browser-preview,
+available on this VPS, so web and admin UI verification — browser-preview,
 screenshots, driving `passiveworkers/net/dashboard.py`, `passiveworkers/net/app.py`,
 and `passiveworkers/serve.py`'s pages for real — can and should happen from this host.
 The only things genuinely unavailable on this VPS are Xcode, iOS/Android simulators,
@@ -204,7 +204,7 @@ builds — none of which this repo has any use for.
 - Set `--workspace-status in-review` when a PR opens on this repo's work.
 - A dispatched worker sends `worker_done` exactly once, with an explicit
   `--outcome`, when finishing supervised orchestration work here — see
-  fleet-command's `ORCHESTRATION.md` for the full coordinator recipe.
+  the fleet orchestration guide for the full coordinator recipe.
 
 ## Where to find more
 
@@ -227,8 +227,5 @@ to convert.
 
 ## Fleet context
 
-This file follows the fleet-wide template
-(`fleet-kit/templates/AGENT-CONTEXT-TEMPLATE.md`, stamped above). Config drift between
-this file and the template is caught automatically by `fleet-doctor.sh`, which runs as
-part of fleet-command's daily sweep — see that repo's `PORTFOLIO.md` and `SWEEP.md` for
-what gets reported and what (if anything) gets auto-dispatched.
+This file follows the fleet-wide AGENTS.md template (stamped on line 1). Drift between
+this file and the template is caught automatically by the fleet's daily doctor sweep.
