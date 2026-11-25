@@ -19,7 +19,7 @@ The whole idea at single-machine, multi-model scale.
 - ✅ Result: merge beat best-single **2/2** (honest caveat: LLM judge has length bias → see M3). Files: `council/{ledger,worker,judge,coordinator,run_demo}.py`. Run: `python -m council.run_demo`.
 
 ## M2 — Networked two-machine Council (Mac ↔ VPS) ✅ (core)
-Made the geo-diversity moat real. Coordinator on the Hetzner VPS **wikiclaw-1** (Helsinki, FI),
+Made the geo-diversity moat real. Coordinator on a Hetzner VPS (Helsinki, FI),
 isolated in `/opt/passiveworkers`, **reusing the host's existing Ollama**, bound to `127.0.0.1`
 (zero new public ports); the Mac reaches it over an **SSH tunnel**.
 1. ✅ **HTTP coordinator service** — `council/net/coordinator_app.py` + SQLite store (`store.py`); persisted ledger/jobs/nodes/telemetry, config-driven, token-auth. Provider-agnostic (env-only → relocatable).
