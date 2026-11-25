@@ -36,8 +36,10 @@ it as `PW_TOKEN` in the `pworkers invite` commands below. The file is reused on 
 
 Safety rules for that file (the coordinator enforces them at startup):
 - Generation, rotation and repair are serialised with an `flock` on `$PW_HOME/.admin_token.lock`, so
-  several coordinators starting together all end up with the same token. Without `flock` support the
-  coordinator warns and falls back to unserialised behaviour: start them one at a time.
+  several coordinators starting together all end up with the same token. If that lock file cannot be
+  opened or the filesystem has no `flock` support, the coordinator **refuses to start** rather than
+  risk two different tokens: set `PW_TOKEN` explicitly, or move `PW_HOME` to a local filesystem.
+  Generating the token needs Linux/macOS; on Windows set `PW_TOKEN` explicitly.
 - A token file with any group/other permission bit is treated as compromised and **rotated**, not
   adopted (the startup line says `rotated (was mode 0xxx)`; update clients with the new token).
   Exception: on a filesystem that ignores `chmod` (vfat, some SMB shares or Docker volumes) the bits
@@ -51,7 +53,7 @@ Safety rules for that file (the coordinator enforces them at startup):
   filesystem. Waiting for the lock is bounded (30 s), after which startup fails instead of hanging.
 - `PW_HOME` must be owned by the coordinator's user and not world-writable. A group-writable `PW_HOME`
   (mode 0775, the Debian/Ubuntu default umask) is accepted only when the group is your own private
-  group, with a warning (`chmod g-w` silences it); any other group-writable or foreign-owned directory
+  group (your primary group, named after your user, with no other listed members), with a warning (`chmod g-w` silences it); any other group-writable or foreign-owned directory
   is refused with an error naming `PW_HOME`.
 
 **Upgrading from a build that defaulted to `dev-token`:** `dev-token` is no longer accepted, on

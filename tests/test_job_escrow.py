@@ -261,21 +261,79 @@ def test_askers_own_judge_is_the_fallback_when_no_other_judge_exists(store, caps
     assert store.job_status(j["job_id"]) == "done" and store.ledger_integrity()["ok"]
 
 
+def _assert_neutral_split(store, job_id, owners, asker, start, held):
+    """The asker's own judge scores were ignored: every answer got the same neutral score, the pool
+    split into exactly equal shares that sum to the pool, and the asker's own answer earned no more
+    than anyone else's (its balance moves by exactly -held + one share + the judge fee it earned)."""
+    pool = store.conn.execute("SELECT pool FROM jobs WHERE job_id=?", (job_id,)).fetchone()["pool"]
+    assert _held(store, job_id) == 0                                       # the hold was drawn down
+    fee = round(held - pool, 4)
+    assert pool > 0 and len(owners) >= 2
+    share = pool / len(owners)
+    scores = {r["owner"]: r["score"] for r in store.conn.execute(
+        "SELECT owner, score FROM tasks WHERE job_id=? AND type='answer'", (job_id,))}
+    assert set(scores) == set(owners) and len(set(scores.values())) == 1    # one neutral score
+    gains = {o: round(store.ledger.balance(o) - start[o], 4) for o in owners}
+    gains[asker] = round(gains[asker] + held - fee, 4)                     # strip the hold + judge fee
+    for o in owners:
+        assert gains[o] == pytest.approx(share, abs=1e-4)                  # exactly equal shares
+    assert sum(gains.values()) == pytest.approx(pool, abs=1e-9)            # that sum to the pool
+    assert gains[asker] <= min(gains.values()) + 1e-4                      # the asker gains nothing extra
+    assert store.ledger.balance(asker) == pytest.approx(start[asker] - held + share + fee, abs=1e-4)
+    assert store.ledger.balance(ESCROW) == 0.0
+    assert store.ledger_integrity()["ok"] and store.ledger.conservation_ok()
+
+
 def test_asker_judging_own_job_cannot_steer_the_payout(store):
     # round-3 review H1: with the own-judge fallback, an asker whose node also answered could score
     # every other worker 0 and take the whole pool back. The asker's scores must be ignored.
     n1 = _reg(store, "op1")
     n2 = _reg(store, "op2")
     na = _reg(store, "alice", judge=True)
+    start = {o: _bal(store, o) for o in ("op1", "op2", "alice")}
     j = store.create_job("alice", "q", job_type="chat", minds=3)
+    held = _held(store, j["job_id"])
     _answer_all(store, j["job_id"])
     jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'",
                             (j["job_id"],)).fetchone()
     assert jt["owner"] == "alice"
     assert store.complete_task(jt["task_id"], {"scores": {n1: 0, n2: 0, na: 10}}, node_id=na)
     assert store.job_status(j["job_id"]) == "done"
-    assert store.ledger.balance("op1") > 100.0 and store.ledger.balance("op2") > 100.0
-    assert store.ledger_integrity()["ok"] and store.ledger.conservation_ok()
+    _assert_neutral_split(store, j["job_id"], ["op1", "op2", "alice"], "alice", start, held)
+
+
+def test_foreign_judge_offline_failover_to_askers_node_still_pays_a_neutral_split(store, capsys):
+    # A foreign judge is assigned, then goes offline; the reaper fails the judge task over to the
+    # asker's own node (the only other judge), which returns adversarial scores zeroing everyone
+    # else. Those scores must be ignored: the payout is still the exact neutral split.
+    n1 = _reg(store, "op1")
+    n2 = _reg(store, "op2")
+    na = _reg(store, "alice", judge=True)
+    start = {o: _bal(store, o) for o in ("op1", "op2", "alice")}
+    j = store.create_job("alice", "q", job_type="chat", minds=3)
+    jid = j["job_id"]
+    held = _held(store, jid)
+    owners = sorted(r["owner"] for r in store.conn.execute(
+        "SELECT owner FROM tasks WHERE job_id=? AND type='answer'", (jid,)))
+    assert owners == ["alice", "op1", "op2"]
+    jn = _reg(store, "judgeop", judge=True)          # joins after the answers were assigned
+    start["judgeop"] = _bal(store, "judgeop")
+    _answer_all(store, jid)
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
+    assert jt["owner"] == "judgeop" and jt["node_id"] == jn     # the foreign judge is preferred
+    store.conn.execute("UPDATE nodes SET last_seen=0 WHERE node_id=?", (jn,))   # it goes offline
+    store.conn.commit()
+    capsys.readouterr()
+    store._reap_once()
+    jt = store.conn.execute("SELECT * FROM tasks WHERE job_id=? AND type='judge'", (jid,)).fetchone()
+    assert jt["owner"] == "alice" and jt["node_id"] == na and jt["status"] == "queued"
+    assert (jt["retries"] or 0) == 1
+    assert "falling back to the asker's own judge" in capsys.readouterr().out
+    assert store.job_status(jid) == "judging"
+    assert store.complete_task(jt["task_id"], {"scores": {n1: 0, n2: 0, na: 10}}, node_id=na)
+    assert store.job_status(jid) == "done"
+    assert _bal(store, "judgeop") == start["judgeop"]           # the offline judge earned nothing
+    _assert_neutral_split(store, jid, owners, "alice", start, held)
 
 
 def test_alarm_failure_after_reaper_commit_does_not_roll_back_refunds(store, monkeypatch):
