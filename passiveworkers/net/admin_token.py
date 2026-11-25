@@ -4,27 +4,46 @@ When ``PW_TOKEN`` is unset (or is the retired ``dev-token``), the coordinator ge
 on first start and persists it ``0600`` at ``<PW_HOME>/admin_token``. The token is NEVER logged: the
 startup message only names the file to read. An explicit ``PW_TOKEN`` (including an explicitly empty
 one, which keeps the admin routes disabled) is used as given.
+
+Generating and persisting a token needs POSIX (``fcntl``/``grp``/``pwd``, ``os.fchmod``). On other
+platforms (Windows) this module still imports cleanly and an explicit ``PW_TOKEN`` still works; only
+the generated-token path refuses, with a message saying to set ``PW_TOKEN``.
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import enum
-import grp
 import os
 import pathlib
-import pwd
 import secrets
 import stat
+import threading
 import time
 from collections.abc import Iterator
+from types import ModuleType
+from typing import Optional
 
 from passiveworkers.paths import home
 
+# POSIX-only modules, imported defensively so that importing this module (and the coordinator, which
+# imports it) never crashes on Windows; _require_posix() refuses the generated-token path there.
+fcntl: Optional[ModuleType]
+grp: Optional[ModuleType]
+pwd: Optional[ModuleType]
 try:
     import fcntl
-except ImportError:   # pragma: no cover - non-POSIX
-    fcntl = None   # type: ignore[assignment]
+except ImportError:
+    fcntl = None
+try:
+    import grp
+except ImportError:
+    grp = None
+try:
+    import pwd
+except ImportError:
+    pwd = None
 
 LEGACY_DEV_TOKEN = "dev-token"
 
@@ -37,13 +56,32 @@ class Event(enum.Enum):
     ADOPTED = "adopted"        # existing 0600 file reused
 
 
-_EVENT: tuple[Event, int, bool] = (Event.EXPLICIT, 0, False)   # (event, file mode, legacy dev-token); never the token
-_WARNINGS: list[str] = []   # operator-facing warnings from the last resolve(); paths and fixed text only
+@dataclasses.dataclass
+class _State:
+    """What one resolve() did, for startup_note(). Never holds the token: paths and fixed text only."""
+    event: Event = Event.EXPLICIT
+    mode: int = 0                   # the token file's mode before a rotation
+    legacy_dev: bool = False        # PW_TOKEN was the retired dev-token
+    path: Optional[pathlib.Path] = None
+    warnings: list[str] = dataclasses.field(default_factory=list)
+
+
+# Per thread: each thread's startup_note() describes ITS last resolve(), never a concurrent one's.
+_LOCAL = threading.local()
 _MIN_LEN = 24
 
 
 def token_path() -> pathlib.Path:
     return home() / "admin_token"
+
+
+def _require_posix() -> None:
+    if fcntl is None or grp is None or pwd is None or not hasattr(os, "fchmod") \
+            or not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError(
+            "PW_TOKEN is unset, and generating a persisted admin token needs a POSIX system "
+            "(Linux/macOS: file locking and owner-only permissions). Set a strong PW_TOKEN, e.g. "
+            "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"`.")
 
 
 def _valid(tok: str) -> bool:
@@ -76,7 +114,8 @@ def _publish_new(path: pathlib.Path, tok: str) -> bool:
         return False
     except OSError:
         # Filesystem without hard links (some FUSE/SMB/volume mounts): fall back to a plain O_EXCL
-        # create. Still never world-readable; only the narrow partial-read window returns.
+        # create. Still never world-readable, and the caller holds the lock, so no other coordinator
+        # can read the file while it is still empty.
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         except FileExistsError:
@@ -99,11 +138,11 @@ def _replace_private(path: pathlib.Path, tok: str) -> None:
         raise
 
 
-_WRITER_WAIT_TRIES = 10     # ONLY when flock is unavailable: the no-hardlink fallback creates the file
-_WRITER_WAIT_S = 0.1        # empty, then writes it, so wait ~1 s for a concurrent first start
-
-
 _LOCK_TIMEOUT_S = 30.0
+_NO_LOCK = ("the admin token lock ({lock}) is unavailable ({why}), so two coordinators starting "
+            "together could end up with different admin tokens; refusing to generate, rotate or adopt "
+            "one unserialised. Set a strong PW_TOKEN (e.g. `openssl rand -hex 24`), or move PW_HOME to "
+            "a local filesystem that supports flock.")
 
 
 def _flock_ex(fd: int) -> bool:
@@ -127,36 +166,47 @@ def _flock_ex(fd: int) -> bool:
 
 
 @contextlib.contextmanager
-def _locked(directory: pathlib.Path) -> Iterator[bool]:
-    """Serialise generate/rotate/repair across processes with an exclusive flock on a lock file in the
-    token directory. Yields whether the lock is held; if flock is unsupported, yields False (the caller
-    falls back to the old, unserialised behaviour and warns)."""
+def _locked(directory: pathlib.Path) -> Iterator[None]:
+    """Serialise generate/rotate/repair/adopt across processes with an exclusive flock on a lock file
+    in the token directory. FAIL CLOSED: if the lock file cannot be opened or flock is unsupported,
+    raise before the token file is even read (reading may fchmod it), so no process ever writes or
+    adopts a token unserialised and every coordinator sharing PW_HOME ends up with the same one."""
+    lock = directory / ".admin_token.lock"
     try:
-        fd = os.open(directory / ".admin_token.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    except OSError:
-        yield False
-        return
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as e:
+        raise RuntimeError(_NO_LOCK.format(lock=lock, why=e.strerror or e)) from e
     try:
-        yield _flock_ex(fd)       # closing the fd releases the lock
+        if not _flock_ex(fd):
+            raise RuntimeError(_NO_LOCK.format(lock=lock, why="flock is not supported here"))
+        yield                     # closing the fd releases the lock
     finally:
         os.close(fd)
 
 
 def _is_private_group(gid: int) -> bool:
-    """True iff ``gid`` is this user's primary group and nobody else belongs to it (the Debian/Ubuntu
-    user-private-group), so group-write on a directory grants nobody else anything."""
-    if gid != os.getgid():
+    """True iff ``gid`` looks like this user's Debian/Ubuntu user-private group, so group-write on a
+    directory grants nobody else anything: it is our primary gid (per the process AND passwd), it is
+    named after us, and its member list names nobody else.
+
+    Only ``getgrgid``/``getpwuid`` lookups: enumerating every user (``getpwall``) is slow or
+    incomplete under LDAP/NSS. ``gr_mem`` does not list users whose PRIMARY group this is, so a
+    shared primary group (macOS ``staff``, Linux ``users``) has an empty ``gr_mem``; the name check
+    rejects those. Residual: another account deliberately given our private group as its primary gid
+    is not detected (that takes an administrator, who can already read our files)."""
+    if grp is None or pwd is None or gid != os.getgid():
         return False
     try:
-        me = pwd.getpwuid(os.getuid()).pw_name
-        if any(m != me for m in grp.getgrgid(gid).gr_mem):
-            return False
-        return not any(u.pw_gid == gid and u.pw_uid != os.getuid() for u in pwd.getpwall())
+        me = pwd.getpwuid(os.getuid())
+        g = grp.getgrgid(gid)
     except (KeyError, OSError):
         return False
+    if me.pw_gid != gid or g.gr_name != me.pw_name:
+        return False
+    return all(m == me.pw_name for m in g.gr_mem)
 
 
-def _check_home(directory: pathlib.Path) -> None:
+def _check_home(directory: pathlib.Path, state: _State) -> None:
     """The directory holding the token must be ours and not writable by other users (otherwise another
     local user could swap or pre-create the token file). Group-writable is accepted only when the group
     is our own private group (a warning is recorded); world-writable is never accepted."""
@@ -170,8 +220,9 @@ def _check_home(directory: pathlib.Path) -> None:
         raise RuntimeError(f"PW_HOME ({directory}) is writable by other users (mode {mode:04o}); refusing "
                            "to keep the admin token there. `chmod go-w` it or set a strong PW_TOKEN.")
     if mode & 0o020:
-        _WARNINGS.append(f"{directory} is group-writable (mode {mode:04o}) but its group is your private "
-                         "group, so the admin token is kept there; `chmod g-w` it to silence this")
+        state.warnings.append(f"{directory} is group-writable (mode {mode:04o}) but its group is your "
+                              "private group, so the admin token is kept there; `chmod g-w` it to "
+                              "silence this")
 
 
 def _read_trusted(path: pathlib.Path) -> tuple[str, int, bool]:
@@ -200,34 +251,25 @@ def _read_trusted(path: pathlib.Path) -> tuple[str, int, bool]:
         os.close(fd)
 
 
-def _load_or_create(path: pathlib.Path) -> str:
-    """The token. What happened (generated/rotated/repaired/adopted) is recorded in ``_EVENT``, a
+def _load_or_create(path: pathlib.Path, state: _State) -> str:
+    """The token. What happened (generated/rotated/repaired/adopted) is recorded in ``state``, a
     value that never holds the token, so no message is built from the secret's data flow."""
+    _require_posix()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _check_home(path.parent)
-    with _locked(path.parent) as locked:
-        if not locked:
-            _WARNINGS.append("file locking is unavailable here, so two coordinators starting at the same "
-                             "moment could disagree on the admin token; start them one at a time")
-        return _load_or_create_locked(path, locked)
+    _check_home(path.parent, state)
+    with _locked(path.parent):
+        return _load_or_create_locked(path, state)
 
 
-def _load_or_create_locked(path: pathlib.Path, locked: bool) -> str:
-    global _EVENT
+def _load_or_create_locked(path: pathlib.Path, state: _State) -> str:
+    """Runs only under the lock, so no writer can be mid-write: an empty file is corrupt, not racing."""
     for _ in range(3):
         try:
             existing, mode, enforced = _read_trusted(path)
-            # Under the lock no writer can be mid-write, so an empty file is corrupt. Without it, the
-            # no-hardlink fallback may still be writing: wait a moment.
-            for _w in range(0 if locked else _WRITER_WAIT_TRIES):
-                if mode & 0o077 or _valid(existing):
-                    break
-                time.sleep(_WRITER_WAIT_S)
-                existing, mode, enforced = _read_trusted(path)
         except FileNotFoundError:
             tok = secrets.token_urlsafe(32)
             if _publish_new(path, tok):
-                _EVENT = (Event.GENERATED, 0, False)
+                state.event = Event.GENERATED
                 return tok
             continue   # lost a race with another first start: read theirs
         except OSError as e:   # ELOOP: a symlink sits at the path
@@ -251,66 +293,69 @@ def _load_or_create_locked(path: pathlib.Path, locked: bool) -> str:
                     "other users of the volume may be able to read the admin token. Set a strong "
                     "PW_TOKEN (e.g. `openssl rand -hex 24`), move PW_HOME to a POSIX filesystem, or, "
                     "if the volume is private to you, set PW_ALLOW_LOOSE_TOKEN_FILE=1 to keep it.")
-            _WARNINGS.append("filesystem does not enforce permissions; token not rotated, and the token "
-                             f"file {path} is READABLE BY OTHER USERS (mode {mode:04o}); set PW_TOKEN or "
-                             "move PW_HOME to a POSIX filesystem")
+            state.warnings.append("filesystem does not enforce permissions; token not rotated, and the "
+                                  f"token file {path} is READABLE BY OTHER USERS (mode {mode:04o}); set "
+                                  "PW_TOKEN or move PW_HOME to a POSIX filesystem")
             if _valid(existing):
-                _EVENT = (Event.ADOPTED, 0, False)
+                state.event = Event.ADOPTED
                 return existing
         elif mode & 0o077:
             # Group/other bits: a writable file may hold a token another user planted, a readable one
             # is already disclosed. Either way the content is compromised: rotate, never adopt.
             tok = secrets.token_urlsafe(32)
             _replace_private(path, tok)
-            _EVENT = (Event.ROTATED, mode, False)
+            state.event, state.mode = Event.ROTATED, mode
             return tok
         if not _valid(existing):
             tok = secrets.token_urlsafe(32)
             _replace_private(path, tok)
-            _EVENT = (Event.REPAIRED, 0, False)
+            state.event = Event.REPAIRED
             return tok
-        _EVENT = (Event.ADOPTED, 0, False)
+        state.event = Event.ADOPTED
         return existing
     raise RuntimeError(f"could not read or create the admin token file {path}")
 
 
 def resolve(env_token: str | None) -> str:
-    """The admin token to use. Returns the token ONLY; ``startup_note()`` gives the operator message."""
-    global _EVENT
-    _WARNINGS.clear()
+    """The admin token to use. Returns the token ONLY; ``startup_note()`` gives the operator message
+    for this thread's last call (thread-safe: the record is per thread, never shared)."""
+    _LOCAL.state = None                 # a call that raises leaves no stale note behind
+    state = _State()
     if env_token is not None and env_token != LEGACY_DEV_TOKEN:
-        _EVENT = (Event.EXPLICIT, 0, False)
+        _LOCAL.state = state            # EXPLICIT
         return env_token
     path = token_path()
+    state.path = path
     try:
-        tok = _load_or_create(path)
+        tok = _load_or_create(path, state)
     except OSError as e:
         raise RuntimeError(
             f"cannot persist a generated admin token at {path} ({e.strerror or e}). "
             "Set a strong PW_TOKEN (e.g. `openssl rand -hex 24`) or make PW_HOME writable.") from e
-    if env_token == LEGACY_DEV_TOKEN:
-        _EVENT = (_EVENT[0], _EVENT[1], True)
+    state.legacy_dev = env_token == LEGACY_DEV_TOKEN
+    _LOCAL.state = state
     return tok
 
 
 def startup_note() -> str | None:
-    """Operator-facing message for the last ``resolve()``, built from the token FILE PATH and the event
-    only. It has no access to the token, so it cannot contain it."""
-    kind, mode, legacy_dev = _EVENT
-    if kind is Event.EXPLICIT:
+    """Operator-facing message for this thread's last ``resolve()``, built from the token FILE PATH
+    and the event only. It has no access to the token, so it cannot contain it. None if the token was
+    explicit, or this thread has not resolved (or its last resolve raised)."""
+    state: Optional[_State] = getattr(_LOCAL, "state", None)
+    if state is None or state.event is Event.EXPLICIT:
         return None
-    path = token_path()
+    path, mode = state.path, state.mode
     msg = {
         Event.GENERATED: f"generated a random admin token on first start and saved it to {path} (mode 0600)",
         Event.ROTATED: (f"{path} was group/world accessible, so its token is treated as compromised: "
                         f"rotated (was mode {mode:04o}); a new admin token was saved there (mode 0600)"),
         Event.REPAIRED: f"{path} was empty or malformed; generated a new admin token there (mode 0600)",
         Event.ADOPTED: f"using the generated admin token in {path}",
-    }[kind]
-    if legacy_dev:
+    }[state.event]
+    if state.legacy_dev:
         msg = ("PW_TOKEN=dev-token is no longer accepted. Using the generated admin token instead; "
                f"read it with `cat {path}` and use it (or set your own PW_TOKEN) wherever you used "
                f"dev-token. {msg}")
-    if _WARNINGS:
-        msg += "".join(f". WARNING: {w}" for w in _WARNINGS)
+    if state.warnings:
+        msg += "".join(f". WARNING: {w}" for w in state.warnings)
     return msg

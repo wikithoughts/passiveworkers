@@ -92,27 +92,35 @@ def test_loose_permission_file_is_rotated_not_adopted(tmp_path, monkeypatch, mod
     assert again not in note and tok not in note
 
 
-def test_empty_file_from_a_racing_writer_is_waited_for_not_repaired(tmp_path, monkeypatch):
-    """The no-hardlink fallback creates the path empty before writing it; a concurrent reader must
-    retry briefly instead of replacing it with a DIFFERENT token."""
+@pytest.mark.parametrize("how", ["no_flock", "flock_errors", "lock_unopenable"])
+def test_unavailable_lock_fails_closed_and_writes_nothing(tmp_path, monkeypatch, how):
+    """Without the lock, two coordinators starting together could end up with different tokens
+    (a rotate/repair race, or a no-hardlink writer's empty-file window). Refuse instead of running
+    unserialised: no token file is created, read, chmodded or replaced, and the operator is told to
+    set PW_TOKEN."""
     import passiveworkers.net.admin_token as at
     monkeypatch.setenv("PW_HOME", str(tmp_path))
     p = tmp_path / "admin_token"
-    p.write_text("")
-    os.chmod(p, 0o600)
-    final = "w" * 40
-    calls = {"n": 0}
-
-    def fake_sleep(_s):
-        calls["n"] += 1
-        if calls["n"] == 2:                      # the writer finishes mid-wait
-            p.write_text(final + "\n")
-    monkeypatch.setattr(at.time, "sleep", fake_sleep)
-    monkeypatch.setattr(at, "_flock_ex", lambda fd: False)    # no flock here: the timed wait is the fallback
-    tok = at.resolve(None)
-    assert tok == final and calls["n"] >= 2
-    assert p.read_text().strip() == final
-    assert "locking" in at.startup_note()                     # and the operator is told it is degraded
+    if how == "no_flock":
+        monkeypatch.setattr(at, "fcntl", None)                    # platform without flock
+    elif how == "flock_errors":
+        def bad_flock(fd, op):
+            raise OSError(45, "Operation not supported")          # e.g. some NFS/FUSE mounts
+        monkeypatch.setattr(at.fcntl, "flock", bad_flock)
+    else:
+        (tmp_path / ".admin_token.lock").mkdir()                  # lock file cannot be opened
+    with pytest.raises(RuntimeError, match="PW_TOKEN") as e:
+        at.resolve(None)
+    assert "lock" in str(e.value)
+    assert not p.exists()                                         # nothing generated unserialised
+    p.write_text("planted-or-disclosed-token-0123456789\n")
+    os.chmod(p, 0o644)
+    with pytest.raises(RuntimeError, match="PW_TOKEN"):
+        at.resolve(None)
+    assert stat.S_IMODE(p.stat().st_mode) == 0o644                # not chmodded into a "trusted" file
+    assert p.read_text().startswith("planted-or-disclosed")       # nor rotated/adopted
+    assert at.startup_note() is None                              # a failed resolve leaves no note
+    assert at.resolve("an-explicit-strong-admin-token-0123456789")   # explicit PW_TOKEN still works
 
 
 def test_existing_home_must_be_ours_and_not_group_or_world_writable(tmp_path, monkeypatch):
@@ -143,6 +151,7 @@ def test_group_writable_home_is_accepted_for_a_private_group_with_a_warning(tmp_
     import passiveworkers.net.admin_token as at
     home = tmp_path / "home"
     home.mkdir()
+    os.chown(home, -1, os.getgid())                 # BSD/macOS dirs inherit the parent's group
     os.chmod(home, 0o775)
     monkeypatch.setenv("PW_HOME", str(home))
     monkeypatch.setattr(at, "_is_private_group", lambda gid: gid == os.getgid())
@@ -157,16 +166,33 @@ def test_private_group_detection(monkeypatch):
     import passiveworkers.net.admin_token as at
 
     me = pwd.getpwuid(os.getuid())
-    monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group(("g", "x", g, [me.pw_name])))
-    monkeypatch.setattr(pwd, "getpwall", lambda: [me])
-    assert at._is_private_group(os.getgid()) is True
-    assert at._is_private_group(os.getgid() + 1) is False            # not our primary group
-    monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group(("g", "x", g, [me.pw_name, "other"])))
-    assert at._is_private_group(os.getgid()) is False                # another member
-    monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group(("g", "x", g, [])))
-    other = pwd.struct_passwd(("other", "x", me.pw_uid + 1, os.getgid(), "", "/", "/bin/sh"))
-    monkeypatch.setattr(pwd, "getpwall", lambda: [me, other])
-    assert at._is_private_group(os.getgid()) is False                # another user's primary group
+    gid = os.getgid()
+    # a user-private group: our primary gid, named after us, nobody else listed as a member
+    me_upg = pwd.struct_passwd((me.pw_name, "x", me.pw_uid, gid, "", "/", "/bin/sh"))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: me_upg)
+
+    def no_getpwall():   # slow/incomplete under LDAP/NSS: must not be used
+        raise AssertionError("pwd.getpwall must not be called")
+    monkeypatch.setattr(pwd, "getpwall", no_getpwall)
+
+    def group(name, members):
+        monkeypatch.setattr(grp, "getgrgid", lambda g: grp.struct_group((name, "x", g, members)))
+
+    group(me.pw_name, [])
+    assert at._is_private_group(gid) is True
+    group(me.pw_name, [me.pw_name])
+    assert at._is_private_group(gid) is True                         # listing ourselves is fine
+    assert at._is_private_group(gid + 1) is False                    # not our primary group
+    group(me.pw_name, [me.pw_name, "other"])
+    assert at._is_private_group(gid) is False                        # another member
+    group("staff", [])                                               # macOS staff / Linux users:
+    assert at._is_private_group(gid) is False                        # shared primary group, empty gr_mem
+    monkeypatch.setattr(grp, "getgrgid", lambda g: (_ for _ in ()).throw(KeyError(g)))
+    assert at._is_private_group(gid) is False                        # unknown group: not private
+    group(me.pw_name, [])
+    monkeypatch.setattr(pwd, "getpwuid",
+                        lambda uid: pwd.struct_passwd((me.pw_name, "x", me.pw_uid, gid + 1, "", "/", "/bin/sh")))
+    assert at._is_private_group(gid) is False                        # passwd disagrees on the primary gid
 
 
 def _hold_lock(tmp_path):
@@ -401,3 +427,71 @@ def test_lock_wait_is_bounded_and_fails_closed(tmp_path, monkeypatch):
     finally:
         os.close(fd)
     assert at.resolve(None)
+
+
+def test_resolve_state_is_per_thread(tmp_path, monkeypatch):
+    """resolve()'s event and warnings are per thread: a concurrent resolve() in another thread must
+    not change (or clear) the note this thread gets for its own resolve()."""
+    import threading
+
+    import passiveworkers.net.admin_token as at
+    home = tmp_path / "home"
+    home.mkdir()
+    os.chown(home, -1, os.getgid())
+    os.chmod(home, 0o775)                                  # makes resolve() record a warning
+    monkeypatch.setenv("PW_HOME", str(home))
+    monkeypatch.setattr(at, "_is_private_group", lambda gid: gid == os.getgid())
+    a_resolved, b_resolved = threading.Event(), threading.Event()
+    out = {}
+
+    def a():
+        out["tok"] = at.resolve(None)                      # generates the file, with a warning
+        a_resolved.set()
+        b_resolved.wait(5)
+        out["a_note"] = at.startup_note()
+
+    def b():
+        a_resolved.wait(5)
+        at.resolve("an-explicit-strong-admin-token-0123456789")   # EXPLICIT, clears warnings
+        out["b_note"] = at.startup_note()
+        b_resolved.set()
+
+    ts = [threading.Thread(target=a), threading.Thread(target=b)]
+    [t.start() for t in ts]
+    [t.join(10) for t in ts]
+    assert out["b_note"] is None
+    assert out["a_note"] and "generated a random admin token" in out["a_note"]
+    assert "group-writable" in out["a_note"] and out["tok"] not in out["a_note"]
+    seen = {}
+    t = threading.Thread(target=lambda: seen.setdefault("note", at.startup_note()))
+    t.start()
+    t.join(5)
+    assert seen["note"] is None                            # a thread that never resolved has no note
+
+
+def test_non_posix_platform_imports_cleanly_and_refuses_generation_with_a_clear_message(tmp_path):
+    """Windows has no fcntl/grp/pwd: importing the module (and so the coordinator) must not crash,
+    an explicit PW_TOKEN must still work, and only the generated-token path refuses, saying why."""
+    import subprocess
+    import sys
+    import textwrap
+    code = textwrap.dedent("""
+        import sys
+        for m in ("fcntl", "grp", "pwd"):
+            sys.modules[m] = None          # `import fcntl` now raises ImportError, as on Windows
+        import passiveworkers.net.admin_token as at
+        assert at.resolve("an-explicit-strong-admin-token-0123456789")
+        try:
+            at.resolve(None)
+        except RuntimeError as e:
+            print("REFUSED:", e)
+        else:
+            print("GENERATED")
+    """)
+    env = {**os.environ, "PW_HOME": str(tmp_path / "home")}
+    env.pop("PW_TOKEN", None)
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("REFUSED:"), r.stdout
+    assert "PW_TOKEN" in r.stdout and "POSIX" in r.stdout
+    assert not (tmp_path / "home" / "admin_token").exists()
