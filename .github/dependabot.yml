@@ -6,7 +6,7 @@ updates:
     directory: "/"   # pyproject.toml (requirements.txt is a convenience mirror of it)
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       python-deps:
         patterns: ["*"]
@@ -15,7 +15,7 @@ updates:
     directory: "/"   # .github/workflows/
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       github-actions:
         patterns: ["*"]
